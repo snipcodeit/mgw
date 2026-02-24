@@ -26,6 +26,20 @@ For new-milestone: runs full milestone flow, posting updates after each phase.
 The orchestrator stays thin — all heavy work (analysis, GSD execution, GitHub
 operations) happens in task agents with fresh context.
 
+HARD CONSTRAINTS — the orchestrator MUST NOT violate these:
+- NEVER edit, write, or modify source/implementation files directly. All code
+  changes go through gsd-executor Task agents. The orchestrator only writes to
+  .mgw/ state files and .planning/ artifacts.
+- NEVER use `git checkout -b` or `git switch -c`. All work happens in isolated
+  worktrees created with `git worktree add`.
+- NEVER skip the gsd-planner Task agent. Even for "simple" or "obvious" changes,
+  the planner creates the plan. The orchestrator does not plan implementation.
+- NEVER skip the gsd-executor Task agent. Even for 1-file changes, the executor
+  implements and commits. The orchestrator does not implement.
+- The orchestrator's ONLY direct actions are: state management (.mgw/), directory
+  creation (.planning/), spawning Task agents, running gsd-tools.cjs, and git
+  worktree operations.
+
 Checkpoints requiring user input:
 - Triage confirmation (if not already triaged)
 - GSD route confirmation
@@ -146,6 +160,11 @@ Log comment in state file (at `${REPO_ROOT}/.mgw/active/`).
 **Execute GSD pipeline (quick / quick --full route):**
 
 Only run this step if gsd_route is "gsd:quick" or "gsd:quick --full".
+
+⚠ REMINDER: You are the orchestrator. Do NOT read source files to "understand
+the codebase" and then edit them yourself. Spawn the gsd-planner and gsd-executor
+Task agents below — they do all the implementation work. Your job here is only to
+run gsd-tools.cjs init, create directories, spawn agents, and update state.
 
 Update pipeline_stage to "executing" in state file (at `${REPO_ROOT}/.mgw/active/`).
 

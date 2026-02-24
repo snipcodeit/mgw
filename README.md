@@ -44,6 +44,7 @@ So I built MGW to be the responsible adult in the room. I point it at an issue, 
 
 | Command | What it does |
 |---------|-------------|
+| `/mgw:init` | Bootstrap repo for MGW — state directory, GitHub templates, labels |
 | `/mgw:issues` | Browse and filter your GitHub issues |
 | `/mgw:issue <n>` | Deep triage — scope analysis, security review, GSD route recommendation |
 | `/mgw:run <n>` | Full autonomous pipeline: triage through PR creation |
@@ -127,7 +128,7 @@ stow -v -R -t ~ mgw
 
 ```bash
 ls ~/.claude/commands/mgw/
-# help.md  issue.md  issues.md  link.md  pr.md  run.md  sync.md  update.md  workflows/
+# help.md  init.md  issue.md  issues.md  link.md  pr.md  run.md  sync.md  update.md  workflows/
 ```
 
 Then in Claude Code:
@@ -139,6 +140,9 @@ Then in Claude Code:
 ## Typical Workflow
 
 ```bash
+# 0. First time? Bootstrap your repo
+/mgw:init
+
 # 1. See what's assigned to you
 /mgw:issues
 
@@ -170,6 +174,7 @@ Or go manual for more control:
   commands/
     mgw/
       help.md              Command reference display
+      init.md              Repo bootstrap — state, templates, labels
       issues.md            Issue browser with filters
       issue.md             Deep triage with agent analysis
       update.md            Structured GitHub comments
