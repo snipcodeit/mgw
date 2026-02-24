@@ -124,12 +124,30 @@ Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → branch.
 <step name="post_start_update">
 **Post "work started" comment (task agent):**
 
+Read `triage.bluf` from the loaded state file (`$STATE` from validate_and_load step).
+
+Build comment body based on whether bluf is available:
+
+If `triage.bluf` is non-empty:
+```markdown
+**Work Started** -- #${ISSUE_NUMBER}
+
+${triage.bluf}
+
+**Route:** `${gsd_route}` | **Branch:** `${BRANCH_NAME}`
+```
+
+If `triage.bluf` is empty (legacy state files without it):
+```markdown
+**Work Started** — Triaged as `${gsd_route}`. Execution beginning on branch `${BRANCH_NAME}`.
+```
+
 ```
 Task(
   prompt="Post a GitHub issue comment.
 Issue: ${ISSUE_NUMBER}
 Comment body:
-**Work Started** — Triaged as \`${gsd_route}\`. Execution beginning on branch \`${BRANCH_NAME}\`.
+${COMMENT_BODY}
 
 Command: gh issue comment ${ISSUE_NUMBER} --body '<comment_body>'
 ",

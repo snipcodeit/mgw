@@ -70,11 +70,27 @@ If no custom message → auto-detect from pipeline_stage:
 
 | pipeline_stage | Comment template |
 |----------------|-----------------|
-| triaged | "**Triage Complete** — Scope: ${files} files across ${systems}. Route: `${gsd_route}`. Starting work." |
+| triaged | See **triaged template** below |
 | planning | "**Planning Complete** — Plan created via ${gsd_route}. Execution starting." |
 | executing | "**Execution in Progress** — ${summary from GSD artifacts if available}" |
 | verifying | "**Verification** — Running post-execution checks." |
 | pr-created | "**PR Ready** — PR #${linked_pr} created. See PR for testing procedures." |
+
+**Triaged template:**
+
+If `triage.bluf` is non-empty in the state file:
+```markdown
+**Triage Complete** -- #${ISSUE_NUMBER}
+
+${triage.bluf}
+
+**Scope:** ${files} files across ${systems} | **Route:** `${gsd_route}`
+```
+
+If `triage.bluf` is empty (legacy state files without it), fall back to:
+```markdown
+**Triage Complete** — Scope: ${files} files across ${systems}. Route: `${gsd_route}`. Starting work.
+```
 
 Append cross-references section if .mgw/cross-refs.json has links for this issue:
 ```markdown
