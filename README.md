@@ -1,5 +1,7 @@
 # MGW — My GSD Workflow
 
+> Issue in. PR out. No excuses.
+
 **GitHub-native issue-to-PR automation for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), powered by [Get Shit Done](https://github.com/glittercowboy/get-shit-done).**
 
 MGW bridges GitHub Issues and the GSD planning framework into a single pipeline. Point it at an issue, and it triages, plans, executes, and opens a PR — posting structured status updates along the way. No context switching, no tab juggling, no copy-pasting between GitHub and your terminal.
@@ -29,6 +31,14 @@ MGW is a suite of [Claude Code slash commands](https://docs.anthropic.com/en/doc
 ```
 
 Each step is composable. Use the full pipeline or pick individual commands.
+
+## Why I Built This
+
+I'm a solo developer. On any given day I might be writing a game server, reverse-engineering a VM, building a mobile app, or reorganizing my entire dotfiles setup for the third time this week. My brain has one mode: *build*. The part where you go back and update the issue, post a comment, open a PR with a nice description, cross-reference the other thing you broke — that part doesn't exist in my workflow. It's not that I don't care. It's that by the time the feature works, I've already mentally moved on to the next thing.
+
+The result is a graveyard of GitHub issues that say "Fix auth" with zero follow-up, branches named things only I understand, and PRs that my past self apparently thought were self-documenting. They were not.
+
+So I built MGW to be the responsible adult in the room. I point it at an issue, it does all the paperwork I was never going to do, and my GitHub history finally looks like a person who has their life together. It's the professional version of me that answers emails on time and keeps a clean desk — except it's nine Markdown files and Claude doing all the work.
 
 ## Commands
 
@@ -173,13 +183,13 @@ Or go manual for more control:
 
 ## Acknowledgments
 
-MGW is built on top of **[Get Shit Done](https://github.com/glittercowboy/get-shit-done)** by [Lex Christopherson](https://github.com/glittercowboy) — a structured project management framework for Claude Code that handles planning, execution, and verification. GSD does the heavy lifting; MGW connects it to GitHub.
+MGW wouldn't exist without **[Get Shit Done](https://github.com/glittercowboy/get-shit-done)** by [Lex Christopherson](https://github.com/glittercowboy) — a structured project management framework for Claude Code that handles planning, execution, and verification. GSD does the heavy lifting; MGW just connects it to GitHub so the rest of the world can see what you actually accomplished.
 
-If you're using Claude Code for development, GSD is worth installing on its own. MGW just adds the GitHub integration layer.
+Seriously, if you're using Claude Code for development, go install GSD. MGW is just the GitHub layer on top.
 
 ## Contributing
 
-MGW is young and there's plenty of room to improve it:
+MGW is young and there's plenty of room to make it better:
 
 - **Smarter triage heuristics** — better scope estimation, label-based routing
 - **Multi-repo support** — monorepo and cross-repo issue tracking
@@ -188,7 +198,7 @@ MGW is young and there's plenty of room to improve it:
 - **Dashboard** — terminal UI for pipeline visualization
 - **Webhook support** — react to issue assignments and label changes in real-time
 
-If any of these interest you, open an issue or submit a PR. The skill files are plain Markdown with a simple frontmatter + process structure — easy to read, easy to modify.
+The skill files are plain Markdown with a simple frontmatter + process structure — easy to read, easy to modify. If any of the above interests you, open an issue or submit a PR. I promise MGW will keep mine updated even if I won't.
 
 ## License
 
