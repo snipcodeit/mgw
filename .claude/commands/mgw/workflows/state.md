@@ -55,7 +55,8 @@ File: `.mgw/active/<number>-<slug>.json`
     "scope": { "files": 0, "systems": [] },
     "validity": "pending|confirmed|invalid",
     "security_notes": "",
-    "conflicts": []
+    "conflicts": [],
+    "bluf": ""
   },
   "gsd_route": null,
   "gsd_artifacts": { "type": null, "path": null },
@@ -66,6 +67,9 @@ File: `.mgw/active/<number>-<slug>.json`
   "linked_branches": []
 }
 ```
+
+**Field notes:**
+- `triage.bluf`: A 2-4 sentence BLUF (Bottom Line Up Front) summary synthesizing the issue description with triage findings. Generated during triage analysis in mgw:issue and stored for use in GitHub comments.
 
 ## Slug Generation
 

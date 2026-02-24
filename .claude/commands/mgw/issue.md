@@ -100,6 +100,12 @@ Comments: ${comments_summary}
 
 <analysis_dimensions>
 
+0. **BLUF (Bottom Line Up Front):** Write a 2-4 sentence paragraph that:
+   - Restates what the issue is actually asking for (fill in gaps if the issue description is sparse)
+   - Summarizes what the codebase analysis found (affected areas, complexity)
+   - States the recommended approach in plain language
+   Do NOT just parrot the issue title. If the issue says "fix auth" with no details, the BLUF should explain WHAT about auth is broken, WHERE in the codebase it lives, and HOW it should be fixed.
+
 1. **Scope:** Search the codebase for files and systems related to this issue.
    - List affected files with paths
    - List affected systems/modules
@@ -131,6 +137,9 @@ Comments: ${comments_summary}
 Return a structured report:
 
 ## Triage Report: #${ISSUE_NUMBER}
+
+### BLUF
+[2-4 sentence summary: what the issue needs, what analysis found, recommended approach]
 
 ### Scope
 - Files: [list]
@@ -202,6 +211,7 @@ Write to `.mgw/active/${ISSUE_NUMBER}-${slug}.json` using the schema from state.
 Populate:
 - issue: from $ISSUE_DATA
 - triage: from analysis report
+- triage.bluf: the BLUF paragraph from the analysis report (extract from ### BLUF section)
 - gsd_route: confirmed or overridden route
 - pipeline_stage: "triaged"
 - All other fields: defaults (empty arrays, null)
