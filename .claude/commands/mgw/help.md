@@ -1,0 +1,85 @@
+---
+name: mgw:help
+description: Show available MGW commands and usage guide
+argument-hint: ""
+allowed-tools: []
+---
+
+<objective>
+Display the MGW (My GSD Workflow) command reference. No side effects.
+</objective>
+
+<process>
+
+Display the following help text exactly:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MGW — My GSD Workflow
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+GitHub ↔ GSD bridge. Automates the issue → triage → execute → PR lifecycle.
+Local state in .mgw/ (gitignored, per-developer).
+
+COMMANDS
+
+  Browse & Triage
+  ───────────────
+  /mgw:issues [filters]        List open issues (defaults: @me, open)
+  /mgw:issue <number>          Triage issue against codebase, recommend GSD route
+
+  Pipeline
+  ────────
+  /mgw:run <number>            Autonomous: triage → GSD execute → PR (one command)
+
+  GitHub Operations
+  ─────────────────
+  /mgw:update <number> [msg]   Post status comment (auto-detects type, or custom)
+  /mgw:pr [number] [--base b]  Create PR from GSD artifacts + issue context
+  /mgw:link <ref> <ref>        Cross-reference issues/PRs/branches
+
+  Maintenance
+  ───────────
+  /mgw:sync                    Reconcile .mgw/ state with GitHub
+  /mgw:help                    This help text
+
+TYPICAL FLOW
+
+  1. /mgw:issues                    Browse your assigned issues
+  2. /mgw:issue 42                  Triage — scope, validity, security, GSD route
+  3. /mgw:run 42                    Full pipeline: plan → execute → verify → PR
+
+  Or skip straight to:
+  /mgw:run 42                      Auto-triages if not done yet
+
+MANUAL OPERATIONS
+
+  /mgw:update 42 "switching approach due to #38"
+  /mgw:link 42 #43
+  /mgw:link 42 branch:fix/auth-42
+  /mgw:pr                          Standalone PR from current branch
+  /mgw:pr 42 --base develop        PR linked to issue, custom base
+
+FILTER EXAMPLES
+
+  /mgw:issues                      Your open issues (default)
+  /mgw:issues --label bug           Filter by label
+  /mgw:issues --assignee all        All open issues
+  /mgw:issues --milestone v2.0      Filter by milestone
+
+GSD ROUTE MAPPING
+
+  Issue scope → GSD entry point (recommended by /mgw:issue):
+  Small (1-2 files)        → gsd:quick
+  Medium (3-8 files)       → gsd:quick --full
+  Large (9+ files/new sys) → gsd:new-milestone
+
+STATE
+
+  .mgw/active/              In-progress issues
+  .mgw/completed/           Archived after merge
+  .mgw/cross-refs.json      Issue ↔ PR ↔ branch links
+  .mgw/config.json          User preferences
+```
+
+</process>
