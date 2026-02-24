@@ -1,0 +1,50 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: bluf
+    attributes:
+      label: BLUF
+      description: Bottom Line Up Front — one sentence summary of the problem
+      placeholder: "mgw:run leaves user on issue branch after PR creation"
+    validations:
+      required: true
+
+  - type: textarea
+    id: whats-wrong
+    attributes:
+      label: What's Wrong
+      description: What's broken, with file paths and line numbers where relevant
+      placeholder: |
+        - `.claude/commands/mgw/run.md` line 81: uses `git checkout -b` instead of worktree
+        - User ends up on feature branch after pipeline completes
+    validations:
+      required: true
+
+  - type: textarea
+    id: whats-involved
+    attributes:
+      label: What's Involved
+      description: Files and systems that need changes
+      placeholder: |
+        - `.claude/commands/mgw/run.md` — update branching logic
+        - `.claude/commands/mgw/sync.md` — add cleanup handling
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-fix
+    attributes:
+      label: Steps to Fix
+      description: Suggested fix approach (optional but helpful for triage)
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Screenshots, logs, related issues, or session transcripts
+    validations:
+      required: false

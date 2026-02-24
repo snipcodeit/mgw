@@ -19,9 +19,14 @@ Display the following help text exactly:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 GitHub ↔ GSD bridge. Automates the issue → triage → execute → PR lifecycle.
+Work runs in isolated git worktrees — your main workspace stays on the default branch.
 Local state in .mgw/ (gitignored, per-developer).
 
 COMMANDS
+
+  Setup
+  ─────
+  /mgw:init                    Bootstrap repo for MGW (state, templates, labels)
 
   Browse & Triage
   ───────────────
@@ -30,7 +35,7 @@ COMMANDS
 
   Pipeline
   ────────
-  /mgw:run <number>            Autonomous: triage → GSD execute → PR (one command)
+  /mgw:run <number>            Autonomous: triage → GSD execute → PR (worktree-isolated)
 
   GitHub Operations
   ─────────────────
@@ -45,9 +50,12 @@ COMMANDS
 
 TYPICAL FLOW
 
+  0. /mgw:init                      One-time repo setup (state, templates, labels)
   1. /mgw:issues                    Browse your assigned issues
   2. /mgw:issue 42                  Triage — scope, validity, security, GSD route
   3. /mgw:run 42                    Full pipeline: plan → execute → verify → PR
+                                    (runs in worktree, you stay on main)
+  4. /mgw:sync                      After merge: archive state, clean up branches
 
   Or skip straight to:
   /mgw:run 42                      Auto-triages if not done yet
