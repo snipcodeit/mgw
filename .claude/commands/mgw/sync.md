@@ -45,7 +45,7 @@ For each file, load the JSON state.
 gh issue view ${NUMBER} --json state,closed -q '{state: .state, closed: .closed}'
 
 # PR state (if linked_pr exists)
-gh pr view ${PR_NUMBER} --json state,merged -q '{state: .state, merged: .merged}' 2>/dev/null
+gh pr view ${PR_NUMBER} --json state,mergedAt -q '{state: .state, mergedAt: .mergedAt}' 2>/dev/null
 
 # Branch existence
 git branch --list ${BRANCH_NAME} | grep -q . && echo "local" || echo "no-local"
