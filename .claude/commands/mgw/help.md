@@ -24,6 +24,10 @@ Local state in .mgw/ (gitignored, per-developer).
 
 COMMANDS
 
+  Setup
+  ─────
+  /mgw:init                    Bootstrap repo for MGW (state, templates, labels)
+
   Browse & Triage
   ───────────────
   /mgw:issues [filters]        List open issues (defaults: @me, open)
@@ -46,6 +50,7 @@ COMMANDS
 
 TYPICAL FLOW
 
+  0. /mgw:init                      One-time repo setup (state, templates, labels)
   1. /mgw:issues                    Browse your assigned issues
   2. /mgw:issue 42                  Triage — scope, validity, security, GSD route
   3. /mgw:run 42                    Full pipeline: plan → execute → verify → PR
