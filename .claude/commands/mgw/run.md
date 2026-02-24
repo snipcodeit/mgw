@@ -17,6 +17,9 @@ allowed-tools:
 The autonomous orchestrator. Takes an issue number, ensures it's triaged, then runs
 the full GSD pipeline through to PR creation with minimal user interaction.
 
+All work happens in an isolated git worktree — the user's main workspace stays on
+the default branch throughout. The worktree is cleaned up after PR creation.
+
 For quick/quick --full: runs entire pipeline in one session.
 For new-milestone: runs full milestone flow, posting updates after each phase.
 
@@ -45,6 +48,12 @@ State: .mgw/active/ (if triaged already)
 <step name="validate_and_load">
 **Validate input and load state:**
 
+Store repo root and default branch (used throughout):
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+DEFAULT=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
+```
+
 Parse $ARGUMENTS for issue number. If missing:
 ```
 AskUserQuestion(
@@ -54,7 +63,7 @@ AskUserQuestion(
 )
 ```
 
-Check for existing state: `.mgw/active/${ISSUE_NUMBER}-*.json`
+Check for existing state: `${REPO_ROOT}/.mgw/active/${ISSUE_NUMBER}-*.json`
 
 If no state file exists → issue not triaged yet. Run triage inline:
   - Inform user: "Issue #${ISSUE_NUMBER} hasn't been triaged. Running triage first."
@@ -67,22 +76,49 @@ If state file exists → load it. Check pipeline_stage:
   - "pr-created" / "done" → "Pipeline already completed for #${ISSUE_NUMBER}. Run /mgw:sync to reconcile."
 </step>
 
-<step name="create_branch">
-**Create feature branch if not on one:**
+<step name="create_worktree">
+**Create isolated worktree for issue work:**
 
-```bash
-CURRENT=$(git branch --show-current)
-DEFAULT=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
-```
-
-If on default branch, create and switch:
+Derive branch and worktree path:
 ```bash
 BRANCH_NAME="issue/${ISSUE_NUMBER}-${slug}"
-git checkout -b ${BRANCH_NAME}
+WORKTREE_DIR="${REPO_ROOT}/.worktrees/${BRANCH_NAME}"
 ```
 
-Update state: add branch to linked_branches.
-Add cross-ref: issue → branch.
+Ensure .worktrees/ is gitignored:
+```bash
+mkdir -p "$(dirname "${WORKTREE_DIR}")"
+if ! git check-ignore -q .worktrees 2>/dev/null; then
+  echo ".worktrees/" >> "${REPO_ROOT}/.gitignore"
+fi
+```
+
+Create worktree with feature branch:
+```bash
+# If worktree already exists (resume in same session), skip creation
+if [ -d "${WORKTREE_DIR}" ]; then
+  echo "Worktree exists, reusing"
+# If branch already exists (resume from prior session)
+elif git show-ref --verify --quiet "refs/heads/${BRANCH_NAME}"; then
+  git worktree add "${WORKTREE_DIR}" "${BRANCH_NAME}"
+# New branch (first run)
+else
+  git worktree add "${WORKTREE_DIR}" -b "${BRANCH_NAME}"
+fi
+```
+
+**Switch working directory to worktree:**
+```bash
+cd "${WORKTREE_DIR}"
+```
+
+Update state (at `${REPO_ROOT}/.mgw/active/`): add branch to linked_branches.
+Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → branch.
+
+**PATH CONVENTION for remaining steps:**
+- File operations, git commands, and agent work use **relative paths** (CWD = worktree)
+- `.mgw/` state operations use **absolute paths**: `${REPO_ROOT}/.mgw/`
+  (`.mgw/` is gitignored — it only exists in the main repo, not the worktree)
 </step>
 
 <step name="post_start_update">
@@ -103,7 +139,7 @@ Command: gh issue comment ${ISSUE_NUMBER} --body '<comment_body>'
 )
 ```
 
-Log comment in state file.
+Log comment in state file (at `${REPO_ROOT}/.mgw/active/`).
 </step>
 
 <step name="execute_gsd_quick">
@@ -111,7 +147,7 @@ Log comment in state file.
 
 Only run this step if gsd_route is "gsd:quick" or "gsd:quick --full".
 
-Update pipeline_stage to "executing" in state file.
+Update pipeline_stage to "executing" in state file (at `${REPO_ROOT}/.mgw/active/`).
 
 Determine flags:
 - "gsd:quick" → $QUICK_FLAGS = ""
@@ -266,7 +302,7 @@ Check must_haves against actual codebase. Create VERIFICATION.md at ${QUICK_DIR}
 node ~/.claude/get-shit-done/bin/gsd-tools.cjs commit "docs(quick-${next_num}): ${issue_title}" --files ${file_list}
 ```
 
-Update state: gsd_artifacts.path = $QUICK_DIR, pipeline_stage = "verifying".
+Update state (at `${REPO_ROOT}/.mgw/active/`): gsd_artifacts.path = $QUICK_DIR, pipeline_stage = "verifying".
 </step>
 
 <step name="execute_gsd_milestone">
@@ -287,7 +323,7 @@ This is the most complex path. The orchestrator needs to:
    continue the pipeline through execution.
    ```
 
-   Update pipeline_stage to "planning".
+   Update pipeline_stage to "planning" (at `${REPO_ROOT}/.mgw/active/`).
 
 2. **If resuming with pipeline_stage = "planning" and ROADMAP.md exists:**
    Read ROADMAP.md to find phases. For each phase:
@@ -310,7 +346,7 @@ This is the most complex path. The orchestrator needs to:
    )
    ```
 
-   After all phases complete → update pipeline_stage to "verifying".
+   After all phases complete → update pipeline_stage to "verifying" (at `${REPO_ROOT}/.mgw/active/`).
 </step>
 
 <step name="create_pr">
@@ -318,13 +354,14 @@ This is the most complex path. The orchestrator needs to:
 
 After GSD execution completes (any route):
 
-Gather artifacts:
+Push branch and gather artifacts:
 ```bash
-# Read SUMMARY and VERIFICATION from GSD artifacts path
+git push -u origin ${BRANCH_NAME}
+
 SUMMARY=$(cat ${gsd_artifacts_path}/*SUMMARY* 2>/dev/null)
 VERIFICATION=$(cat ${gsd_artifacts_path}/*VERIFICATION* 2>/dev/null)
 COMMITS=$(git log ${DEFAULT_BRANCH}..HEAD --oneline)
-CROSS_REFS=$(cat .mgw/cross-refs.json 2>/dev/null)
+CROSS_REFS=$(cat ${REPO_ROOT}/.mgw/cross-refs.json 2>/dev/null)
 ```
 
 Read issue state for context.
@@ -361,7 +398,7 @@ ${CROSS_REFS}
    - Closes #${ISSUE_NUMBER}
    - ## Changes (file-level grouped by system)
    - ## Cross-References (if any)
-3. Create PR: gh pr create --title '<title>' --base '${DEFAULT_BRANCH}' --body '<body>'
+3. Create PR: gh pr create --title '<title>' --base '${DEFAULT_BRANCH}' --head '${BRANCH_NAME}' --body '<body>'
 4. Post testing procedures as separate PR comment: gh pr comment <pr_number> --body '<testing>'
 5. Return: PR number, PR URL
 </instructions>
@@ -373,16 +410,25 @@ ${CROSS_REFS}
 
 Parse PR number and URL from agent response.
 
-Update state:
+Update state (at `${REPO_ROOT}/.mgw/active/`):
 - linked_pr = PR number
 - pipeline_stage = "pr-created"
 
-Add cross-ref: issue → PR.
+Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → PR.
 </step>
 
-<step name="post_completion">
-**Post completion comment and report:**
+<step name="cleanup_and_complete">
+**Clean up worktree, post completion, and prompt sync:**
 
+Return to main repo and remove worktree (branch persists for PR):
+```bash
+cd "${REPO_ROOT}"
+git worktree remove "${WORKTREE_DIR}" 2>/dev/null
+rmdir "${REPO_ROOT}/.worktrees/issue" 2>/dev/null
+rmdir "${REPO_ROOT}/.worktrees" 2>/dev/null
+```
+
+Post completion comment:
 ```
 Task(
   prompt="Post GitHub issue comment.
@@ -396,7 +442,7 @@ Command: gh issue comment ${ISSUE_NUMBER} --body '<body>'",
 )
 ```
 
-Update pipeline_stage to "done".
+Update pipeline_stage to "done" (at `${REPO_ROOT}/.mgw/active/`).
 
 Report to user:
 ```
@@ -407,12 +453,14 @@ Report to user:
 Issue:  #${ISSUE_NUMBER} — ${issue_title}
 Route:  ${gsd_route}
 PR:     #${PR_NUMBER} — ${PR_URL}
-Branch: ${BRANCH_NAME}
+Branch: ${BRANCH_NAME} (worktree cleaned up)
 
 Status comments posted. PR includes testing procedures.
 Issue will auto-close on merge.
 
-Next: Review the PR, then merge when ready.
+Next:
+  → Review the PR, then merge
+  → After merge: /mgw:sync to archive state and clean up branches
 ```
 </step>
 
@@ -420,11 +468,12 @@ Next: Review the PR, then merge when ready.
 
 <success_criteria>
 - [ ] Issue number validated and state loaded (or triage run first)
-- [ ] Feature branch created if on default branch
+- [ ] Isolated worktree created (.worktrees/ gitignored)
 - [ ] "Work started" comment posted on issue
-- [ ] GSD pipeline executed (quick or milestone route)
+- [ ] GSD pipeline executed in worktree (quick or milestone route)
 - [ ] PR created with summary, testing procedures, cross-refs
 - [ ] "PR ready" comment posted on issue
+- [ ] Worktree cleaned up, user returned to main workspace
 - [ ] State file updated through all pipeline stages
-- [ ] Final report shown to user
+- [ ] User prompted to run /mgw:sync after merge
 </success_criteria>
