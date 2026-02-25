@@ -1,9 +1,8 @@
 <purpose>
-Shared state management for MGW commands. All mgw: commands reference this
-for .mgw/ directory initialization, issue state read/write, and cross-ref management.
+Shared state management for MGW commands. Handles .mgw/ directory initialization,
+issue state read/write, cross-ref management, and staleness detection against GitHub.
+Every command that touches .mgw/ state references this file.
 </purpose>
-
-<state_format>
 
 ## Directory Structure
 
@@ -18,25 +17,117 @@ for .mgw/ directory initialization, issue state read/write, and cross-ref manage
   cross-refs.json    # Bidirectional issue/PR/branch links
 ```
 
-## Initialization
+## validate_and_load
 
-Before any state operation, ensure .mgw/ exists:
+Single entry point for state initialization. Every command that touches .mgw/ calls
+this pattern at startup. It ensures directory structure, gitignore entries, cross-refs,
+and runs a lightweight staleness check.
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
 MGW_DIR="${REPO_ROOT}/.mgw"
+
+# 1. Ensure directory structure
 mkdir -p "${MGW_DIR}/active" "${MGW_DIR}/completed"
 
-# Ensure gitignored
-if ! grep -q "^\.mgw/$" "${REPO_ROOT}/.gitignore" 2>/dev/null; then
-  echo ".mgw/" >> "${REPO_ROOT}/.gitignore"
-fi
+# 2. Ensure gitignore entries
+for ENTRY in ".mgw/" ".worktrees/"; do
+  if ! grep -q "^\\${ENTRY}\$" "${REPO_ROOT}/.gitignore" 2>/dev/null; then
+    echo "${ENTRY}" >> "${REPO_ROOT}/.gitignore"
+  fi
+done
 
-# Initialize cross-refs if missing
+# 3. Initialize cross-refs if missing
 if [ ! -f "${MGW_DIR}/cross-refs.json" ]; then
   echo '{"links":[]}' > "${MGW_DIR}/cross-refs.json"
 fi
+
+# 4. Run staleness check (see Staleness Detection below)
+# Only if active issues exist — skip for commands that don't need it (e.g., init, help)
+if ls "${MGW_DIR}/active/"*.json 1>/dev/null 2>&1; then
+  check_staleness "${MGW_DIR}"
+fi
 ```
+
+## Staleness Detection
+
+Lightweight check comparing GitHub `updatedAt` timestamps with local state file
+modification times. Runs on every MGW command that touches state. Non-blocking:
+if the check fails (network error, API limit), log a warning and continue.
+
+### Per-Issue Check
+For commands that operate on a specific issue:
+
+```bash
+# Non-blocking: if check fails, continue with warning
+check_issue_staleness() {
+  local ISSUE_NUMBER="$1"
+  local STATE_FILE="$2"
+
+  # Get GitHub's last update timestamp
+  GH_UPDATED=$(gh issue view "$ISSUE_NUMBER" --json updatedAt -q .updatedAt 2>/dev/null)
+  if [ -z "$GH_UPDATED" ]; then
+    return 0  # Can't check — don't block
+  fi
+
+  # Compare with local state file modification time
+  LOCAL_MTIME=$(stat -c %Y "$STATE_FILE" 2>/dev/null || echo "0")
+  GH_EPOCH=$(date -d "$GH_UPDATED" +%s 2>/dev/null || echo "0")
+
+  if [ "$GH_EPOCH" -gt "$LOCAL_MTIME" ]; then
+    echo "MGW: Stale state detected for #${ISSUE_NUMBER} — auto-syncing..."
+    # Re-fetch issue data and update local state
+    FRESH_DATA=$(gh issue view "$ISSUE_NUMBER" --json number,title,body,labels,assignees,state,comments,url,milestone 2>/dev/null)
+    if [ -n "$FRESH_DATA" ]; then
+      # Update the issue section of the state file (preserve pipeline_stage, triage, etc.)
+      # Implementation: read state JSON, update .issue fields, write back
+      touch "$STATE_FILE"  # Update mtime to prevent re-triggering
+    fi
+    return 1  # Stale — caller can react
+  fi
+  return 0  # Fresh
+}
+```
+
+### Batch Check (Milestone-Level)
+For commands that check across all active issues in a single API call:
+
+```bash
+# Single GraphQL call for all open issues — use for milestone operations
+check_batch_staleness() {
+  local MGW_DIR="$1"
+
+  OWNER=$(gh repo view --json owner -q .owner.login 2>/dev/null)
+  REPO=$(gh repo view --json name -q .name 2>/dev/null)
+
+  if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
+    return 0  # Can't check — don't block
+  fi
+
+  ISSUES_JSON=$(gh api graphql -f query='
+    query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        issues(first: 50, states: OPEN) {
+          nodes { number updatedAt }
+        }
+      }
+    }
+  ' -f owner="$OWNER" -f repo="$REPO" --jq '.data.repository.issues.nodes' 2>/dev/null)
+
+  if [ -z "$ISSUES_JSON" ]; then
+    return 0  # Can't check — don't block
+  fi
+
+  # Compare each issue's updatedAt with local state file mtime
+  # Flag any stale issues for sync
+  echo "$ISSUES_JSON"
+}
+```
+
+### Staleness Behavior
+- When stale state is detected: **auto-sync with notice** — sync automatically, print one line telling the user it happened, do not block
+- When the check fails (network, API limit, error): **continue silently** — never let staleness detection prevent command execution
+- Scope: covers **both milestone-level and issue-level state**
 
 ## Issue State Schema
 
@@ -96,4 +187,21 @@ File: `.mgw/cross-refs.json`
 }
 ```
 
-</state_format>
+### Link Types
+| a | b | type |
+|---|---|------|
+| issue | issue | related |
+| issue | pr | implements |
+| issue | branch | tracks |
+| pr | branch | tracks |
+
+## Consumers
+
+| Pattern | Referenced By |
+|---------|-------------|
+| validate_and_load | init.md, issue.md, run.md, update.md, link.md, pr.md, sync.md |
+| Per-issue staleness | run.md, issue.md, update.md |
+| Batch staleness | sync.md (full reconciliation) |
+| Issue state schema | issue.md, run.md, update.md, sync.md |
+| Cross-refs schema | link.md, run.md, pr.md, sync.md |
+| Slug generation | issue.md, run.md |
