@@ -28,6 +28,10 @@ COMMANDS
   ─────
   /mgw:init                    Bootstrap repo for MGW (state, templates, labels)
 
+  Project
+  ───────
+  /mgw:project                 Initialize project — milestones, issues, ROADMAP from template
+
   Browse & Triage
   ───────────────
   /mgw:issues [filters]        List open issues (defaults: @me, open)
@@ -51,11 +55,12 @@ COMMANDS
 TYPICAL FLOW
 
   0. /mgw:init                      One-time repo setup (state, templates, labels)
-  1. /mgw:issues                    Browse your assigned issues
-  2. /mgw:issue 42                  Triage — scope, validity, security, GSD route
-  3. /mgw:run 42                    Full pipeline: plan → execute → verify → PR
+  1. /mgw:project                   Day 1: create milestones + issue backlog from template
+  2. /mgw:issues                    Browse your assigned issues
+  3. /mgw:issue 42                  Triage — scope, validity, security, GSD route
+  4. /mgw:run 42                    Full pipeline: plan → execute → verify → PR
                                     (runs in worktree, you stay on main)
-  4. /mgw:sync                      After merge: archive state, clean up branches
+  5. /mgw:sync                      After merge: archive state, clean up branches
 
   Or skip straight to:
   /mgw:run 42                      Auto-triages if not done yet
@@ -88,6 +93,7 @@ STATE
   .mgw/completed/           Archived after merge
   .mgw/cross-refs.json      Issue ↔ PR ↔ branch links
   .mgw/config.json          User preferences
+  .mgw/project.json         Project structure (milestones, phases, template)
 
 SHARED WORKFLOWS
 
