@@ -1,4 +1,6 @@
 .mgw/
+.planning/
 *.swp
 *.swo
 .DS_Store
+.worktrees/
