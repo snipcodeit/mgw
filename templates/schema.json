@@ -150,6 +150,12 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Labels to apply to the issue"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Issue slugs this issue depends on (resolved to GitHub issue numbers during init)"
         }
       },
       "additionalProperties": false

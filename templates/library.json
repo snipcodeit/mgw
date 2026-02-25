@@ -50,17 +50,20 @@
             {
               "title": "Define {project_name} public API surface and type signatures",
               "description": "Design the public-facing API: function signatures, type definitions, and module exports for {description}",
-              "labels": ["design", "api", "phase-1"]
+              "labels": ["design", "api", "phase-1"],
+              "depends_on": []
             },
             {
               "title": "Set up module structure and exports",
               "description": "Create directory layout, configure entry points (CJS/ESM), and set up barrel exports with tree-shaking support",
-              "labels": ["setup", "architecture", "phase-1"]
+              "labels": ["setup", "architecture", "phase-1"],
+              "depends_on": ["define-project-name-public-api-surface-and-type-si"]
             },
             {
               "title": "Create API documentation stubs",
               "description": "Write JSDoc/TSDoc comments for all public APIs, generate initial API reference, and add usage examples",
-              "labels": ["docs", "api", "phase-1"]
+              "labels": ["docs", "api", "phase-1"],
+              "depends_on": ["define-project-name-public-api-surface-and-type-si"]
             }
           ]
         },
@@ -73,17 +76,20 @@
             {
               "title": "Implement core library functions",
               "description": "Build the primary functions and classes that deliver {project_name}'s core value: {description}",
-              "labels": ["feature", "core", "phase-2"]
+              "labels": ["feature", "core", "phase-2"],
+              "depends_on": ["set-up-module-structure-and-exports"]
             },
             {
               "title": "Add input validation and error handling",
               "description": "Validate all public API inputs, throw descriptive errors, and handle edge cases without silent failures",
-              "labels": ["feature", "validation", "phase-2"]
+              "labels": ["feature", "validation", "phase-2"],
+              "depends_on": ["implement-core-library-functions"]
             },
             {
               "title": "Write unit tests for core API",
               "description": "Achieve 90%+ coverage on public API: happy paths, error cases, boundary values, and type safety",
-              "labels": ["testing", "phase-2"]
+              "labels": ["testing", "phase-2"],
+              "depends_on": ["add-input-validation-and-error-handling"]
             }
           ]
         }
@@ -102,17 +108,20 @@
             {
               "title": "Expand test coverage to edge cases",
               "description": "Test unusual inputs, concurrent usage, large datasets, and failure recovery scenarios",
-              "labels": ["testing", "edge-cases", "phase-3"]
+              "labels": ["testing", "edge-cases", "phase-3"],
+              "depends_on": ["write-unit-tests-for-core-api"]
             },
             {
               "title": "Add integration tests and examples",
               "description": "Create integration tests that exercise the library end-to-end, plus example projects showing real-world usage",
-              "labels": ["testing", "examples", "phase-3"]
+              "labels": ["testing", "examples", "phase-3"],
+              "depends_on": ["expand-test-coverage-to-edge-cases"]
             },
             {
               "title": "Run performance benchmarks",
               "description": "Benchmark critical paths, establish baseline metrics, and optimize hot paths if needed",
-              "labels": ["performance", "phase-3"]
+              "labels": ["performance", "phase-3"],
+              "depends_on": ["write-unit-tests-for-core-api"]
             }
           ]
         }
@@ -131,17 +140,20 @@
             {
               "title": "Write comprehensive API reference",
               "description": "Generate full API docs from JSDoc/TSDoc, add parameter descriptions, return types, and usage examples for every public method",
-              "labels": ["docs", "api", "phase-4"]
+              "labels": ["docs", "api", "phase-4"],
+              "depends_on": ["add-integration-tests-and-examples"]
             },
             {
               "title": "Create usage examples and guides",
               "description": "Write getting-started guide, common patterns cookbook, and migration guide (if replacing existing solutions)",
-              "labels": ["docs", "examples", "phase-4"]
+              "labels": ["docs", "examples", "phase-4"],
+              "depends_on": ["write-comprehensive-api-reference"]
             },
             {
               "title": "Add contributing guidelines",
               "description": "Write CONTRIBUTING.md with development setup, code style, testing requirements, and PR process",
-              "labels": ["docs", "community", "phase-4"]
+              "labels": ["docs", "community", "phase-4"],
+              "depends_on": []
             }
           ]
         },
@@ -154,12 +166,14 @@
             {
               "title": "Configure package.json for publishing",
               "description": "Set up name, version, main/module/types fields, files whitelist, engines, and peer dependencies",
-              "labels": ["deployment", "npm", "phase-5"]
+              "labels": ["deployment", "npm", "phase-5"],
+              "depends_on": ["create-usage-examples-and-guides", "add-contributing-guidelines"]
             },
             {
               "title": "Set up versioning and changelog",
               "description": "Configure semantic versioning, CHANGELOG.md generation, and GitHub release creation on publish",
-              "labels": ["deployment", "versioning", "phase-5"]
+              "labels": ["deployment", "versioning", "phase-5"],
+              "depends_on": ["configure-package-json-for-publishing"]
             }
           ]
         }

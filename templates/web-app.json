@@ -50,17 +50,20 @@
             {
               "title": "Set up {project_name} project structure",
               "description": "Initialize the project repository with package manager, directory layout, and essential configuration files",
-              "labels": ["setup", "phase-1"]
+              "labels": ["setup", "phase-1"],
+              "depends_on": []
             },
             {
               "title": "Configure development tooling and linting",
               "description": "Set up linter, formatter, TypeScript config (if applicable), and git hooks for consistent code quality",
-              "labels": ["setup", "tooling", "phase-1"]
+              "labels": ["setup", "tooling", "phase-1"],
+              "depends_on": ["set-up-project-name-project-structure"]
             },
             {
               "title": "Create initial README and documentation",
               "description": "Write project README with setup instructions, architecture overview, and contributing guidelines",
-              "labels": ["docs", "phase-1"]
+              "labels": ["docs", "phase-1"],
+              "depends_on": []
             }
           ]
         },
@@ -73,17 +76,20 @@
             {
               "title": "Implement core layout and navigation",
               "description": "Create the application shell with header, sidebar/navigation, and main content area with responsive breakpoints",
-              "labels": ["feature", "ui", "phase-2"]
+              "labels": ["feature", "ui", "phase-2"],
+              "depends_on": ["configure-development-tooling-and-linting"]
             },
             {
               "title": "Build base UI components",
               "description": "Create reusable component library: buttons, forms, cards, modals, and loading states",
-              "labels": ["feature", "ui", "phase-2"]
+              "labels": ["feature", "ui", "phase-2"],
+              "depends_on": ["implement-core-layout-and-navigation"]
             },
             {
               "title": "Set up routing and page structure",
               "description": "Configure client-side routing, create page shells for all primary views, and implement 404 handling",
-              "labels": ["feature", "ui", "phase-2"]
+              "labels": ["feature", "ui", "phase-2"],
+              "depends_on": ["implement-core-layout-and-navigation"]
             }
           ]
         }
@@ -102,17 +108,20 @@
             {
               "title": "Implement primary feature set",
               "description": "Build the core features that deliver {project_name}'s main value proposition as described: {description}",
-              "labels": ["feature", "core", "phase-3"]
+              "labels": ["feature", "core", "phase-3"],
+              "depends_on": ["build-base-ui-components", "set-up-routing-and-page-structure"]
             },
             {
               "title": "Build data layer and state management",
               "description": "Implement data fetching, caching, and client-side state management for all core features",
-              "labels": ["feature", "data", "phase-3"]
+              "labels": ["feature", "data", "phase-3"],
+              "depends_on": ["implement-primary-feature-set"]
             },
             {
               "title": "Integrate API endpoints",
               "description": "Connect frontend to backend APIs, implement error handling, loading states, and optimistic updates",
-              "labels": ["feature", "api", "phase-3"]
+              "labels": ["feature", "api", "phase-3"],
+              "depends_on": ["build-data-layer-and-state-management"]
             }
           ]
         }
@@ -131,17 +140,20 @@
             {
               "title": "Add test coverage for core features",
               "description": "Write unit tests for business logic, integration tests for API layer, and component tests for critical UI flows",
-              "labels": ["testing", "phase-4"]
+              "labels": ["testing", "phase-4"],
+              "depends_on": ["integrate-api-endpoints"]
             },
             {
               "title": "Fix edge cases and error handling",
               "description": "Address error states, empty states, boundary conditions, and network failure scenarios",
-              "labels": ["bugfix", "phase-4"]
+              "labels": ["bugfix", "phase-4"],
+              "depends_on": ["add-test-coverage-for-core-features"]
             },
             {
               "title": "Optimize performance and accessibility",
               "description": "Run Lighthouse audit, optimize bundle size, add lazy loading, and fix accessibility issues (WCAG 2.1 AA)",
-              "labels": ["performance", "a11y", "phase-4"]
+              "labels": ["performance", "a11y", "phase-4"],
+              "depends_on": ["fix-edge-cases-and-error-handling"]
             }
           ]
         },
@@ -154,12 +166,14 @@
             {
               "title": "Configure deployment pipeline",
               "description": "Set up CI/CD, environment variables, production build configuration, and deployment target",
-              "labels": ["deployment", "phase-5"]
+              "labels": ["deployment", "phase-5"],
+              "depends_on": ["optimize-performance-and-accessibility"]
             },
             {
               "title": "Final review and launch checklist",
               "description": "Complete pre-launch checklist: security review, SEO basics, analytics, error tracking, and monitoring",
-              "labels": ["deployment", "review", "phase-5"]
+              "labels": ["deployment", "review", "phase-5"],
+              "depends_on": ["configure-deployment-pipeline"]
             }
           ]
         }
