@@ -44,6 +44,7 @@ So I built MGW to be the responsible adult in the room. I point it at an issue, 
 
 | Command | What it does |
 |---------|-------------|
+| `/mgw:init` | Bootstrap repo for MGW — creates .mgw/ state, GitHub templates, gitignore entries |
 | `/mgw:issues` | Browse and filter your GitHub issues |
 | `/mgw:issue <n>` | Deep triage — scope analysis, security review, GSD route recommendation |
 | `/mgw:run <n>` | Full autonomous pipeline: triage through PR creation |
@@ -81,7 +82,6 @@ MGW tracks pipeline state in a local `.mgw/` directory (gitignored, per-develope
     42-fix-auth.json   Issue state: triage results, pipeline stage, artifacts
   completed/           Archived after PR merge
   cross-refs.json      Bidirectional issue/PR/branch links
-  config.json          User preferences
 ```
 
 Pipeline stages flow: `new` → `triaged` → `planning` → `executing` → `verifying` → `pr-created` → `done`
@@ -116,6 +116,8 @@ git clone https://github.com/snipcodeit/mgw.git
 stow -v -t ~ mgw
 ```
 
+> **Note:** The stow command assumes the repo directory is named `mgw` (the default from `git clone`). If you renamed the directory, replace `mgw` with its actual name.
+
 To update after pulling changes:
 
 ```bash
@@ -127,7 +129,7 @@ stow -v -R -t ~ mgw
 
 ```bash
 ls ~/.claude/commands/mgw/
-# help.md  issue.md  issues.md  link.md  pr.md  run.md  sync.md  update.md  workflows/
+# help.md  init.md  issue.md  issues.md  link.md  pr.md  run.md  sync.md  update.md  workflows/
 ```
 
 Then in Claude Code:
@@ -170,6 +172,7 @@ Or go manual for more control:
   commands/
     mgw/
       help.md              Command reference display
+      init.md               One-time repo bootstrap (state, templates, labels)
       issues.md            Issue browser with filters
       issue.md             Deep triage with agent analysis
       update.md            Structured GitHub comments
