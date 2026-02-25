@@ -1,0 +1,169 @@
+{
+  "type": "web-app",
+  "version": "1.0.0",
+  "description": "Opinionated web application pipeline — from project setup to go-live",
+  "parameters": {
+    "required": [
+      {
+        "name": "project_name",
+        "type": "string",
+        "description": "Project name"
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "description": "One-line project description"
+      }
+    ],
+    "optional": [
+      {
+        "name": "repo",
+        "type": "string",
+        "default": "detect",
+        "description": "GitHub repo (owner/name)"
+      },
+      {
+        "name": "stack",
+        "type": "string",
+        "default": "unknown",
+        "description": "Tech stack hint"
+      },
+      {
+        "name": "prefix",
+        "type": "string",
+        "default": "v1",
+        "description": "Milestone naming prefix"
+      }
+    ]
+  },
+  "milestones": [
+    {
+      "name": "{prefix}: Foundation",
+      "description": "Project scaffolding, tooling, and base UI structure",
+      "phases": [
+        {
+          "number": 1,
+          "name": "Project Setup",
+          "description": "Scaffold project structure, install dependencies, configure development tooling and CI basics",
+          "gsd_route": "plan-phase",
+          "issues": [
+            {
+              "title": "Set up {project_name} project structure",
+              "description": "Initialize the project repository with package manager, directory layout, and essential configuration files",
+              "labels": ["setup", "phase-1"]
+            },
+            {
+              "title": "Configure development tooling and linting",
+              "description": "Set up linter, formatter, TypeScript config (if applicable), and git hooks for consistent code quality",
+              "labels": ["setup", "tooling", "phase-1"]
+            },
+            {
+              "title": "Create initial README and documentation",
+              "description": "Write project README with setup instructions, architecture overview, and contributing guidelines",
+              "labels": ["docs", "phase-1"]
+            }
+          ]
+        },
+        {
+          "number": 2,
+          "name": "UI Scaffold",
+          "description": "Build core layout, navigation shell, and foundational UI components that all features will use",
+          "gsd_route": "plan-phase",
+          "issues": [
+            {
+              "title": "Implement core layout and navigation",
+              "description": "Create the application shell with header, sidebar/navigation, and main content area with responsive breakpoints",
+              "labels": ["feature", "ui", "phase-2"]
+            },
+            {
+              "title": "Build base UI components",
+              "description": "Create reusable component library: buttons, forms, cards, modals, and loading states",
+              "labels": ["feature", "ui", "phase-2"]
+            },
+            {
+              "title": "Set up routing and page structure",
+              "description": "Configure client-side routing, create page shells for all primary views, and implement 404 handling",
+              "labels": ["feature", "ui", "phase-2"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "{prefix}: Core Features",
+      "description": "Primary feature implementation with data layer and API integration",
+      "phases": [
+        {
+          "number": 3,
+          "name": "Core Implementation",
+          "description": "Implement the primary features, data layer, state management, and API integration that deliver the app's core value",
+          "gsd_route": "plan-phase",
+          "issues": [
+            {
+              "title": "Implement primary feature set",
+              "description": "Build the core features that deliver {project_name}'s main value proposition as described: {description}",
+              "labels": ["feature", "core", "phase-3"]
+            },
+            {
+              "title": "Build data layer and state management",
+              "description": "Implement data fetching, caching, and client-side state management for all core features",
+              "labels": ["feature", "data", "phase-3"]
+            },
+            {
+              "title": "Integrate API endpoints",
+              "description": "Connect frontend to backend APIs, implement error handling, loading states, and optimistic updates",
+              "labels": ["feature", "api", "phase-3"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "{prefix}: Polish & Ship",
+      "description": "Quality assurance, performance optimization, and production deployment",
+      "phases": [
+        {
+          "number": 4,
+          "name": "Testing & Polish",
+          "description": "Add test coverage, fix edge cases, optimize performance, and ensure accessibility compliance",
+          "gsd_route": "plan-phase",
+          "issues": [
+            {
+              "title": "Add test coverage for core features",
+              "description": "Write unit tests for business logic, integration tests for API layer, and component tests for critical UI flows",
+              "labels": ["testing", "phase-4"]
+            },
+            {
+              "title": "Fix edge cases and error handling",
+              "description": "Address error states, empty states, boundary conditions, and network failure scenarios",
+              "labels": ["bugfix", "phase-4"]
+            },
+            {
+              "title": "Optimize performance and accessibility",
+              "description": "Run Lighthouse audit, optimize bundle size, add lazy loading, and fix accessibility issues (WCAG 2.1 AA)",
+              "labels": ["performance", "a11y", "phase-4"]
+            }
+          ]
+        },
+        {
+          "number": 5,
+          "name": "Go Live",
+          "description": "Configure deployment pipeline, run final review, and launch to production",
+          "gsd_route": "quick",
+          "issues": [
+            {
+              "title": "Configure deployment pipeline",
+              "description": "Set up CI/CD, environment variables, production build configuration, and deployment target",
+              "labels": ["deployment", "phase-5"]
+            },
+            {
+              "title": "Final review and launch checklist",
+              "description": "Complete pre-launch checklist: security review, SEO basics, analytics, error tracking, and monitoring",
+              "labels": ["deployment", "review", "phase-5"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

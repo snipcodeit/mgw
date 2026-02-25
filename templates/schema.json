@@ -1,0 +1,158 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MGW Pipeline Template",
+  "description": "Schema for MGW pipeline templates. Each template defines an opinionated project lifecycle with milestones, phases, and GSD route recommendations.",
+  "type": "object",
+  "required": ["type", "version", "description", "parameters", "milestones"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["web-app", "cli-tool", "library"],
+      "description": "Template type identifier"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Template version (semver)"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable template description"
+    },
+    "parameters": {
+      "type": "object",
+      "required": ["required", "optional"],
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/requiredParameter" },
+          "description": "Parameters the user must provide"
+        },
+        "optional": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/optionalParameter" },
+          "description": "Parameters with smart defaults"
+        }
+      },
+      "additionalProperties": false
+    },
+    "milestones": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/milestone" },
+      "description": "Ordered milestones for the project lifecycle"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "requiredParameter": {
+      "type": "object",
+      "required": ["name", "type", "description"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "enum": ["string"] },
+        "description": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "optionalParameter": {
+      "type": "object",
+      "required": ["name", "type", "default", "description"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "enum": ["string"] },
+        "default": { "type": "string" },
+        "description": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "milestone": {
+      "type": "object",
+      "required": ["name", "description", "phases"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Milestone name (may contain {prefix} placeholder)"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What this milestone delivers"
+        },
+        "phases": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/phase" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "phase": {
+      "type": "object",
+      "required": ["number", "name", "description", "gsd_route", "issues"],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Phase number within the project"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Phase name"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What this phase accomplishes"
+        },
+        "gsd_route": {
+          "type": "string",
+          "enum": [
+            "quick",
+            "plan-phase",
+            "discuss-phase",
+            "research-phase",
+            "execute-phase",
+            "verify-phase",
+            "new-project",
+            "new-milestone",
+            "complete-milestone"
+          ],
+          "description": "Recommended GSD workflow for this phase"
+        },
+        "issues": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/issue" },
+          "description": "Issue templates for this phase"
+        }
+      },
+      "additionalProperties": false
+    },
+    "issue": {
+      "type": "object",
+      "required": ["title", "description", "labels"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Issue title (may contain {project_name} or {description} placeholders)"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Issue description"
+        },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Labels to apply to the issue"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

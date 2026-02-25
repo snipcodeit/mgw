@@ -1,0 +1,169 @@
+{
+  "type": "library",
+  "version": "1.0.0",
+  "description": "Opinionated library pipeline — from API surface design to publishing",
+  "parameters": {
+    "required": [
+      {
+        "name": "project_name",
+        "type": "string",
+        "description": "Project name"
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "description": "One-line project description"
+      }
+    ],
+    "optional": [
+      {
+        "name": "repo",
+        "type": "string",
+        "default": "detect",
+        "description": "GitHub repo (owner/name)"
+      },
+      {
+        "name": "stack",
+        "type": "string",
+        "default": "unknown",
+        "description": "Tech stack hint"
+      },
+      {
+        "name": "prefix",
+        "type": "string",
+        "default": "v1",
+        "description": "Milestone naming prefix"
+      }
+    ]
+  },
+  "milestones": [
+    {
+      "name": "{prefix}: API Design",
+      "description": "Public API surface definition, module structure, and core implementation",
+      "phases": [
+        {
+          "number": 1,
+          "name": "API Surface",
+          "description": "Define public API, type signatures, module structure, and export boundaries",
+          "gsd_route": "plan-phase",
+          "issues": [
+            {
+              "title": "Define {project_name} public API surface and type signatures",
+              "description": "Design the public-facing API: function signatures, type definitions, and module exports for {description}",
+              "labels": ["design", "api", "phase-1"]
+            },
+            {
+              "title": "Set up module structure and exports",
+              "description": "Create directory layout, configure entry points (CJS/ESM), and set up barrel exports with tree-shaking support",
+              "labels": ["setup", "architecture", "phase-1"]
+            },
+            {
+              "title": "Create API documentation stubs",
+              "description": "Write JSDoc/TSDoc comments for all public APIs, generate initial API reference, and add usage examples",
+              "labels": ["docs", "api", "phase-1"]
+            }
+          ]
+        },
+        {
+          "number": 2,
+          "name": "Core Implementation",
+          "description": "Implement the core library functionality with input validation and comprehensive unit tests",
+          "gsd_route": "plan-phase",
+          "issues": [
+            {
+              "title": "Implement core library functions",
+              "description": "Build the primary functions and classes that deliver {project_name}'s core value: {description}",
+              "labels": ["feature", "core", "phase-2"]
+            },
+            {
+              "title": "Add input validation and error handling",
+              "description": "Validate all public API inputs, throw descriptive errors, and handle edge cases without silent failures",
+              "labels": ["feature", "validation", "phase-2"]
+            },
+            {
+              "title": "Write unit tests for core API",
+              "description": "Achieve 90%+ coverage on public API: happy paths, error cases, boundary values, and type safety",
+              "labels": ["testing", "phase-2"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "{prefix}: Quality",
+      "description": "Expanded test coverage, edge case handling, and performance validation",
+      "phases": [
+        {
+          "number": 3,
+          "name": "Testing & Validation",
+          "description": "Comprehensive test suite including edge cases, integration tests, example projects, and performance benchmarks",
+          "gsd_route": "plan-phase",
+          "issues": [
+            {
+              "title": "Expand test coverage to edge cases",
+              "description": "Test unusual inputs, concurrent usage, large datasets, and failure recovery scenarios",
+              "labels": ["testing", "edge-cases", "phase-3"]
+            },
+            {
+              "title": "Add integration tests and examples",
+              "description": "Create integration tests that exercise the library end-to-end, plus example projects showing real-world usage",
+              "labels": ["testing", "examples", "phase-3"]
+            },
+            {
+              "title": "Run performance benchmarks",
+              "description": "Benchmark critical paths, establish baseline metrics, and optimize hot paths if needed",
+              "labels": ["performance", "phase-3"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "{prefix}: Publish",
+      "description": "Documentation, examples, and npm package publishing",
+      "phases": [
+        {
+          "number": 4,
+          "name": "Documentation & Examples",
+          "description": "Complete API reference documentation, usage guides, example code, and contributing guidelines",
+          "gsd_route": "plan-phase",
+          "issues": [
+            {
+              "title": "Write comprehensive API reference",
+              "description": "Generate full API docs from JSDoc/TSDoc, add parameter descriptions, return types, and usage examples for every public method",
+              "labels": ["docs", "api", "phase-4"]
+            },
+            {
+              "title": "Create usage examples and guides",
+              "description": "Write getting-started guide, common patterns cookbook, and migration guide (if replacing existing solutions)",
+              "labels": ["docs", "examples", "phase-4"]
+            },
+            {
+              "title": "Add contributing guidelines",
+              "description": "Write CONTRIBUTING.md with development setup, code style, testing requirements, and PR process",
+              "labels": ["docs", "community", "phase-4"]
+            }
+          ]
+        },
+        {
+          "number": 5,
+          "name": "Publishing",
+          "description": "Configure package for npm, set up versioning and changelog, and publish initial release",
+          "gsd_route": "quick",
+          "issues": [
+            {
+              "title": "Configure package.json for publishing",
+              "description": "Set up name, version, main/module/types fields, files whitelist, engines, and peer dependencies",
+              "labels": ["deployment", "npm", "phase-5"]
+            },
+            {
+              "title": "Set up versioning and changelog",
+              "description": "Configure semantic versioning, CHANGELOG.md generation, and GitHub release creation on publish",
+              "labels": ["deployment", "versioning", "phase-5"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
