@@ -63,6 +63,18 @@ Classify each issue into:
 - **Drift:** State file says one thing, GitHub says another
 </step>
 
+<step name="health_check">
+**GSD health check (if .planning/ exists):**
+
+For repos with GSD initialized, run a health check and include in the sync report:
+```bash
+if [ -d ".planning" ]; then
+  HEALTH=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs validate health 2>/dev/null || echo '{"status":"unknown"}')
+fi
+```
+This is read-only and additive — health status is included in the sync summary but does not block any reconciliation actions.
+</step>
+
 <step name="reconcile">
 **Take action per classification:**
 
@@ -125,6 +137,7 @@ Completed: ${completed_count} archived
 Stale:     ${stale_count} need attention
 Orphaned:  ${orphaned_count} need attention
 Branches:  ${deleted_count} cleaned up
+${HEALTH ? 'GSD Health: ' + HEALTH.status : ''}
 
 ${details_for_each_non_active_item}
 ```

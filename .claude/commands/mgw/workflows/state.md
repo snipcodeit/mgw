@@ -69,7 +69,18 @@ File: `.mgw/active/<number>-<slug>.json`
 
 ## Slug Generation
 
-From issue title: lowercase, replace non-alphanumeric with hyphens, collapse multiple hyphens, trim to 40 chars, strip trailing hyphens.
+Use gsd-tools for consistent slug generation:
+```bash
+SLUG=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs generate-slug "${issue_title}" --raw)
+SLUG="${SLUG:0:40}"  # gsd-tools doesn't truncate; MGW enforces 40-char limit
+```
+
+## Timestamps
+
+Use gsd-tools for ISO timestamp generation:
+```bash
+TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw)
+```
 
 ## Cross-Refs Schema
 

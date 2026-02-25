@@ -84,6 +84,11 @@ Report: "Assigned #$ISSUE_NUMBER to $GH_USER"
 <step name="spawn_analysis">
 **Spawn task agent for codebase analysis:**
 
+Gather GSD project history for context (if available):
+```bash
+HISTORY=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs history-digest 2>/dev/null || echo "")
+```
+
 Build analysis prompt from issue data and spawn:
 
 ```
@@ -97,6 +102,10 @@ Body: ${body}
 Labels: ${labels}
 Comments: ${comments_summary}
 </issue>
+
+<project_history>
+${HISTORY}
+</project_history>
 
 <analysis_dimensions>
 
@@ -196,7 +205,11 @@ AskUserQuestion(
 
 If accepted or overridden (not rejected):
 
-Generate slug from title (lowercase, hyphens, 40 char max).
+Generate slug from title using gsd-tools:
+```bash
+SLUG=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs generate-slug "${issue_title}" --raw)
+SLUG="${SLUG:0:40}"  # gsd-tools doesn't truncate; MGW enforces 40-char limit
+```
 Write to `.mgw/active/${ISSUE_NUMBER}-${slug}.json` using the schema from state.md.
 
 Populate:
