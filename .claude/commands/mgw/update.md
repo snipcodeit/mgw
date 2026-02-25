@@ -98,7 +98,7 @@ Capture comment URL from output.
 
 Update state file: append to comments_posted array:
 ```json
-{ "type": "${update_type}", "timestamp": "${ISO_TIMESTAMP}", "url": "${comment_url}" }
+{ "type": "${update_type}", "timestamp": "$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw)", "url": "${comment_url}" }
 ```
 
 Write updated state back to `.mgw/active/${filename}.json`.

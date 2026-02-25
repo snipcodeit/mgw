@@ -124,12 +124,20 @@ Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → branch.
 <step name="post_start_update">
 **Post "work started" comment (task agent):**
 
+Gather enrichment data from triage state and GSD progress:
+```bash
+SCOPE_SUMMARY="${triage.scope.files} files across ${triage.scope.systems}"
+PROGRESS=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs progress bar --raw 2>/dev/null || echo "")
+```
+
 ```
 Task(
   prompt="Post a GitHub issue comment.
 Issue: ${ISSUE_NUMBER}
 Comment body:
 **Work Started** — Triaged as \`${gsd_route}\`. Execution beginning on branch \`${BRANCH_NAME}\`.
+Scope: ${SCOPE_SUMMARY}
+${PROGRESS ? 'Progress: ' + PROGRESS : ''}
 
 Command: gh issue comment ${ISSUE_NUMBER} --body '<comment_body>'
 ",
@@ -153,15 +161,29 @@ Determine flags:
 - "gsd:quick" → $QUICK_FLAGS = ""
 - "gsd:quick --full" → $QUICK_FLAGS = "--full"
 
-Read the issue description to use as the GSD task description:
+Read the issue description to use as the GSD task description (full body, capped at 5000 chars for pathological issues):
 ```
-$TASK_DESCRIPTION = "Issue #${ISSUE_NUMBER}: ${issue_title}\n\n${issue_body_truncated_to_500_chars}"
+$TASK_DESCRIPTION = "Issue #${ISSUE_NUMBER}: ${issue_title}\n\n${issue_body}"  # full body, max 5000 chars
 ```
 
 Execute the GSD quick workflow. Read and follow the quick workflow steps:
 
 1. **Init:** `node ~/.claude/get-shit-done/bin/gsd-tools.cjs init quick "$DESCRIPTION"`
    Parse JSON for: planner_model, executor_model, checker_model, verifier_model, next_num, slug, date, quick_dir, task_dir.
+
+   **Handle missing ROADMAP.md:** Check `roadmap_exists` from init output. If false, create minimal GSD scaffolding so quick workflow has valid state:
+   ```bash
+   if [ "$roadmap_exists" = "false" ]; then
+     mkdir -p .planning/quick
+     echo '{"model_profile":"balanced","commit_docs":true}' > .planning/config.json
+     cat > .planning/ROADMAP.md << 'HEREDOC'
+   # Roadmap
+   ## v1.0: MGW-Managed
+   Issue-driven development managed by MGW.
+   HEREDOC
+   fi
+   ```
+   This creates valid GSD state that survives if someone later uses native GSD commands.
 
 2. **Create task directory:**
 ```bash
@@ -178,6 +200,18 @@ Task(
 **Mode:** ${FULL_MODE ? 'quick-full' : 'quick'}
 **Directory:** ${QUICK_DIR}
 **Description:** ${TASK_DESCRIPTION}
+
+<triage_context>
+Scope: ${triage.scope.files} files across systems: ${triage.scope.systems}
+Validity: ${triage.validity}
+Security: ${triage.security_notes}
+Conflicts: ${triage.conflicts}
+GSD Route: ${gsd_route}
+</triage_context>
+
+<issue_comments>
+${recent_comments}
+</issue_comments>
 
 <files_to_read>
 - .planning/STATE.md (Project State)
@@ -210,7 +244,13 @@ Return: ## PLANNING COMPLETE with plan path
 
 4. **Verify plan exists** at `${QUICK_DIR}/${next_num}-PLAN.md`
 
-5. **(If --full) Spawn plan-checker, handle revision loop (max 2 iterations):**
+5. **Pre-flight plan structure check (gsd-tools):**
+```bash
+PLAN_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify plan-structure "${QUICK_DIR}/${next_num}-PLAN.md")
+```
+Parse the JSON result. If structural issues found, include them in the plan-checker prompt below so it has concrete problems to evaluate rather than searching from scratch.
+
+6. **(If --full) Spawn plan-checker, handle revision loop (max 2 iterations):**
 ```
 Task(
   prompt="
@@ -222,7 +262,11 @@ Task(
 - ${QUICK_DIR}/${next_num}-PLAN.md (Plan to verify)
 </files_to_read>
 
-**Scope:** This is a quick task, not a full phase. Skip checks that require a ROADMAP phase goal.
+<structural_preflight>
+${PLAN_CHECK}
+</structural_preflight>
+
+**Scope:** This is a quick task, not a full phase. Skip checks that require a ROADMAP phase goal. If structural_preflight flagged issues, prioritize evaluating those.
 </verification_context>
 
 <check_dimensions>
@@ -249,7 +293,7 @@ Skip: context compliance (no CONTEXT.md), cross-plan deps (single plan), ROADMAP
 If issues found and iteration < 2: spawn planner revision, then re-check.
 If iteration >= 2: offer force proceed or abort.
 
-6. **Spawn executor (task agent):**
+7. **Spawn executor (task agent):**
 ```
 Task(
   prompt="
@@ -275,9 +319,13 @@ Execute quick task ${next_num}.
 )
 ```
 
-7. **Verify summary exists** at `${QUICK_DIR}/${next_num}-SUMMARY.md`
+8. **Verify summary (gsd-tools):**
+```bash
+VERIFY_RESULT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify-summary "${QUICK_DIR}/${next_num}-SUMMARY.md")
+```
+Parse JSON result. Use `passed` field for go/no-go. Checks summary existence, files created, and commits.
 
-8. **(If --full) Spawn verifier:**
+9. **(If --full) Spawn verifier:**
 ```
 Task(
   prompt="Verify quick task goal achievement.
@@ -295,9 +343,16 @@ Check must_haves against actual codebase. Create VERIFICATION.md at ${QUICK_DIR}
 )
 ```
 
-9. **Update STATE.md** with quick task row in "Quick Tasks Completed" table.
+10. **Post-execution artifact verification (non-blocking):**
+```bash
+ARTIFACT_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify artifacts "${QUICK_DIR}/${next_num}-PLAN.md" 2>/dev/null || echo '{"passed":true}')
+KEYLINK_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify key-links "${QUICK_DIR}/${next_num}-PLAN.md" 2>/dev/null || echo '{"passed":true}')
+```
+Non-blocking: if either check flags issues, include them in the PR description as warnings. Do not halt the pipeline.
 
-10. **Commit artifacts:**
+11. **Update STATE.md** with quick task row in "Quick Tasks Completed" table.
+
+12. **Commit artifacts:**
 ```bash
 node ~/.claude/get-shit-done/bin/gsd-tools.cjs commit "docs(quick-${next_num}): ${issue_title}" --files ${file_list}
 ```
@@ -312,16 +367,41 @@ Only run this step if gsd_route is "gsd:new-milestone".
 
 This is the most complex path. The orchestrator needs to:
 
-1. **Create milestone:** Guide user through /gsd:new-milestone interactively.
-   This requires user input for requirements and scope, so it cannot be fully
-   automated. Present:
-   ```
-   The new-milestone route requires interactive input for requirements and scope.
-   Please run: /gsd:new-milestone
+**Resolve models for milestone agents:**
+```bash
+PLANNER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-planner --raw)
+EXECUTOR_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-executor --raw)
+VERIFIER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-verifier --raw)
+```
 
-   After the milestone is created, run /mgw:run ${ISSUE_NUMBER} again to
-   continue the pipeline through execution.
+1. **Create milestone:** Use `gsd-tools init new-milestone` to gather context, then attempt autonomous roadmap creation from issue data:
+
+   ```bash
+   MILESTONE_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init new-milestone 2>/dev/null)
    ```
+
+   Extract requirements from structured issue template fields (BLUF, What's Needed, What's Involved) if present.
+
+   If issue body contains sufficient detail (has clear requirements/scope):
+   - Spawn roadmapper agent with issue-derived requirements
+   - After roadmap generation, present to user for confirmation checkpoint:
+     ```
+     AskUserQuestion(
+       header: "Milestone Roadmap Generated",
+       question: "Review the generated ROADMAP.md. Proceed with execution, revise, or switch to interactive mode?",
+       followUp: "Enter: proceed, revise, or interactive"
+     )
+     ```
+
+   If issue body lacks sufficient detail (no clear structure or too vague):
+   - Fall back to interactive mode:
+     ```
+     The new-milestone route requires more detail than the issue provides.
+     Please run: /gsd:new-milestone
+
+     After the milestone is created, run /mgw:run ${ISSUE_NUMBER} again to
+     continue the pipeline through execution.
+     ```
 
    Update pipeline_stage to "planning" (at `${REPO_ROOT}/.mgw/active/`).
 
@@ -358,10 +438,15 @@ Push branch and gather artifacts:
 ```bash
 git push -u origin ${BRANCH_NAME}
 
+# Structured summary data via gsd-tools (returns JSON with one_liner, key_files, tech_added, patterns, decisions)
+SUMMARY_DATA=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs summary-extract "${gsd_artifacts_path}/*SUMMARY*" 2>/dev/null || echo '{}')
+# Also keep raw summary for full context
 SUMMARY=$(cat ${gsd_artifacts_path}/*SUMMARY* 2>/dev/null)
 VERIFICATION=$(cat ${gsd_artifacts_path}/*VERIFICATION* 2>/dev/null)
 COMMITS=$(git log ${DEFAULT_BRANCH}..HEAD --oneline)
 CROSS_REFS=$(cat ${REPO_ROOT}/.mgw/cross-refs.json 2>/dev/null)
+# Progress table for PR details section
+PROGRESS_TABLE=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs progress table --raw 2>/dev/null || echo "")
 ```
 
 Read issue state for context.
@@ -375,13 +460,22 @@ Title: ${issue_title}
 Body: ${issue_body}
 </issue>
 
-<summary>
+<summary_structured>
+${SUMMARY_DATA}
+</summary_structured>
+
+<summary_raw>
 ${SUMMARY}
-</summary>
+</summary_raw>
 
 <verification>
 ${VERIFICATION}
 </verification>
+
+<artifact_warnings>
+${ARTIFACT_CHECK}
+${KEYLINK_CHECK}
+</artifact_warnings>
 
 <commits>
 ${COMMITS}
@@ -394,10 +488,12 @@ ${CROSS_REFS}
 <instructions>
 1. Build PR title: short, prefixed with fix:/feat:/refactor: based on issue labels
 2. Build PR body with:
-   - ## Summary (2-4 bullets)
+   - ## Summary (2-4 bullets, use one_liner from summary_structured if available)
    - Closes #${ISSUE_NUMBER}
-   - ## Changes (file-level grouped by system)
+   - ## Changes (file-level grouped by system, use key_files from summary_structured)
    - ## Cross-References (if any)
+   - If PROGRESS_TABLE is non-empty, include under <details><summary>GSD Progress</summary> block
+   - If artifact_warnings contain failures, include under ## Warnings section
 3. Create PR: gh pr create --title '<title>' --base '${DEFAULT_BRANCH}' --head '${BRANCH_NAME}' --body '<body>'
 4. Post testing procedures as separate PR comment: gh pr comment <pr_number> --body '<testing>'
 5. Return: PR number, PR URL
@@ -428,12 +524,21 @@ rmdir "${REPO_ROOT}/.worktrees/issue" 2>/dev/null
 rmdir "${REPO_ROOT}/.worktrees" 2>/dev/null
 ```
 
+Extract one-liner summary for concise comment:
+```bash
+ONE_LINER=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs summary-extract "${gsd_artifacts_path}/*SUMMARY*" --fields one_liner --raw 2>/dev/null || echo "")
+```
+
 Post completion comment:
 ```
 Task(
   prompt="Post GitHub issue comment.
 Issue: ${ISSUE_NUMBER}
-Comment: **PR Ready** — PR #${PR_NUMBER} created: ${PR_URL}\nTesting procedures posted on the PR.\n\nThis issue will auto-close when the PR is merged.
+Comment: **PR Ready** — PR #${PR_NUMBER} created: ${PR_URL}
+${ONE_LINER ? ONE_LINER : ''}
+Testing procedures posted on the PR.
+
+This issue will auto-close when the PR is merged.
 
 Command: gh issue comment ${ISSUE_NUMBER} --body '<body>'",
   subagent_type="general-purpose",

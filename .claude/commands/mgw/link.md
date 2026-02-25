@@ -72,7 +72,7 @@ Check for duplicate (same a+b pair exists). If duplicate, report and skip.
 
 Append new link:
 ```json
-{ "a": "${ref_a}", "b": "${ref_b}", "type": "${link_type}", "created": "${ISO_TIMESTAMP}" }
+{ "a": "${ref_a}", "b": "${ref_b}", "type": "${link_type}", "created": "$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw)" }
 ```
 
 Write back to `.mgw/cross-refs.json`.

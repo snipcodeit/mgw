@@ -52,21 +52,26 @@ DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
 
 **Linked mode:** Read state file for gsd_artifacts.path, then:
 ```bash
-# Find SUMMARY and VERIFICATION files
-find ${gsd_artifacts_path} -name "*SUMMARY*" -o -name "*VERIFICATION*" 2>/dev/null
+# Structured summary data via gsd-tools (returns JSON with one_liner, key_files, tech_added, patterns, decisions)
+SUMMARY_DATA=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs summary-extract "${gsd_artifacts_path}/*SUMMARY*" 2>/dev/null || echo '{}')
+# Also read raw artifacts for full context
+SUMMARY_RAW=$(cat ${gsd_artifacts_path}/*SUMMARY* 2>/dev/null)
+VERIFICATION=$(cat ${gsd_artifacts_path}/*VERIFICATION* 2>/dev/null)
+# Progress table for details section
+PROGRESS_TABLE=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs progress table --raw 2>/dev/null || echo "")
 ```
 
 **Standalone mode:** Search .planning/ for recent artifacts:
 ```bash
-# Check quick tasks
-ls -t .planning/quick/*/SUMMARY.md 2>/dev/null | head -1
-# Check phase artifacts
-ls -t .planning/phases/*/SUMMARY.md 2>/dev/null | head -1
+# Check quick tasks first, then phases
+SUMMARY_PATH=$(ls -t .planning/quick/*/SUMMARY.md .planning/phases/*/SUMMARY.md 2>/dev/null | head -1)
+if [ -n "$SUMMARY_PATH" ]; then
+  SUMMARY_DATA=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs summary-extract "$SUMMARY_PATH" 2>/dev/null || echo '{}')
+  SUMMARY_RAW=$(cat "$SUMMARY_PATH" 2>/dev/null)
+fi
 ```
 
 If no GSD artifacts found → fall back to `git log ${base}..HEAD --oneline` for PR content.
-
-Read found artifacts and extract key content.
 </step>
 
 <step name="build_pr_body">
@@ -84,12 +89,16 @@ ${issue_title_and_body_if_linked}
 Issue: #${ISSUE_NUMBER} (or 'none — standalone')
 </issue_context>
 
-<gsd_summary>
-${SUMMARY_MD_CONTENT}
-</gsd_summary>
+<gsd_summary_structured>
+${SUMMARY_DATA}
+</gsd_summary_structured>
+
+<gsd_summary_raw>
+${SUMMARY_RAW}
+</gsd_summary_raw>
 
 <gsd_verification>
-${VERIFICATION_MD_CONTENT_IF_EXISTS}
+${VERIFICATION}
 </gsd_verification>
 
 <cross_refs>
@@ -106,14 +115,25 @@ Return EXACTLY two sections separated by ===TESTING===:
 SECTION 1 — PR body:
 ## Summary
 - [2-4 bullet points of what changed and why]
+- [Use one_liner from gsd_summary_structured if available]
 
 ${if_linked: 'Closes #${ISSUE_NUMBER}'}
 
 ## Changes
 - [File-level changes grouped by system/module]
+- [Use key_files from gsd_summary_structured if available]
 
 ## Cross-References
 ${cross_ref_list_or_omit_if_none}
+
+${if PROGRESS_TABLE non-empty:
+<details>
+<summary>GSD Progress</summary>
+
+${PROGRESS_TABLE}
+
+</details>
+}
 
 ===TESTING===
 
