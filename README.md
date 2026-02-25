@@ -82,7 +82,6 @@ MGW tracks pipeline state in a local `.mgw/` directory (gitignored, per-develope
     42-fix-auth.json   Issue state: triage results, pipeline stage, artifacts
   completed/           Archived after PR merge
   cross-refs.json      Bidirectional issue/PR/branch links
-  config.json          User preferences
 ```
 
 Pipeline stages flow: `new` → `triaged` → `planning` → `executing` → `verifying` → `pr-created` → `done`
@@ -116,6 +115,8 @@ git clone https://github.com/snipcodeit/mgw.git
 # Deploy (creates symlinks at ~/.claude/commands/mgw/)
 stow -v -t ~ mgw
 ```
+
+> **Note:** The stow command assumes the repo directory is named `mgw` (the default from `git clone`). If you renamed the directory, replace `mgw` with its actual name.
 
 To update after pulling changes:
 
