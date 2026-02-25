@@ -35,6 +35,9 @@ Checkpoints requiring user input:
 
 <execution_context>
 @~/.claude/commands/mgw/workflows/state.md
+@~/.claude/commands/mgw/workflows/github.md
+@~/.claude/commands/mgw/workflows/gsd.md
+@~/.claude/commands/mgw/workflows/validation.md
 </execution_context>
 
 <context>
@@ -132,7 +135,13 @@ PROGRESS=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs progress bar --raw 2>/
 
 ```
 Task(
-  prompt="Post a GitHub issue comment.
+  prompt="
+<files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+- .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+</files_to_read>
+
+Post a GitHub issue comment.
 Issue: ${ISSUE_NUMBER}
 Comment body:
 **Work Started** — Triaged as \`${gsd_route}\`. Execution beginning on branch \`${BRANCH_NAME}\`.
@@ -214,11 +223,10 @@ ${recent_comments}
 </issue_comments>
 
 <files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+- .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
 - .planning/STATE.md (Project State)
-- ./CLAUDE.md (if exists — follow project-specific guidelines)
 </files_to_read>
-
-**Project skills:** Check .agents/skills/ directory (if exists) — read SKILL.md files, plans should account for project skill rules
 
 </planning_context>
 
@@ -254,13 +262,15 @@ Parse the JSON result. If structural issues found, include them in the plan-chec
 ```
 Task(
   prompt="
+<files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+- .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+- ${QUICK_DIR}/${next_num}-PLAN.md (Plan to verify)
+</files_to_read>
+
 <verification_context>
 **Mode:** quick-full
 **Task Description:** ${TASK_DESCRIPTION}
-
-<files_to_read>
-- ${QUICK_DIR}/${next_num}-PLAN.md (Plan to verify)
-</files_to_read>
 
 <structural_preflight>
 ${PLAN_CHECK}
@@ -297,14 +307,14 @@ If iteration >= 2: offer force proceed or abort.
 ```
 Task(
   prompt="
-Execute quick task ${next_num}.
-
 <files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+- .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
 - ${QUICK_DIR}/${next_num}-PLAN.md (Plan)
 - .planning/STATE.md (Project state)
-- ./CLAUDE.md (Project instructions, if exists)
-- .agents/skills/ (Project skills, if exists — list skills, read SKILL.md for each, follow relevant rules during implementation)
 </files_to_read>
+
+Execute quick task ${next_num}.
 
 <constraints>
 - Execute all tasks in the plan
@@ -328,13 +338,16 @@ Parse JSON result. Use `passed` field for go/no-go. Checks summary existence, fi
 9. **(If --full) Spawn verifier:**
 ```
 Task(
-  prompt="Verify quick task goal achievement.
-Task directory: ${QUICK_DIR}
-Task goal: ${TASK_DESCRIPTION}
-
+  prompt="
 <files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+- .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
 - ${QUICK_DIR}/${next_num}-PLAN.md (Plan)
 </files_to_read>
+
+Verify quick task goal achievement.
+Task directory: ${QUICK_DIR}
+Task goal: ${TASK_DESCRIPTION}
 
 Check must_haves against actual codebase. Create VERIFICATION.md at ${QUICK_DIR}/${next_num}-VERIFICATION.md.",
   subagent_type="gsd-verifier",
@@ -414,7 +427,13 @@ VERIFIER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gs
    d. Post phase update comment:
    ```
    Task(
-     prompt="Post GitHub comment on issue ${ISSUE_NUMBER}:
+     prompt="
+   <files_to_read>
+   - ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+   - .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+   </files_to_read>
+
+   Post GitHub comment on issue ${ISSUE_NUMBER}:
    **Phase ${phase_num} Complete** — ${phase_name}
    ${brief_summary_from_executor}
    Verification: ${verification_status}
@@ -453,7 +472,13 @@ Read issue state for context.
 
 ```
 Task(
-  prompt="Create a GitHub PR for issue #${ISSUE_NUMBER}.
+  prompt="
+<files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+- .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+</files_to_read>
+
+Create a GitHub PR for issue #${ISSUE_NUMBER}.
 
 <issue>
 Title: ${issue_title}
@@ -532,7 +557,13 @@ ONE_LINER=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs summary-extract "${gs
 Post completion comment:
 ```
 Task(
-  prompt="Post GitHub issue comment.
+  prompt="
+<files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+- .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+</files_to_read>
+
+Post GitHub issue comment.
 Issue: ${ISSUE_NUMBER}
 Comment: **PR Ready** — PR #${PR_NUMBER} created: ${PR_URL}
 ${ONE_LINER ? ONE_LINER : ''}

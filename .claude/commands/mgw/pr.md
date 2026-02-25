@@ -26,6 +26,9 @@ Works in two modes:
 
 <execution_context>
 @~/.claude/commands/mgw/workflows/state.md
+@~/.claude/commands/mgw/workflows/github.md
+@~/.claude/commands/mgw/workflows/gsd.md
+@~/.claude/commands/mgw/workflows/validation.md
 </execution_context>
 
 <context>
@@ -82,6 +85,11 @@ Spawn task agent to compose the PR body:
 ```
 Task(
   prompt="
+<files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+- .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+</files_to_read>
+
 Build a GitHub PR description from these inputs.
 
 <issue_context>

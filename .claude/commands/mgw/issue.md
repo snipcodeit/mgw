@@ -23,6 +23,9 @@ Creates .mgw/ state file for the issue. Optionally routes to /mgw:run.
 
 <execution_context>
 @~/.claude/commands/mgw/workflows/state.md
+@~/.claude/commands/mgw/workflows/github.md
+@~/.claude/commands/mgw/workflows/gsd.md
+@~/.claude/commands/mgw/workflows/validation.md
 </execution_context>
 
 <context>
@@ -94,6 +97,11 @@ Build analysis prompt from issue data and spawn:
 ```
 Task(
   prompt="
+<files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+- .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+</files_to_read>
+
 Analyze GitHub issue #${ISSUE_NUMBER} against this codebase.
 
 <issue>

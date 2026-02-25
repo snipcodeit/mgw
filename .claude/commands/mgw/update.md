@@ -22,6 +22,7 @@ Logs comment ID in state file to prevent duplicates.
 
 <execution_context>
 @~/.claude/commands/mgw/workflows/state.md
+@~/.claude/commands/mgw/workflows/github.md
 </execution_context>
 
 <context>

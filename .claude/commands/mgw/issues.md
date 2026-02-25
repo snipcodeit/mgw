@@ -17,6 +17,10 @@ into triage via /mgw:issue.
 No side effects — read-only GitHub access. Safe to run anytime.
 </objective>
 
+<execution_context>
+@~/.claude/commands/mgw/workflows/github.md
+</execution_context>
+
 <context>
 $ARGUMENTS
 

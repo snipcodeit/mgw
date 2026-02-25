@@ -23,6 +23,7 @@ Reference formats:
 
 <execution_context>
 @~/.claude/commands/mgw/workflows/state.md
+@~/.claude/commands/mgw/workflows/github.md
 </execution_context>
 
 <context>

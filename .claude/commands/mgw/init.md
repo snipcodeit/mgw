@@ -18,6 +18,8 @@ anything that already exists.
 
 <execution_context>
 @~/.claude/commands/mgw/workflows/state.md
+@~/.claude/commands/mgw/workflows/github.md
+@~/.claude/commands/mgw/workflows/validation.md
 </execution_context>
 
 <process>

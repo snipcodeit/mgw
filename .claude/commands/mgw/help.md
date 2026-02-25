@@ -88,6 +88,13 @@ STATE
   .mgw/completed/           Archived after merge
   .mgw/cross-refs.json      Issue ↔ PR ↔ branch links
   .mgw/config.json          User preferences
+
+SHARED WORKFLOWS
+
+  workflows/state.md        State management, staleness detection, validate_and_load
+  workflows/github.md       All gh CLI patterns (issues, PRs, labels, comments)
+  workflows/gsd.md          Task() spawn templates, CLAUDE.md injection, GSD utilities
+  workflows/validation.md   Delegation boundary rule — MGW orchestrates, never codes
 ```
 
 </process>

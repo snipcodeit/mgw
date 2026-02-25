@@ -21,6 +21,9 @@ Run periodically or when starting a new session to get a clean view.
 
 <execution_context>
 @~/.claude/commands/mgw/workflows/state.md
+@~/.claude/commands/mgw/workflows/github.md
+@~/.claude/commands/mgw/workflows/gsd.md
+@~/.claude/commands/mgw/workflows/validation.md
 </execution_context>
 
 <process>
