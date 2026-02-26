@@ -9,16 +9,21 @@
  * call assertClaudeAvailable() then delegate to claude -p with bundled .md files.
  * Non-AI commands (sync, issues, link, help) call lib/ modules directly and work
  * without claude installed.
+ *
+ * NOTE: Action handlers use regular `function` (not arrow functions) so that
+ * `this.optsWithGlobals()` works correctly in Commander.js v14. Arrow functions
+ * don't bind `this` and would break global option inheritance.
  */
 
 const { Command } = require('commander');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 
 const { assertClaudeAvailable, invokeClaude, getCommandsDir } = require('../lib/claude.cjs');
-const { log, error, formatJson, verbose, debug, statusLine, IS_TTY } = require('../lib/output.cjs');
-const { loadProjectState, loadActiveIssue, getActiveDir, getCompletedDir, getMgwDir } = require('../lib/state.cjs');
-const { getRepo, getIssue, listIssues, getRateLimit } = require('../lib/github.cjs');
+const { log, error, formatJson, verbose } = require('../lib/output.cjs');
+const { getActiveDir, getCompletedDir, getMgwDir } = require('../lib/state.cjs');
+const { getIssue, listIssues } = require('../lib/github.cjs');
 
 const pkg = require('../package.json');
 
@@ -45,7 +50,7 @@ program
 /**
  * @param {string} commandName - Name of the command (filename without .md)
  * @param {string} userPrompt - Prompt text to pass to claude
- * @param {object} opts - Merged options from optsWithGlobals()
+ * @param {object} opts - Merged options from this.optsWithGlobals()
  */
 async function runAiCommand(commandName, userPrompt, opts) {
   assertClaudeAvailable();
@@ -61,6 +66,8 @@ async function runAiCommand(commandName, userPrompt, opts) {
 
 // ---------------------------------------------------------------------------
 // AI-dependent commands
+// Note: All .action() handlers use `function` (not arrow) so `this` is bound
+// to the Command instance, enabling this.optsWithGlobals() for global flags.
 // ---------------------------------------------------------------------------
 
 // run <issue-number>
@@ -69,8 +76,8 @@ program
   .description('Run the full pipeline for an issue')
   .option('--quiet', 'buffer output, show summary at end')
   .option('--auto', 'phase chaining: discuss -> plan -> execute')
-  .action(async (issueNumber, options) => {
-    const opts = options.optsWithGlobals();
+  .action(async function(issueNumber) {
+    const opts = this.optsWithGlobals();
     await runAiCommand('run', issueNumber, opts);
   });
 
@@ -78,8 +85,8 @@ program
 program
   .command('init')
   .description('Bootstrap repo for MGW (state, templates, labels)')
-  .action(async (options) => {
-    const opts = options.optsWithGlobals();
+  .action(async function() {
+    const opts = this.optsWithGlobals();
     await runAiCommand('init', '', opts);
   });
 
@@ -87,8 +94,8 @@ program
 program
   .command('project')
   .description('Initialize project from template (milestones, issues, ROADMAP)')
-  .action(async (options) => {
-    const opts = options.optsWithGlobals();
+  .action(async function() {
+    const opts = this.optsWithGlobals();
     await runAiCommand('project', '', opts);
   });
 
@@ -97,8 +104,8 @@ program
   .command('milestone [number]')
   .description('Execute milestone issues in dependency order')
   .option('--interactive', 'pause between issues for review')
-  .action(async (number, options) => {
-    const opts = options.optsWithGlobals();
+  .action(async function(number) {
+    const opts = this.optsWithGlobals();
     await runAiCommand('milestone', number || '', opts);
   });
 
@@ -106,8 +113,8 @@ program
 program
   .command('next')
   .description('Show next unblocked issue')
-  .action(async (options) => {
-    const opts = options.optsWithGlobals();
+  .action(async function() {
+    const opts = this.optsWithGlobals();
     await runAiCommand('next', '', opts);
   });
 
@@ -115,8 +122,8 @@ program
 program
   .command('issue <number>')
   .description('Triage issue against codebase')
-  .action(async (number, options) => {
-    const opts = options.optsWithGlobals();
+  .action(async function(number) {
+    const opts = this.optsWithGlobals();
     await runAiCommand('issue', number, opts);
   });
 
@@ -124,8 +131,8 @@ program
 program
   .command('update <number> [message]')
   .description('Post status comment on issue')
-  .action(async (number, message, options) => {
-    const opts = options.optsWithGlobals();
+  .action(async function(number, message) {
+    const opts = this.optsWithGlobals();
     const userPrompt = [number, message].filter(Boolean).join(' ');
     await runAiCommand('update', userPrompt, opts);
   });
@@ -135,8 +142,8 @@ program
   .command('pr [number]')
   .description('Create PR from GSD artifacts')
   .option('--base <branch>', 'custom base branch')
-  .action(async (number, options) => {
-    const opts = options.optsWithGlobals();
+  .action(async function(number) {
+    const opts = this.optsWithGlobals();
     const parts = [number, opts.base ? '--base ' + opts.base : ''].filter(Boolean);
     await runAiCommand('pr', parts.join(' '), opts);
   });
@@ -149,8 +156,8 @@ program
 program
   .command('sync')
   .description('Reconcile .mgw/ state with GitHub')
-  .action(async (options) => {
-    const opts = options.optsWithGlobals();
+  .action(async function() {
+    const opts = this.optsWithGlobals();
 
     const activeDir = getActiveDir();
 
@@ -216,10 +223,9 @@ program
         if (opts.dryRun) {
           results.push({ number, file, status: 'drift', localState, ghState, action: 'would-archive' });
           if (!opts.json) {
-            log(`[drift] #${number}: local=${localState}, github=${ghState} → would archive`);
+            log(`[drift] #${number}: local=${localState}, github=${ghState} -> would archive`);
           }
         } else {
-          // Archive: move to completed/
           const completedDir = getCompletedDir();
           if (!fs.existsSync(completedDir)) {
             fs.mkdirSync(completedDir, { recursive: true });
@@ -228,7 +234,7 @@ program
           fs.renameSync(filePath, dest);
           results.push({ number, file, status: 'archived', localState, ghState });
           if (!opts.json) {
-            log(`[archived] #${number}: ${ghState} on GitHub → moved to .mgw/completed/`);
+            log(`[archived] #${number}: ${ghState} on GitHub -> moved to .mgw/completed/`);
           }
         }
       } else {
@@ -257,20 +263,15 @@ program
   .option('--milestone <name>', 'filter by milestone')
   .option('--assignee <user>', 'filter by assignee (default: @me)', '@me')
   .option('--state <state>', 'issue state: open, closed, all (default: open)', 'open')
-  .action(async (filters, options) => {
-    const opts = options.optsWithGlobals();
+  .action(async function() {
+    const opts = this.optsWithGlobals();
 
     const ghFilters = {
-      label: opts.label,
-      milestone: opts.milestone,
       assignee: opts.assignee || '@me',
       state: opts.state || 'open',
     };
-
-    // Remove undefined filters
-    Object.keys(ghFilters).forEach(k => {
-      if (ghFilters[k] === undefined) delete ghFilters[k];
-    });
+    if (opts.label) ghFilters.label = opts.label;
+    if (opts.milestone) ghFilters.milestone = opts.milestone;
 
     let issues;
     try {
@@ -294,7 +295,7 @@ program
     // Table output
     const pad = (s, n) => String(s).padEnd(n);
     log(pad('#', 6) + pad('Title', 60) + pad('State', 10) + 'Labels');
-    log('─'.repeat(90));
+    log('-'.repeat(90));
     for (const issue of issues) {
       const labels = (issue.labels || []).map(l => l.name || l).join(', ');
       log(
@@ -304,7 +305,7 @@ program
         labels
       );
     }
-    log(`\n${issues.length} issue(s)`);
+    log('\n' + issues.length + ' issue(s)');
   });
 
 // link <ref-a> <ref-b>
@@ -312,8 +313,8 @@ program
   .command('link <ref-a> <ref-b>')
   .description('Cross-reference issues/PRs/branches')
   .option('--quiet', 'no GitHub comments')
-  .action(async (refA, refB, options) => {
-    const opts = options.optsWithGlobals();
+  .action(async function(refA, refB) {
+    const opts = this.optsWithGlobals();
 
     const mgwDir = getMgwDir();
     const crossRefsPath = path.join(mgwDir, 'cross-refs.json');
@@ -331,11 +332,11 @@ program
 
     // Check for duplicate
     const exists = crossRefs.links.some(
-      l => (l.a === refA && l.b === refB) || (l.a === refB && l.b === refA)
+      function(l) { return (l.a === refA && l.b === refB) || (l.a === refB && l.b === refA); }
     );
 
     if (exists) {
-      log(`Link already exists: ${refA} <-> ${refB}`);
+      log('Link already exists: ' + refA + ' <-> ' + refB);
       return;
     }
 
@@ -343,14 +344,14 @@ program
 
     if (opts.dryRun) {
       if (opts.json) {
-        log(formatJson({ action: 'would-link', ...entry }));
+        log(formatJson(Object.assign({ action: 'would-link' }, entry)));
       } else {
-        log(`[dry-run] Would link: ${refA} <-> ${refB}`);
+        log('[dry-run] Would link: ' + refA + ' <-> ' + refB);
       }
       return;
     }
 
-    // Add bidirectional link
+    // Add link
     crossRefs.links.push(entry);
 
     // Ensure .mgw/ directory exists
@@ -367,28 +368,27 @@ program
       const bMatch = refB.match(issuePattern);
 
       if (aMatch && bMatch) {
-        const { execSync } = require('child_process');
         const numA = aMatch[1];
         const numB = bMatch[1];
         try {
           execSync(
-            `gh issue comment ${numA} --body "Cross-referenced with #${numB}"`,
+            'gh issue comment ' + numA + ' --body "Cross-referenced with #' + numB + '"',
             { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' }
           );
           execSync(
-            `gh issue comment ${numB} --body "Cross-referenced with #${numA}"`,
+            'gh issue comment ' + numB + ' --body "Cross-referenced with #' + numA + '"',
             { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8' }
           );
         } catch (err) {
-          verbose(`GitHub comment failed (non-fatal): ${err.message}`, opts);
+          verbose('GitHub comment failed (non-fatal): ' + err.message, opts);
         }
       }
     }
 
     if (opts.json) {
-      log(formatJson({ action: 'linked', ...entry }));
+      log(formatJson(Object.assign({ action: 'linked' }, entry)));
     } else {
-      log(`Linked: ${refA} <-> ${refB}`);
+      log('Linked: ' + refA + ' <-> ' + refB);
     }
   });
 
@@ -396,7 +396,7 @@ program
 program
   .command('help')
   .description('Show command reference')
-  .action(() => {
+  .action(function() {
     // Parse bundled help.md and extract text between triple-backtick fences
     // in the <process> section. Print directly without calling claude.
     const helpMdPath = path.join(getCommandsDir(), 'help.md');
@@ -425,7 +425,7 @@ program
 // Parse and execute
 // ---------------------------------------------------------------------------
 
-program.parseAsync(process.argv).catch((err) => {
+program.parseAsync(process.argv).catch(function(err) {
   error(err.message);
   process.exit(1);
 });

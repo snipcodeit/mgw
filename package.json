@@ -12,8 +12,8 @@
     "templates/"
   ],
   "scripts": {
-    "build": "pkgroll --clean-dist",
-    "dev": "pkgroll --watch",
+    "build": "pkgroll --clean-dist --src .",
+    "dev": "pkgroll --watch --src .",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
