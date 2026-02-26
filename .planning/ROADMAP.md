@@ -87,11 +87,11 @@ Plans:
   1. `npm install -g mgw` succeeds and `mgw --version` prints a version string
   2. `mgw run`, `mgw project`, `mgw milestone`, and `mgw next` all execute their corresponding slash command logic using shared `lib/` modules — no logic is duplicated between the binary and slash commands
   3. The binary functions correctly when the Claude Code slash command format is unavailable — it does not rely on Claude Code command discovery
-**Plans**: TBD
+**Plans**: 2 plans in 2 waves
 
 Plans:
-- [ ] 05-01: Build `lib/` shared modules (state, github, gsd, templates) used by both slash commands and binary
-- [ ] 05-02: Build `bin/mgw` entry point with Commander.js routing, pkgroll bundling, and npm publish config
+- [ ] 05-01-PLAN.md — Create shared lib/ modules (state, github, gsd, templates, output, claude), bundled commands/ directory, and package.json with pkgroll build pipeline
+- [ ] 05-02-PLAN.md — Build bin/mgw.cjs entry point with Commander.js routing for all 12 commands, pkgroll build verification, and npm pack validation
 
 ## Progress
 
