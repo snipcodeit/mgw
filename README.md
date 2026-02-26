@@ -4,7 +4,7 @@
 
 **GitHub-native issue-to-PR automation for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), powered by [Get Shit Done](https://github.com/glittercowboy/get-shit-done).**
 
-MGW bridges GitHub Issues and the GSD planning framework into a single pipeline. Point it at an issue, and it triages, plans, executes, and opens a PR — posting structured status updates along the way. No context switching, no tab juggling, no copy-pasting between GitHub and your terminal.
+MGW bridges GitHub Issues and the GSD planning framework into a single pipeline. Point it at an issue, and it triages, plans, executes, and opens a PR — posting structured status updates at every stage. No context switching, no tab juggling, no copy-pasting between GitHub and your terminal.
 
 ```
 /mgw:run 42
@@ -77,12 +77,64 @@ Based on scope, MGW recommends a GSD route:
 | Medium (3-8 files) | `gsd:quick --full` | Plan with verification loop |
 | Large (9+ files) | `gsd:new-milestone` | Full milestone with phased execution |
 
+## Status Comments
+
+Every pipeline step posts a structured comment on the issue so you (and your team) can follow along on GitHub without touching the terminal:
+
+```
+> MGW · `work-started` · 2026-02-26T03:31:00Z
+> Milestone: v1.0 — Auth & Data Layer | Phase 1: Database Schema
+
+### Work Started
+
+| | |
+|---|---|
+| **Issue** | #71 — Implement user registration |
+| **Route** | `plan-phase` |
+| **Phase** | 1 of 6 — Database Schema |
+| **Milestone** | v1.0 — Auth & Data Layer |
+
+<details>
+<summary>Milestone Progress (1/6 complete)</summary>
+| # | Issue | Status | PR |
+|---|-------|--------|----|
+| 70 | Design SQLite schema | ✓ Done | #85 |
+| **71** | **User registration** | ◆ In Progress | — |
+| 72 | JWT middleware | ○ Pending | — |
+</details>
+```
+
+Comments are posted for: `work-started`, `triage-complete`, `execution-complete`, `pr-ready`, and `pipeline-failed`. The milestone orchestrator handles all comment posting directly (not delegated to sub-agents), guaranteeing every stage is logged.
+
+## PR Descriptions
+
+PRs follow a consistent structure with milestone context:
+
+```markdown
+## Summary
+- 2-4 bullets of what was built and why
+
+Closes #71
+
+## Milestone Context
+- **Milestone:** v1.0 — Auth & Data Layer
+- **Phase:** 1 — Database Schema
+- **Issue:** 2 of 6 in milestone
+
+## Changes
+- File-level changes grouped by module
+
+## Test Plan
+- Verification checklist
+```
+
 ## State Management
 
 MGW tracks pipeline state in a local `.mgw/` directory (gitignored, per-developer):
 
 ```
 .mgw/
+  project.json         Milestones, issues, phases, and pipeline stages
   config.json          User prefs (GitHub username, default filters)
   active/              In-progress issue pipelines
     42-fix-auth.json   Issue state: triage results, pipeline stage, artifacts
@@ -194,27 +246,27 @@ bin/
 lib/
   index.cjs               Barrel export
   claude.cjs              Claude Code invocation helpers
-  github.cjs              GitHub CLI wrappers
+  github.cjs              GitHub CLI wrappers (issues, PRs, milestones, Projects v2)
   gsd.cjs                 GSD integration
   state.cjs               .mgw/ state management
   output.cjs              Logging and formatting
-  templates.cjs            Template system
-  template-loader.cjs     Template validation (JSON Schema)
+  templates.cjs           Template system
+  template-loader.cjs     Output validation (JSON Schema)
 commands/                  Slash command source files (deployed to ~/.claude/commands/mgw/)
   help.md                 Command reference display
   init.md                 One-time repo bootstrap (state, templates, labels)
-  project.md              AI-driven project scaffolding
+  project.md              AI-driven project scaffolding (milestones, issues, dependencies)
   issues.md               Issue browser with filters
   issue.md                Deep triage with agent analysis
   next.md                 Next unblocked issue picker
   run.md                  Autonomous pipeline orchestrator
-  milestone.md            Milestone execution with dependency ordering
-  update.md               Structured GitHub comments
-  pr.md                   PR creation from GSD artifacts
+  milestone.md            Milestone execution with dependency ordering and status comments
+  update.md               Structured GitHub comment templates
+  pr.md                   PR creation from GSD artifacts with milestone context
   link.md                 Cross-referencing system
   sync.md                 State reconciliation
 templates/
-  schema.json             JSON Schema for pipeline templates
+  schema.json             JSON Schema for project output validation
 .claude/
   commands/
     mgw/                   Deployed slash commands (symlinked or copied)
@@ -235,7 +287,7 @@ Seriously, if you're using Claude Code for development, go install GSD. MGW is j
 
 MGW is young and there's plenty of room to make it better:
 
-- **Smarter triage heuristics** — better scope estimation, label-based routing
+- **GitHub Projects v2 board integration** — currently scaffolds issues but needs `project` OAuth scope for board creation
 - **Multi-repo support** — monorepo and cross-repo issue tracking
 - **GitHub Actions integration** — trigger MGW from CI events
 - **Review cycle automation** — handle PR review comments → fix → re-request

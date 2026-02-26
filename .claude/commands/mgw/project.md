@@ -438,6 +438,37 @@ fi
 ```
 </step>
 
+<step name="create_project_board">
+**Create GitHub Projects v2 board and add all issues:**
+
+```bash
+OWNER=$(echo "$REPO" | cut -d'/' -f1)
+
+# Create project board
+PROJECT_RESP=$(gh project create --owner "$OWNER" --title "${PROJECT_NAME} Roadmap" --format json 2>&1)
+PROJECT_NUMBER=$(echo "$PROJECT_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['number'])" 2>/dev/null || echo "")
+PROJECT_URL=$(echo "$PROJECT_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['url'])" 2>/dev/null || echo "")
+
+if [ -n "$PROJECT_NUMBER" ]; then
+  echo "  Created project board: #${PROJECT_NUMBER} — ${PROJECT_URL}"
+
+  # Add all issues to the board
+  for RECORD in "${ISSUE_RECORDS[@]}"; do
+    ISSUE_NUM=$(echo "$RECORD" | cut -d':' -f2)
+    ISSUE_URL="https://github.com/${REPO}/issues/${ISSUE_NUM}"
+    gh project item-add "$PROJECT_NUMBER" --owner "$OWNER" --url "$ISSUE_URL" 2>/dev/null || true
+  done
+  echo "  Added ${TOTAL_ISSUES_CREATED} issues to project board"
+else
+  echo "  WARNING: Failed to create project board: ${PROJECT_RESP}"
+  PROJECT_NUMBER=""
+  PROJECT_URL=""
+fi
+```
+
+Store `PROJECT_NUMBER` and `PROJECT_URL` for inclusion in project.json and the summary report.
+</step>
+
 <step name="write_roadmap">
 **Write GSD ROADMAP.md to the target project's .planning/ directory**
 
@@ -581,7 +612,11 @@ project_json = {
         "description": DESCRIPTION,
         "repo": REPO,
         "template": GENERATED_TYPE,
-        "created": CREATED
+        "created": CREATED,
+        "project_board": {
+            "number": PROJECT_NUMBER or None,
+            "url": PROJECT_URL or None
+        }
     },
     "milestones": milestones_out,
     "current_milestone": 1,
@@ -624,6 +659,7 @@ not a hardcoded template name.
 
 Type:      {GENERATED_TYPE} ({MILESTONE_COUNT} milestones, {TOTAL_PHASES} phases)
 Repo:      {REPO}
+Board:     ${PROJECT_URL ? PROJECT_URL : '(not created)'}
 
 Milestones created:
   #{number} {name}      → {url}

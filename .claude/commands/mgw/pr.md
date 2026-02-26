@@ -62,6 +62,48 @@ SUMMARY_RAW=$(cat ${gsd_artifacts_path}/*SUMMARY* 2>/dev/null)
 VERIFICATION=$(cat ${gsd_artifacts_path}/*VERIFICATION* 2>/dev/null)
 # Progress table for details section
 PROGRESS_TABLE=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs progress table --raw 2>/dev/null || echo "")
+
+# Milestone/phase context for PR body
+MILESTONE_TITLE=""
+PHASE_INFO=""
+DEPENDENCY_CHAIN=""
+if [ -f "${REPO_ROOT}/.mgw/project.json" ]; then
+  MILESTONE_TITLE=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+for m in p['milestones']:
+  for i in m.get('issues', []):
+    if i.get('github_number') == ${ISSUE_NUMBER}:
+      print(m['name'])
+      break
+" 2>/dev/null || echo "")
+
+  PHASE_INFO=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+for m in p['milestones']:
+  for i in m.get('issues', []):
+    if i.get('github_number') == ${ISSUE_NUMBER}:
+      total = len(m.get('issues', []))
+      idx = [x['github_number'] for x in m['issues']].index(${ISSUE_NUMBER}) + 1
+      print(f\"Phase {i['phase_number']}: {i['phase_name']} (issue {idx}/{total} in milestone)\")
+      break
+" 2>/dev/null || echo "")
+
+  DEPENDENCY_CHAIN=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+refs = json.load(open('${REPO_ROOT}/.mgw/cross-refs.json'))
+blockers = [l['b'].split(':')[1] for l in refs.get('links', [])
+            if l.get('type') == 'blocked-by' and l['a'] == 'issue:${ISSUE_NUMBER}']
+blocks = [l['a'].split(':')[1] for l in refs.get('links', [])
+          if l.get('type') == 'blocked-by' and l['b'] == 'issue:${ISSUE_NUMBER}']
+parts = []
+if blockers: parts.append('Blocked by: ' + ', '.join(f'#{b}' for b in blockers))
+if blocks: parts.append('Unblocks: ' + ', '.join(f'#{b}' for b in blocks))
+print(' | '.join(parts) if parts else '')
+" 2>/dev/null || echo "")
+fi
 ```
 
 **Standalone mode:** Search .planning/ for recent artifacts:
@@ -117,6 +159,12 @@ ${CROSS_REFS_FOR_THIS_ISSUE}
 ${GIT_LOG_BASE_TO_HEAD}
 </commits>
 
+<milestone_context>
+Milestone: ${MILESTONE_TITLE}
+Phase: ${PHASE_INFO}
+Dependencies: ${DEPENDENCY_CHAIN}
+</milestone_context>
+
 <output_format>
 Return EXACTLY two sections separated by ===TESTING===:
 
@@ -126,6 +174,13 @@ SECTION 1 — PR body:
 - [Use one_liner from gsd_summary_structured if available]
 
 ${if_linked: 'Closes #${ISSUE_NUMBER}'}
+
+${if MILESTONE_TITLE non-empty:
+## Milestone Context
+- **Milestone:** ${MILESTONE_TITLE}
+- **Phase:** ${PHASE_INFO}
+- **Dependencies:** ${DEPENDENCY_CHAIN}
+}
 
 ## Changes
 - [File-level changes grouped by system/module]

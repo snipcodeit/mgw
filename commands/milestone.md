@@ -387,11 +387,62 @@ for ISSUE_DATA in $(echo "$UNFINISHED" | python3 -c "
     continue
   fi
 
-  # 4. Display minimal terminal output
+  # 4. Display terminal output
   echo "Running issue #${ISSUE_NUMBER}..."
 
-  # 5. Spawn /mgw:run via Task()
-  # The Task agent reads run.md and executes the full pipeline
+  # ── PRE-WORK: Post triage/work-started comment on issue ──
+  # The ORCHESTRATOR posts this, not the inner agent. This guarantees it happens.
+  PHASE_NUM=$(echo "$ISSUE_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase_number','?'))")
+  PHASE_NAME=$(echo "$ISSUE_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase_name',''))")
+  TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  # Build milestone progress table for this comment
+  PROGRESS_TABLE=$(echo "$SORTED_ISSUES" | python3 -c "
+import json, sys
+issues = json.load(sys.stdin)
+completed = set(${COMPLETED_ISSUES_JSON:-'[]'})
+current = ${ISSUE_NUMBER}
+lines = ['| # | Issue | Status | PR |', '|---|-------|--------|----|']
+for i in issues:
+    num = i['github_number']
+    title = i['title'][:45]
+    if num in completed:
+        lines.append(f'| {num} | {title} | ✓ Done | — |')
+    elif num == current:
+        lines.append(f'| **{num}** | **{title}** | ◆ In Progress | — |')
+    else:
+        lines.append(f'| {num} | {title} | ○ Pending | — |')
+print('\n'.join(lines))
+")
+
+  WORK_STARTED_BODY=$(cat <<COMMENTEOF
+> **MGW** · \`work-started\` · ${TIMESTAMP}
+> Milestone: ${MILESTONE_NAME} | Phase ${PHASE_NUM}: ${PHASE_NAME}
+
+### Work Started
+
+| | |
+|---|---|
+| **Issue** | #${ISSUE_NUMBER} — ${ISSUE_TITLE} |
+| **Route** | \`${GSD_ROUTE}\` |
+| **Phase** | ${PHASE_NUM} of ${TOTAL_PHASES} — ${PHASE_NAME} |
+| **Milestone** | ${MILESTONE_NAME} |
+
+<details>
+<summary>Milestone Progress (${#COMPLETED_ISSUES[@]}/${TOTAL_ISSUES} complete)</summary>
+
+${PROGRESS_TABLE}
+
+</details>
+COMMENTEOF
+)
+
+  gh issue comment ${ISSUE_NUMBER} --body "$WORK_STARTED_BODY" 2>/dev/null || true
+  gh issue edit ${ISSUE_NUMBER} --add-assignee @me 2>/dev/null || true
+
+  # ── MAIN WORK: Spawn /mgw:run via Task() ──
+  # The agent focuses on: worktree → GSD execution → PR creation
+  # Comment posting is handled by THIS orchestrator, not the agent.
   Task(
     prompt="
       <files_to_read>
@@ -399,11 +450,35 @@ for ISSUE_DATA in $(echo "$UNFINISHED" | python3 -c "
       - .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
       </files_to_read>
 
-      Run the full MGW pipeline for issue #${ISSUE_NUMBER}.
-      Read ~/.claude/commands/mgw/run.md for the complete workflow.
-      Follow ALL steps: validate_and_load, create_worktree, post_start_update,
-      execute_gsd_quick or execute_gsd_milestone (based on GSD route: ${GSD_ROUTE}),
-      create_pr, cleanup_and_complete.
+      Run the MGW pipeline for issue #${ISSUE_NUMBER}.
+      Read ~/.claude/commands/mgw/run.md for the workflow steps.
+
+      **Your responsibilities (the orchestrator handles status comments):**
+      1. validate_and_load — load issue state from .mgw/active/
+      2. create_worktree — create isolated git worktree for issue branch
+      3. execute_gsd_quick or execute_gsd_milestone (route: ${GSD_ROUTE})
+      4. create_pr — push branch and create PR with this EXACT body structure:
+
+      PR BODY MUST include these sections IN ORDER:
+      ## Summary
+      - 2-4 bullets of what was built and why
+
+      Closes #${ISSUE_NUMBER}
+
+      ## Milestone Context
+      - **Milestone:** ${MILESTONE_NAME}
+      - **Phase:** ${PHASE_NUM} — ${PHASE_NAME}
+      - **Issue:** ${ISSUES_RUN + 1} of ${TOTAL_ISSUES} in milestone
+
+      ## Changes
+      - File-level changes grouped by module
+
+      ## Test Plan
+      - Verification checklist
+
+      5. cleanup_and_complete — clean up worktree, update .mgw/ state
+
+      **Do NOT post issue comments** — the orchestrator handles all GitHub comments.
 
       Issue title: ${ISSUE_TITLE}
       GSD route: ${GSD_ROUTE}
@@ -412,16 +487,89 @@ for ISSUE_DATA in $(echo "$UNFINISHED" | python3 -c "
     description="Run pipeline for #${ISSUE_NUMBER}"
   )
 
-  # 6. Handle result
-  # Check if Task succeeded (PR created) or failed
-  # Success indicators: pipeline_stage updated to "done" or "pr-created" in .mgw/active/
-  # Failure indicators: Task returned error, no PR created
+  # ── POST-WORK: Detect result and post completion comment ──
+  # Check if PR was created by looking for state file or PR
+  PR_NUMBER=$(gh pr list --head "issue/${ISSUE_NUMBER}-*" --json number -q '.[0].number' 2>/dev/null || echo "")
+  PR_URL=""
+  if [ -z "$PR_NUMBER" ]; then
+    # Try broader search
+    PR_NUMBER=$(gh pr list --state all --search "Closes #${ISSUE_NUMBER}" --json number -q '.[0].number' 2>/dev/null || echo "")
+  fi
+  if [ -n "$PR_NUMBER" ]; then
+    PR_URL=$(gh pr view "$PR_NUMBER" --json url -q .url 2>/dev/null || echo "")
+  fi
 
-  # On success:
-  COMPLETED_ISSUES+=("$ISSUE_NUMBER")
-  echo "Done."
+  DONE_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  if [ -n "$PR_NUMBER" ]; then
+    # Success — post PR-ready comment
+    COMPLETED_ISSUES+=("$ISSUE_NUMBER")
+    COMPLETED_ISSUES_JSON=$(printf '%s\n' "${COMPLETED_ISSUES[@]}" | python3 -c "import json,sys; print(json.dumps([int(x.strip()) for x in sys.stdin if x.strip()]))")
+
+    # Rebuild progress table with updated state
+    DONE_PROGRESS=$(echo "$SORTED_ISSUES" | python3 -c "
+import json, sys
+issues = json.load(sys.stdin)
+completed = set(${COMPLETED_ISSUES_JSON})
+lines = ['| # | Issue | Status | PR |', '|---|-------|--------|----|']
+for i in issues:
+    num = i['github_number']
+    title = i['title'][:45]
+    if num in completed:
+        lines.append(f'| {num} | {title} | ✓ Done | — |')
+    else:
+        lines.append(f'| {num} | {title} | ○ Pending | — |')
+print('\n'.join(lines))
+")
+
+    PR_READY_BODY=$(cat <<COMMENTEOF
+> **MGW** · \`pr-ready\` · ${DONE_TIMESTAMP}
+> Milestone: ${MILESTONE_NAME} | Phase ${PHASE_NUM}: ${PHASE_NAME}
+
+### PR Ready
+
+**PR #${PR_NUMBER}** — ${PR_URL}
+
+Testing procedures posted on the PR.
+This issue will auto-close when the PR is merged.
+
+<details>
+<summary>Milestone Progress (${#COMPLETED_ISSUES[@]}/${TOTAL_ISSUES} complete)</summary>
+
+${DONE_PROGRESS}
+
+</details>
+COMMENTEOF
+)
+
+    gh issue comment ${ISSUE_NUMBER} --body "$PR_READY_BODY" 2>/dev/null || true
+    echo "  ✓ #${ISSUE_NUMBER} — PR #${PR_NUMBER} created"
+
+  else
+    # Failure — post failure comment
+    FAILED_ISSUES+=("$ISSUE_NUMBER")
+
+    FAIL_BODY=$(cat <<COMMENTEOF
+> **MGW** · \`pipeline-failed\` · ${DONE_TIMESTAMP}
+> Milestone: ${MILESTONE_NAME} | Phase ${PHASE_NUM}: ${PHASE_NAME}
+
+### Pipeline Failed
+
+Issue #${ISSUE_NUMBER} did not produce a PR.
+Check the execution log for details.
+
+Dependents of this issue will be skipped.
+COMMENTEOF
+)
+
+    gh issue comment ${ISSUE_NUMBER} --body "$FAIL_BODY" 2>/dev/null || true
+    gh issue edit ${ISSUE_NUMBER} --add-label "pipeline-failed" 2>/dev/null || true
+    gh label create "pipeline-failed" --description "Pipeline execution failed" --color "d73a4a" --force 2>/dev/null || true
+    echo "  ✗ #${ISSUE_NUMBER} — Failed (no PR created)"
+  fi
 
   # Update project.json checkpoint (MLST-05)
+  STAGE=$([ -n "$PR_NUMBER" ] && echo "done" || echo "failed")
   python3 -c "
 import json
 with open('${MGW_DIR}/project.json') as f:
@@ -429,25 +577,15 @@ with open('${MGW_DIR}/project.json') as f:
 milestone = project['milestones'][project['current_milestone'] - 1]
 for issue in milestone['issues']:
     if issue['github_number'] == ${ISSUE_NUMBER}:
-        issue['pipeline_stage'] = 'done'
+        issue['pipeline_stage'] = '${STAGE}'
         break
 with open('${MGW_DIR}/project.json', 'w') as f:
     json.dump(project, f, indent=2)
 "
 
-  # On failure:
-  # FAILED_ISSUES+=("$ISSUE_NUMBER")
-  # echo "Failed."
-  # Update project.json: pipeline_stage = "failed"
-  # Add pipeline-failed label:
-  #   gh issue edit ${ISSUE_NUMBER} --add-label "pipeline-failed"
-  #   gh label create "pipeline-failed" --description "Pipeline execution failed" --color "d73a4a" --force 2>/dev/null
-  # Post failure comment with collapsed milestone progress table:
-  #   gh issue comment ${ISSUE_NUMBER} --body "$FAILURE_COMMENT"
-
   ISSUES_RUN=$((ISSUES_RUN + 1))
 
-  # 7. If --interactive: pause between issues
+  # If --interactive: pause between issues
   if [ "$INTERACTIVE" = true ]; then
     AskUserQuestion(
       header: "Issue Complete",
@@ -460,9 +598,6 @@ with open('${MGW_DIR}/project.json', 'w') as f:
     )
     # Handle response: Continue → proceed, Skip → skip next, Abort → break
   fi
-
-  # 8. Build progress table for GitHub comments
-  # Every comment includes collapsed milestone progress table
 done
 ```
 

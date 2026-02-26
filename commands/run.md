@@ -124,36 +124,65 @@ Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → branch.
   (`.mgw/` is gitignored — it only exists in the main repo, not the worktree)
 </step>
 
-<step name="post_start_update">
-**Post "work started" comment (task agent):**
+<step name="post_triage_update">
+**Post structured triage comment on issue:**
 
-Gather enrichment data from triage state and GSD progress:
+Gather enrichment data from triage state:
 ```bash
-SCOPE_SUMMARY="${triage.scope.files} files across ${triage.scope.systems}"
-PROGRESS=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs progress bar --raw 2>/dev/null || echo "")
+SCOPE_SIZE="${triage.scope.size}"  # small|medium|large
+FILE_COUNT="${triage.scope.file_count}"
+SYSTEM_LIST="${triage.scope.systems}"
+FILE_LIST="${triage.scope.files}"
+VALIDITY="${triage.validity}"
+SECURITY_RISK="${triage.security_notes}"
+CONFLICTS="${triage.conflicts}"
+ROUTE_REASONING="${triage.route_reasoning}"
+TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Load milestone/phase context from project.json if available
+MILESTONE_CONTEXT=""
+if [ -f "${REPO_ROOT}/.mgw/project.json" ]; then
+  MILESTONE_CONTEXT=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+for m in p['milestones']:
+  for i in m.get('issues', []):
+    if i.get('github_number') == ${ISSUE_NUMBER}:
+      print(f\"Milestone: {m['name']} | Phase {i['phase_number']}: {i['phase_name']}\")
+      break
+" 2>/dev/null || echo "")
+fi
 ```
 
-```
-Task(
-  prompt="
-<files_to_read>
-- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
-- .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
-</files_to_read>
+Post the triage comment directly (no sub-agent — guarantees it happens):
 
-Post a GitHub issue comment.
-Issue: ${ISSUE_NUMBER}
-Comment body:
-**Work Started** — Triaged as \`${gsd_route}\`. Execution beginning on branch \`${BRANCH_NAME}\`.
-Scope: ${SCOPE_SUMMARY}
-${PROGRESS ? 'Progress: ' + PROGRESS : ''}
+```bash
+TRIAGE_BODY=$(cat <<COMMENTEOF
+> **MGW** · \`triage-complete\` · ${TIMESTAMP}
+> ${MILESTONE_CONTEXT}
 
-Command: gh issue comment ${ISSUE_NUMBER} --body '<comment_body>'
-",
-  subagent_type="general-purpose",
-  model="haiku",
-  description="Post start comment on #${ISSUE_NUMBER}"
+### Triage Complete
+
+| | |
+|---|---|
+| **Scope** | ${SCOPE_SIZE} — ${FILE_COUNT} files across ${SYSTEM_LIST} |
+| **Validity** | ${VALIDITY} |
+| **Security** | ${SECURITY_RISK} |
+| **Route** | \`${gsd_route}\` — ${ROUTE_REASONING} |
+| **Conflicts** | ${CONFLICTS} |
+
+Work begins on branch \`${BRANCH_NAME}\`.
+
+<details>
+<summary>Affected Files</summary>
+
+${FILE_LIST as bullet points}
+
+</details>
+COMMENTEOF
 )
+
+gh issue comment ${ISSUE_NUMBER} --body "$TRIAGE_BODY" 2>/dev/null || true
 ```
 
 Log comment in state file (at `${REPO_ROOT}/.mgw/active/`).
@@ -424,28 +453,61 @@ VERIFIER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gs
    a. Spawn discuss + plan via task agents (following gsd:plan-phase workflow)
    b. Spawn executor(s) via task agents (following gsd:execute-phase workflow)
    c. Spawn verifier
-   d. Post phase update comment:
-   ```
-   Task(
-     prompt="
-   <files_to_read>
-   - ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
-   - .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
-   </files_to_read>
+   d. Post phase update comment directly (no sub-agent):
+   ```bash
+   PHASE_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+   PHASE_BODY=$(cat <<COMMENTEOF
+> **MGW** · \`phase-complete\` · ${PHASE_TIMESTAMP}
+> ${MILESTONE_CONTEXT}
 
-   Post GitHub comment on issue ${ISSUE_NUMBER}:
-   **Phase ${phase_num} Complete** — ${phase_name}
-   ${brief_summary_from_executor}
-   Verification: ${verification_status}
+### Phase ${phase_num} Complete — ${phase_name}
 
-   Command: gh issue comment ${ISSUE_NUMBER} --body '<body>'",
-     subagent_type="general-purpose",
-     model="haiku",
-     description="Post phase ${phase_num} update"
-   )
+${brief_summary_from_executor}
+
+**Verification:** ${verification_status}
+COMMENTEOF
+)
+   gh issue comment ${ISSUE_NUMBER} --body "$PHASE_BODY" 2>/dev/null || true
    ```
 
    After all phases complete → update pipeline_stage to "verifying" (at `${REPO_ROOT}/.mgw/active/`).
+</step>
+
+<step name="post_execution_update">
+**Post execution-complete comment on issue:**
+
+After GSD execution completes, post a structured update before creating the PR:
+
+```bash
+COMMIT_COUNT=$(git rev-list ${DEFAULT_BRANCH}..HEAD --count 2>/dev/null || echo "0")
+TEST_STATUS=$(npm test 2>&1 >/dev/null && echo "passing" || echo "failing")
+FILE_CHANGES=$(git diff --stat ${DEFAULT_BRANCH}..HEAD 2>/dev/null | tail -1)
+EXEC_TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+```
+
+Post the execution-complete comment directly (no sub-agent — guarantees it happens):
+
+```bash
+EXEC_BODY=$(cat <<COMMENTEOF
+> **MGW** · \`execution-complete\` · ${EXEC_TIMESTAMP}
+> ${MILESTONE_CONTEXT}
+
+### Execution Complete
+
+${COMMIT_COUNT} atomic commit(s) on branch \`${BRANCH_NAME}\`.
+
+**Changes:** ${FILE_CHANGES}
+
+**Tests:** ${TEST_STATUS}
+
+Preparing pull request.
+COMMENTEOF
+)
+
+gh issue comment ${ISSUE_NUMBER} --body "$EXEC_BODY" 2>/dev/null || true
+```
+
+Update pipeline_stage to "pr-pending" (at `${REPO_ROOT}/.mgw/active/`).
 </step>
 
 <step name="create_pr">
@@ -466,6 +528,56 @@ COMMITS=$(git log ${DEFAULT_BRANCH}..HEAD --oneline)
 CROSS_REFS=$(cat ${REPO_ROOT}/.mgw/cross-refs.json 2>/dev/null)
 # Progress table for PR details section
 PROGRESS_TABLE=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs progress table --raw 2>/dev/null || echo "")
+
+# Milestone/phase context for PR body
+MILESTONE_TITLE=""
+PHASE_INFO=""
+DEPENDENCY_CHAIN=""
+PROJECT_BOARD_URL=""
+if [ -f "${REPO_ROOT}/.mgw/project.json" ]; then
+  MILESTONE_TITLE=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+for m in p['milestones']:
+  for i in m.get('issues', []):
+    if i.get('github_number') == ${ISSUE_NUMBER}:
+      print(m['name'])
+      break
+" 2>/dev/null || echo "")
+
+  PHASE_INFO=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+total_phases = sum(len(m.get('issues', [])) for m in p['milestones'])
+for m in p['milestones']:
+  for i in m.get('issues', []):
+    if i.get('github_number') == ${ISSUE_NUMBER}:
+      total_in_milestone = len(m.get('issues', []))
+      idx = [x['github_number'] for x in m['issues']].index(${ISSUE_NUMBER}) + 1
+      print(f\"Phase {i['phase_number']}: {i['phase_name']} (issue {idx}/{total_in_milestone} in milestone)\")
+      break
+" 2>/dev/null || echo "")
+
+  DEPENDENCY_CHAIN=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+refs = json.load(open('${REPO_ROOT}/.mgw/cross-refs.json'))
+blockers = [l['b'].split(':')[1] for l in refs.get('links', [])
+            if l.get('type') == 'blocked-by' and l['a'] == 'issue:${ISSUE_NUMBER}']
+blocks = [l['a'].split(':')[1] for l in refs.get('links', [])
+          if l.get('type') == 'blocked-by' and l['b'] == 'issue:${ISSUE_NUMBER}']
+parts = []
+if blockers: parts.append('Blocked by: ' + ', '.join(f'#{b}' for b in blockers))
+if blocks: parts.append('Unblocks: ' + ', '.join(f'#{b}' for b in blocks))
+print(' | '.join(parts) if parts else 'No dependencies')
+" 2>/dev/null || echo "")
+
+  PROJECT_BOARD_URL=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+print(p.get('project', {}).get('project_board', {}).get('url', ''))
+" 2>/dev/null || echo "")
+fi
 ```
 
 Read issue state for context.
@@ -484,6 +596,13 @@ Create a GitHub PR for issue #${ISSUE_NUMBER}.
 Title: ${issue_title}
 Body: ${issue_body}
 </issue>
+
+<milestone_context>
+Milestone: ${MILESTONE_TITLE}
+Phase: ${PHASE_INFO}
+Dependencies: ${DEPENDENCY_CHAIN}
+Board: ${PROJECT_BOARD_URL}
+</milestone_context>
 
 <summary_structured>
 ${SUMMARY_DATA}
@@ -511,14 +630,38 @@ ${CROSS_REFS}
 </cross_refs>
 
 <instructions>
-1. Build PR title: short, prefixed with fix:/feat:/refactor: based on issue labels
-2. Build PR body with:
-   - ## Summary (2-4 bullets, use one_liner from summary_structured if available)
-   - Closes #${ISSUE_NUMBER}
-   - ## Changes (file-level grouped by system, use key_files from summary_structured)
-   - ## Cross-References (if any)
-   - If PROGRESS_TABLE is non-empty, include under <details><summary>GSD Progress</summary> block
-   - If artifact_warnings contain failures, include under ## Warnings section
+1. Build PR title: short, prefixed with fix:/feat:/refactor: based on issue labels. Under 70 characters.
+
+2. Build PR body using this EXACT structure (fill in from data above):
+
+## Summary
+- 2-4 bullets of what was built and why (use one_liner from summary_structured if available)
+
+Closes #${ISSUE_NUMBER}
+
+## Milestone Context
+- **Milestone:** ${MILESTONE_TITLE}
+- **Phase:** ${PHASE_INFO}
+- **Dependencies:** ${DEPENDENCY_CHAIN}
+(Skip this section entirely if MILESTONE_TITLE is empty)
+
+## Changes
+- File-level changes grouped by module (use key_files from summary_structured)
+
+## Test Plan
+- Verification checklist from VERIFICATION artifact
+
+## Cross-References
+- ${CROSS_REFS entries as bullet points}
+(Skip if no cross-refs)
+
+<details>
+<summary>GSD Progress</summary>
+
+${PROGRESS_TABLE}
+</details>
+(Skip if PROGRESS_TABLE is empty)
+
 3. Create PR: gh pr create --title '<title>' --base '${DEFAULT_BRANCH}' --head '${BRANCH_NAME}' --body '<body>'
 4. Post testing procedures as separate PR comment: gh pr comment <pr_number> --body '<testing>'
 5. Return: PR number, PR URL
@@ -554,28 +697,39 @@ Extract one-liner summary for concise comment:
 ONE_LINER=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs summary-extract "${gsd_artifacts_path}/*SUMMARY*" --fields one_liner --raw 2>/dev/null || echo "")
 ```
 
-Post completion comment:
-```
-Task(
-  prompt="
-<files_to_read>
-- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
-- .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
-</files_to_read>
+Post structured PR-ready comment directly (no sub-agent — guarantees it happens):
 
-Post GitHub issue comment.
-Issue: ${ISSUE_NUMBER}
-Comment: **PR Ready** — PR #${PR_NUMBER} created: ${PR_URL}
-${ONE_LINER ? ONE_LINER : ''}
+```bash
+DONE_TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+PR_READY_BODY=$(cat <<COMMENTEOF
+> **MGW** · \`pr-ready\` · ${DONE_TIMESTAMP}
+> ${MILESTONE_CONTEXT}
+
+### PR Ready
+
+**PR #${PR_NUMBER}** — ${PR_URL}
+
+${ONE_LINER}
+
 Testing procedures posted on the PR.
-
 This issue will auto-close when the PR is merged.
 
-Command: gh issue comment ${ISSUE_NUMBER} --body '<body>'",
-  subagent_type="general-purpose",
-  model="haiku",
-  description="Post completion on #${ISSUE_NUMBER}"
+<details>
+<summary>Pipeline Summary</summary>
+
+| Stage | Status |
+|-------|--------|
+| Triage | ✓ |
+| Planning | ✓ |
+| Execution | ✓ |
+| PR Creation | ✓ |
+
+</details>
+COMMENTEOF
 )
+
+gh issue comment ${ISSUE_NUMBER} --body "$PR_READY_BODY" 2>/dev/null || true
 ```
 
 Update pipeline_stage to "done" (at `${REPO_ROOT}/.mgw/active/`).
@@ -605,10 +759,11 @@ Next:
 <success_criteria>
 - [ ] Issue number validated and state loaded (or triage run first)
 - [ ] Isolated worktree created (.worktrees/ gitignored)
-- [ ] "Work started" comment posted on issue
+- [ ] Structured triage comment posted on issue (scope, route, files, security)
 - [ ] GSD pipeline executed in worktree (quick or milestone route)
-- [ ] PR created with summary, testing procedures, cross-refs
-- [ ] "PR ready" comment posted on issue
+- [ ] Execution-complete comment posted on issue (commits, changes, test status)
+- [ ] PR created with summary, milestone context, testing procedures, cross-refs
+- [ ] Structured PR-ready comment posted on issue (PR link, pipeline summary)
 - [ ] Worktree cleaned up, user returned to main workspace
 - [ ] State file updated through all pipeline stages
 - [ ] User prompted to run /mgw:sync after merge
