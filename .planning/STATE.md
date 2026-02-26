@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-02-26T05:49:54.659Z"
+last_updated: "2026-02-26T06:30:37.275Z"
 progress:
   total_phases: 5
   completed_phases: 5
@@ -94,6 +94,7 @@ Recent decisions affecting current work:
 - [Phase 05]: invokeClaude uses spawn() not execSync() for real-time streaming support
 - [Phase 05]: Commander.js v14 action handlers must use regular function (not arrow) for this.optsWithGlobals() to work
 - [Phase 05]: pkgroll v2 --src . required when sources are not in ./src (bin/ and lib/ at repo root)
+- [Phase quick]: AI generates project template inline during /mgw:project — temp file pattern via /tmp/mgw-template.json; validate() accepts any non-empty type string; schema.json type enum removed
 
 ### Pending Todos
 
