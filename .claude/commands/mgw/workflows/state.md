@@ -195,13 +195,74 @@ File: `.mgw/cross-refs.json`
 | issue | branch | tracks |
 | pr | branch | tracks |
 
+## Project State (project.json)
+
+File: `.mgw/project.json` — Created by `/mgw:project`, read/updated by `/mgw:milestone` and `/mgw:next`.
+
+### Read Project State
+```bash
+MGW_DIR="${REPO_ROOT}/.mgw"
+PROJECT_JSON=$(cat "${MGW_DIR}/project.json" 2>/dev/null)
+if [ -z "$PROJECT_JSON" ]; then
+  echo "No project initialized. Run /mgw:project first."
+  exit 1
+fi
+
+CURRENT_MILESTONE=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['current_milestone'])")
+```
+
+### Read Milestone Issues
+```bash
+MILESTONE_ISSUES=$(echo "$PROJECT_JSON" | python3 -c "
+import json,sys
+p = json.load(sys.stdin)
+m = p['milestones'][p['current_milestone'] - 1]
+print(json.dumps(m['issues'], indent=2))
+")
+```
+
+### Update Issue Pipeline Stage
+Used after each `/mgw:run` completion to checkpoint progress.
+```bash
+python3 -c "
+import json
+with open('${MGW_DIR}/project.json') as f:
+    project = json.load(f)
+milestone = project['milestones'][project['current_milestone'] - 1]
+for issue in milestone['issues']:
+    if issue['github_number'] == ${ISSUE_NUMBER}:
+        issue['pipeline_stage'] = '${NEW_STAGE}'
+        break
+with open('${MGW_DIR}/project.json', 'w') as f:
+    json.dump(project, f, indent=2)
+"
+```
+
+Valid stages: `new`, `triaged`, `planning`, `executing`, `verifying`, `pr-created`, `done`, `failed`.
+
+### Advance Current Milestone
+Used after milestone completion to move pointer to next milestone.
+```bash
+python3 -c "
+import json
+with open('${MGW_DIR}/project.json') as f:
+    project = json.load(f)
+project['current_milestone'] += 1
+with open('${MGW_DIR}/project.json', 'w') as f:
+    json.dump(project, f, indent=2)
+"
+```
+
+Only advance if ALL issues in current milestone completed successfully.
+
 ## Consumers
 
 | Pattern | Referenced By |
 |---------|-------------|
-| validate_and_load | init.md, issue.md, run.md, update.md, link.md, pr.md, sync.md |
+| validate_and_load | init.md, issue.md, run.md, update.md, link.md, pr.md, sync.md, milestone.md |
 | Per-issue staleness | run.md, issue.md, update.md |
-| Batch staleness | sync.md (full reconciliation) |
+| Batch staleness | sync.md (full reconciliation), milestone.md |
 | Issue state schema | issue.md, run.md, update.md, sync.md |
 | Cross-refs schema | link.md, run.md, pr.md, sync.md |
 | Slug generation | issue.md, run.md |
+| Project state | milestone.md, next.md |

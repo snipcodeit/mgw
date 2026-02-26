@@ -40,6 +40,8 @@ COMMANDS
   Pipeline
   ────────
   /mgw:run <number>            Autonomous: triage → GSD execute → PR (worktree-isolated)
+  /mgw:milestone               Execute milestone issues in dependency order (auto-sync, checkpoint)
+  /mgw:next                    Show next unblocked issue — what to work on now
 
   GitHub Operations
   ─────────────────
@@ -56,13 +58,15 @@ TYPICAL FLOW
 
   0. /mgw:init                      One-time repo setup (state, templates, labels)
   1. /mgw:project                   Day 1: create milestones + issue backlog from template
-  2. /mgw:issues                    Browse your assigned issues
-  3. /mgw:issue 42                  Triage — scope, validity, security, GSD route
-  4. /mgw:run 42                    Full pipeline: plan → execute → verify → PR
+  2. /mgw:next                      See what's unblocked — pick your next issue
+  3. /mgw:run 42                    Full pipeline: plan → execute → verify → PR
                                     (runs in worktree, you stay on main)
+  4. /mgw:milestone                 Auto-run all unblocked issues in dependency order
   5. /mgw:sync                      After merge: archive state, clean up branches
 
-  Or skip straight to:
+  Or work issue-by-issue:
+  /mgw:issues                      Browse your assigned issues
+  /mgw:issue 42                    Triage — scope, validity, security, GSD route
   /mgw:run 42                      Auto-triages if not done yet
 
 MANUAL OPERATIONS

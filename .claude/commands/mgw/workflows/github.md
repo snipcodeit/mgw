@@ -194,17 +194,58 @@ gh api graphql -f query='
 ' -f owner="$OWNER" -f repo="$REPO" --jq '.data.repository.issues.nodes'
 ```
 
+## Rate Limit
+
+### Check Rate Limit
+Used before batch operations (milestone execution) to estimate available API calls.
+```bash
+RATE_JSON=$(gh api rate_limit --jq '.resources.core')
+REMAINING=$(echo "$RATE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['remaining'])")
+LIMIT=$(echo "$RATE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['limit'])")
+RESET_EPOCH=$(echo "$RATE_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['reset'])")
+RESET_TIME=$(date -d "@${RESET_EPOCH}" '+%H:%M:%S' 2>/dev/null || echo "unknown")
+```
+
+Conservative estimate: ~25 API calls per `/mgw:run` invocation (triage + comments + PR creation).
+If rate limit check fails (network error), log warning and proceed — never block on non-critical checks.
+
+### Close Milestone
+Used after all issues in a milestone are complete.
+```bash
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+gh api "repos/${REPO}/milestones/${MILESTONE_NUMBER}" --method PATCH \
+  -f state="closed"
+```
+
+Note: Uses same API path as Create Milestone but with PATCH method.
+
+## Release Operations
+
+### Create Draft Release
+Used after milestone completion to create an auto-generated release summary.
+```bash
+RELEASE_TAG="milestone-${MILESTONE_NUM}-complete"
+gh release create "$RELEASE_TAG" --draft \
+  --title "Milestone ${MILESTONE_NUM}: ${MILESTONE_NAME}" \
+  --notes "$RELEASE_BODY"
+```
+
+Tag format: `milestone-{N}-complete` (e.g., `milestone-1-complete`).
+Release is created as draft — user reviews and publishes manually.
+
 ## Consumers
 
 | Section | Referenced By |
 |---------|-------------|
-| Issue Operations | issue.md, run.md, issues.md, sync.md |
-| Issue Mutations | issue.md, update.md, run.md, init.md |
-| Milestone Operations | project.md |
+| Issue Operations | issue.md, run.md, issues.md, sync.md, milestone.md, next.md |
+| Issue Mutations | issue.md, update.md, run.md, init.md, milestone.md |
+| Milestone Operations | project.md, milestone.md |
 | Dependency Labels | project.md |
 | Phase Labels | project.md |
 | PR Operations | pr.md, run.md, sync.md |
-| Repo Metadata | init.md, issues.md, run.md, pr.md |
+| Repo Metadata | init.md, issues.md, run.md, pr.md, milestone.md |
 | User Identity | issue.md |
 | Remote Operations | sync.md, run.md |
 | Batch Operations | state.md (staleness detection) |
+| Rate Limit | milestone.md |
+| Release Operations | milestone.md |
