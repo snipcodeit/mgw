@@ -1,6 +1,6 @@
 ---
 name: mgw:project
-description: Initialize a new project — create GitHub milestones, scaffold issues from template, write GSD ROADMAP and project state
+description: Initialize a new project — generate AI-driven milestones and issues from project description, write GSD ROADMAP and project state
 argument-hint: ""
 allowed-tools:
   - Bash
@@ -13,7 +13,7 @@ allowed-tools:
 
 <objective>
 Turn a project description into a fully structured GitHub project: milestones created,
-issues scaffolded from an opinionated template, dependencies labeled, GSD ROADMAP.md
+issues scaffolded from AI-generated project-specific content, dependencies labeled, GSD ROADMAP.md
 written, and state persisted. The developer never leaves Claude Code and never does
 project management manually.
 
@@ -73,39 +73,12 @@ fi
 Ask the following questions in sequence:
 
 **Question 1:** "What are you building?"
-- Capture the project description as `$DESCRIPTION`
+- Capture the project description as `$DESCRIPTION`. Be conversational and encourage detail about the domain, purpose, and target users.
 
-**Auto-detect template type from description (keyword matching, not LLM analysis):**
+**Question 2 (optional):** "Anything else I should know? (tech stack preferences, target audience, key constraints — or press Enter to skip)"
+- Append any additional context to `$DESCRIPTION` if provided.
 
-```bash
-detect_template_type() {
-  local DESC="${1,,}"  # lowercase
-  if echo "$DESC" | grep -qiE '\b(cli|command.line|command-line|terminal|binary|tool)\b'; then
-    echo "cli-tool"
-  elif echo "$DESC" | grep -qiE '\b(dashboard|web|app|frontend|ui|site|portal)\b'; then
-    echo "web-app"
-  elif echo "$DESC" | grep -qiE '\b(library|lib|sdk|package|module|npm|framework)\b'; then
-    echo "library"
-  else
-    echo "unknown"
-  fi
-}
-
-DETECTED_TYPE=$(detect_template_type "$DESCRIPTION")
-```
-
-**Question 2:** Confirm detected type (or ask user to pick):
-- If detected (not "unknown"): "Detected template: **{detected_type}**. Correct? (or specify: web-app, cli-tool, library)"
-- If unknown: "I couldn't auto-detect the project type. Available templates:
-  - **web-app** — Dashboard, web application, frontend/UI
-  - **cli-tool** — Command-line tool, terminal binary
-  - **library** — npm package, SDK, framework, reusable module
-  Which fits best?"
-- If user can't pick any: refuse and explain: "The available templates are web-app, cli-tool, and library. Pick the closest match, or wait for custom templates (planned for v2)."
-- Store result as `$TEMPLATE_TYPE`
-
-**Question 3 (optional):** "Any specific details to include in the project description? (press Enter to skip)"
-- Append any additional context to `$DESCRIPTION`
+Do NOT ask the user to pick a template type. Do NOT present a list of web-app/cli-tool/library options. The AI will generate project-specific content directly from the description.
 
 **Infer parameters from environment (only ask for what cannot be inferred):**
 
@@ -131,55 +104,85 @@ PREFIX="v1"
 ```
 </step>
 
-<step name="load_template">
-**Load and fill the template using template-loader.cjs:**
+<step name="generate_template">
+**Generate a project-specific template using AI:**
+
+First, read the schema to understand the required output structure:
 
 ```bash
-TEMPLATE_JSON=$(node "${REPO_ROOT}/lib/template-loader.cjs" load "$TEMPLATE_TYPE" \
-  --project_name "$PROJECT_NAME" \
-  --description "$DESCRIPTION" \
-  --repo "$REPO" \
-  --stack "$STACK" \
-  --prefix "$PREFIX")
+SCHEMA=$(node "${REPO_ROOT}/lib/template-loader.cjs" schema)
 ```
 
-**Check for success:**
+Now, as the AI executing this command, generate a complete project template JSON for this specific project. The JSON must:
+
+1. Match the schema structure: milestones > phases > issues with all required fields
+2. Use a descriptive `type` value that fits the project (e.g., "game", "mobile-app", "saas-platform", "data-pipeline", "api-service", "developer-tool", "browser-extension", etc. — NOT limited to web-app/cli-tool/library)
+3. Contain 2-4 milestones with 1-3 phases each, each phase having 2-4 issues
+4. Have issue titles that are specific and actionable — referencing the actual project domain, not generic placeholders like "Implement primary feature set"
+5. Have issue descriptions that reference the actual project context
+6. Use `depends_on` slugs following the convention: lowercase title, spaces-to-hyphens, truncated to 40 chars (e.g., "design-core-game-loop-and-player-mechanic")
+7. Choose `gsd_route` values appropriately:
+   - `plan-phase` for complex multi-step implementation work
+   - `quick` for small well-defined tasks
+   - `research-phase` for unknowns requiring investigation
+   - `execute-phase` for straightforward mechanical execution
+8. Use specific, relevant labels (not just "phase-N") — e.g., "backend", "frontend", "game-design", "ml", "database", "ui/ux", "performance", "security"
+9. Set `version` to "1.0.0"
+10. Include the standard `parameters` section with `project_name` and `description` as required params, and `repo`, `stack`, `prefix` as optional params
+11. Include a `project` object with `name`, `description`, `repo`, `stack`, and `prefix` fields filled from the gathered inputs
+
+Output the generated JSON as a fenced code block (```json ... ```).
+
+The project details for generation:
+- **Project name:** `$PROJECT_NAME`
+- **Description:** `$DESCRIPTION`
+- **Stack:** `$STACK`
+- **Repo:** `$REPO`
+- **Prefix:** `$PREFIX`
+
+After generating the JSON, extract it and write to a temp file:
+
 ```bash
-echo "$TEMPLATE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get('success') else 1)"
+# Write AI-generated JSON to temp file
+# (Claude writes the JSON using the Write tool to /tmp/mgw-template.json)
 ```
 
-If validation fails:
-```bash
-echo "$TEMPLATE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); [print(e) for e in d.get('errors',[])]"
-```
-Display the errors and stop. Do not continue if template loading fails.
+**Validate the generated JSON:**
 
-Parse key values from successful template output:
 ```bash
-MILESTONE_COUNT=$(echo "$TEMPLATE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['template']['milestones']))")
-TOTAL_PHASES=$(echo "$TEMPLATE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(sum(len(m['phases']) for m in d['template']['milestones']))")
+node "${REPO_ROOT}/lib/template-loader.cjs" validate < /tmp/mgw-template.json
+```
+
+If validation fails, review the errors and regenerate with corrections. Repeat until validation passes.
+
+If validation passes, parse key metrics:
+
+```bash
+MILESTONE_COUNT=$(python3 -c "import json; d=json.load(open('/tmp/mgw-template.json')); print(len(d['milestones']))")
+TOTAL_PHASES=$(python3 -c "import json; d=json.load(open('/tmp/mgw-template.json')); print(sum(len(m['phases']) for m in d['milestones']))")
+GENERATED_TYPE=$(python3 -c "import json; d=json.load(open('/tmp/mgw-template.json')); print(d['type'])")
 ```
 </step>
 
 <step name="create_milestones">
 **Pass 1a: Create GitHub milestones**
 
-For each milestone in `template.milestones` (iterate by index):
+For each milestone in the generated template (iterate by index):
 
 ```bash
-# Iterate over milestones in the template output
+# Iterate over milestones in the generated template
 MILESTONE_MAP=()  # bash array: index -> "number:id:url"
 
 for MILESTONE_INDEX in $(seq 0 $((MILESTONE_COUNT - 1))); do
-  MILESTONE_NAME=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(d['template']['milestones'][${MILESTONE_INDEX}]['name'])
+  MILESTONE_NAME=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}]['name'])
 ")
-  MILESTONE_DESC=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(d['template']['milestones'][${MILESTONE_INDEX}].get('description',''))
+  MILESTONE_DESC=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}].get('description',''))
 ")
 
   MILESTONE_JSON_RESP=$(gh api "repos/${REPO}/milestones" --method POST \
@@ -226,34 +229,34 @@ for MILESTONE_INDEX in $(seq 0 $((MILESTONE_COUNT - 1))); do
     continue
   fi
 
-  PHASE_COUNT=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(len(d['template']['milestones'][${MILESTONE_INDEX}]['phases']))
+  PHASE_COUNT=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(len(d['milestones'][${MILESTONE_INDEX}]['phases']))
 ")
 
   for PHASE_INDEX in $(seq 0 $((PHASE_COUNT - 1))); do
     GLOBAL_PHASE_NUM=$((GLOBAL_PHASE_NUM + 1))
 
-    PHASE_NAME=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(d['template']['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['name'])
+    PHASE_NAME=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['name'])
 ")
-    PHASE_DESC=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(d['template']['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}].get('description',''))
+    PHASE_DESC=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}].get('description',''))
 ")
-    GSD_ROUTE=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(d['template']['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}].get('gsd_route','plan-phase'))
+    GSD_ROUTE=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}].get('gsd_route','plan-phase'))
 ")
-    MILESTONE_NAME=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(d['template']['milestones'][${MILESTONE_INDEX}]['name'])
+    MILESTONE_NAME=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}]['name'])
 ")
 
     # Generate phase slug for label
@@ -265,33 +268,33 @@ print(d['template']['milestones'][${MILESTONE_INDEX}]['name'])
       --color "0075ca" \
       --force 2>/dev/null
 
-    ISSUE_COUNT=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(len(d['template']['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues']))
+    ISSUE_COUNT=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(len(d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues']))
 ")
 
     for ISSUE_INDEX in $(seq 0 $((ISSUE_COUNT - 1))); do
-      ISSUE_TITLE=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(d['template']['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}]['title'])
+      ISSUE_TITLE=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}]['title'])
 ")
-      ISSUE_DESC=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(d['template']['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}].get('description',''))
+      ISSUE_DESC=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}].get('description',''))
 ")
-      ISSUE_LABELS_JSON=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-labels=d['template']['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}].get('labels',[])
+      ISSUE_LABELS_JSON=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+labels=d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}].get('labels',[])
 print(','.join(labels))
 ")
-      DEPENDS_ON_JSON=$(echo "$TEMPLATE_JSON" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-deps=d['template']['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}].get('depends_on',[])
+      DEPENDS_ON_JSON=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+deps=d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}].get('depends_on',[])
 print(','.join(deps))
 ")
 
@@ -461,7 +464,7 @@ The ROADMAP.md must follow the GSD format from `/home/hat/.claude/get-shit-done/
 
 ## Overview
 
-{DESCRIPTION}. This project follows the {TEMPLATE_TYPE} pipeline.
+{DESCRIPTION}. This project follows the {GENERATED_TYPE} pipeline.
 
 ## Phases
 
@@ -505,7 +508,7 @@ Plans:
 ...
 ```
 
-Generate this content using the template data from `$TEMPLATE_JSON`. Iterate over
+Generate this content using the template data from `/tmp/mgw-template.json`. Iterate over
 milestones → phases → issues to build each section. Use the Write tool to create
 the file at `$ROADMAP_PATH`.
 
@@ -516,6 +519,7 @@ the file at `$ROADMAP_PATH`.
 - First phase → `**Depends on**: Nothing (first phase)`, others → `**Depends on**: Phase N-1`
 - Milestone name → Requirements milestone reference
 - Plans section: always `TBD` initially with placeholder `{NN}-01: TBD`
+- Use `$GENERATED_TYPE` (from the AI-generated JSON) in the Overview line instead of a hardcoded template name
 </step>
 
 <step name="write_project_json">
@@ -532,13 +536,12 @@ Construct the JSON using python3 (to handle proper JSON encoding):
 ```python
 import json, sys
 
-template_data = json.loads('''TEMPLATE_JSON_HERE''')
-template = template_data['template']
+template_data = json.load(open('/tmp/mgw-template.json'))
 
 milestones_out = []
 global_phase_num = 0
 
-for m_idx, milestone in enumerate(template['milestones']):
+for m_idx, milestone in enumerate(template_data['milestones']):
     # Find GitHub data from MILESTONE_MAP
     m_entry = MILESTONE_MAP[m_idx]  # "idx:number:id:url"
     m_number = int(m_entry.split(':')[1]) if m_entry.split(':')[1] != 'FAILED' else None
@@ -577,7 +580,7 @@ project_json = {
         "name": PROJECT_NAME,
         "description": DESCRIPTION,
         "repo": REPO,
-        "template": TEMPLATE_TYPE,
+        "template": GENERATED_TYPE,
         "created": CREATED
     },
     "milestones": milestones_out,
@@ -590,15 +593,15 @@ print(json.dumps(project_json, indent=2))
 Write the output to `${MGW_DIR}/project.json`.
 
 **In practice** (bash + python3 inline): construct the full project.json by assembling
-data from `$TEMPLATE_JSON`, the milestone map built in create_milestones, the slug-to-number
+data from `/tmp/mgw-template.json`, the milestone map built in create_milestones, the slug-to-number
 map from create_issues, and the phase_map built during create_issues. Write using:
 
 ```bash
 python3 << 'PYEOF' > "${MGW_DIR}/project.json"
 import json, sys
 
-# Read template data (passed via environment or inline)
-template_data = json.loads(open('/dev/stdin').read() if False else '{}')
+# Read template data from the validated generated file
+template_data = json.load(open('/tmp/mgw-template.json'))
 # ... (construct from available bash variables)
 PYEOF
 ```
@@ -606,6 +609,9 @@ PYEOF
 The simplest implementation: build the JSON structure incrementally during the
 issue/milestone creation steps (maintaining bash arrays), then assemble them into
 a python3 dictionary and write with `json.dumps(indent=2)` at this step.
+
+Note: use `GENERATED_TYPE` (read from `/tmp/mgw-template.json`) for the `template` field in project.json,
+not a hardcoded template name.
 </step>
 
 <step name="report">
@@ -616,7 +622,7 @@ a python3 dictionary and write with `json.dumps(indent=2)` at this step.
  MGW ► PROJECT INIT — {PROJECT_NAME}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Template:  {TEMPLATE_TYPE} ({MILESTONE_COUNT} milestones, {TOTAL_PHASES} phases)
+Type:      {GENERATED_TYPE} ({MILESTONE_COUNT} milestones, {TOTAL_PHASES} phases)
 Repo:      {REPO}
 
 Milestones created:
@@ -659,8 +665,8 @@ Warnings:
 <success_criteria>
 - [ ] Verified git repo with GitHub remote
 - [ ] .mgw/project.json does not exist (or exits cleanly if it does)
-- [ ] Conversational input gathered (description, template type confirmed)
-- [ ] Template loaded successfully via template-loader.cjs
+- [ ] Conversational input gathered (description only — no template type selection)
+- [ ] AI-generated project template validates against schema.json
 - [ ] All milestones created on GitHub (Pass 1a)
 - [ ] All issues created on GitHub with milestone assignment and phase labels (Pass 1b)
 - [ ] Slug-to-number mapping built during Pass 1b
