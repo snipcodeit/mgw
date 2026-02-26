@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Template Engine** - Build parameterized pipeline templates for web app, CLI tool, and library project types (completed 2026-02-25)
 - [x] **Phase 3: Project Initialization** - Deliver `/mgw:project` — the Day 1 command that creates a complete GitHub milestone structure from a description (completed 2026-02-25)
 - [x] **Phase 4: Milestone Orchestration** - Deliver `/mgw:milestone` and `/mgw:next` — dependency-ordered execution of milestone issues (completed 2026-02-26)
-- [ ] **Phase 5: Standalone Tools** - Deliver `bin/mgw` CLI binary that mirrors the slash command surface and works independently of Claude Code
+- [x] **Phase 5: Standalone Tools** - Deliver `bin/mgw` CLI binary that mirrors the slash command surface and works independently of Claude Code (completed 2026-02-26)
 
 ## Phase Details
 
@@ -104,4 +104,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Template Engine | 2/2 | Complete | 2026-02-25 |
 | 3. Project Initialization | 2/2 | Complete    | 2026-02-25 |
 | 4. Milestone Orchestration | 2/2 | Complete    | 2026-02-26 |
-| 5. Standalone Tools | 1/2 | In Progress|  |
+| 5. Standalone Tools | 2/2 | Complete    | 2026-02-26 |

@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-02-26T05:33:09Z"
+last_updated: "2026-02-26T05:49:54.659Z"
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 10
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -23,11 +23,11 @@ See: .planning/PROJECT.md (updated 2026-02-24)
 ## Current Position
 
 Phase: 5 of 5 (Standalone Tools)
-Plan: 1 of 2 in current phase — COMPLETE
-Status: In progress
-Last activity: 2026-02-26 — Plan 05-01 (shared lib/ modules + package.json) completed
+Plan: 2 of 2 in current phase — COMPLETE
+Status: COMPLETE
+Last activity: 2026-02-26 — Plan 05-02 (CLI binary bin/mgw.cjs + pkgroll build) completed
 
-Progress: [█████████░] 90%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -44,23 +44,24 @@ Progress: [█████████░] 90%
 | 2. Template Engine | 2 | ~10min | ~5min |
 | 3. Project Initialization | 2 | ~6min | ~3min |
 | 4. Milestone Orchestration | 2 | ~7min | ~3.5min |
-| 5. Standalone Tools | 1 (so far) | ~3min | ~3min |
+| 5. Standalone Tools | 2 | ~9min | ~4.5min |
 
 **Recent Trend:**
-- Last 9 plans: 01-01, 01-02, 02-01, 02-02, 03-01, 03-02, 04-01, 04-02, 05-01
-- Trend: consistent (~3-4 min/plan)
+- Last 10 plans: 01-01, 01-02, 02-01, 02-02, 03-01, 03-02, 04-01, 04-02, 05-01, 05-02
+- Trend: consistent (~3-6 min/plan)
 
 *Updated after each plan completion*
 
 | Metric | Value |
 |--------|-------|
-| Total plans completed | 9 |
+| Total plans completed | 10 |
 | Average duration | ~4 min |
-| Total execution time | ~36 min |
+| Total execution time | ~42 min |
 
 | Phase 04-milestone-orchestration P01 | 4min | 3 tasks | 4 files |
 | Phase 04-milestone-orchestration P02 | 3min | 1 task | 1 file |
 | Phase 05-standalone-tools P01 | 3min | 2 tasks | 21 files |
+| Phase 05-standalone-tools P02 | 6min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,8 @@ Recent decisions affecting current work:
 - [Phase 05]: lib/templates.cjs is a re-export wrapper only — single source of truth stays in template-loader.cjs
 - [Phase 05]: commands/ resolved via __dirname in getCommandsDir() — works from any npm install path
 - [Phase 05]: invokeClaude uses spawn() not execSync() for real-time streaming support
+- [Phase 05]: Commander.js v14 action handlers must use regular function (not arrow) for this.optsWithGlobals() to work
+- [Phase 05]: pkgroll v2 --src . required when sources are not in ./src (bin/ and lib/ at repo root)
 
 ### Pending Todos
 
@@ -103,6 +106,6 @@ None.
 ## Session Continuity
 
 Last session: 2026-02-26
-Stopped at: Plan 05-01 complete. 7 lib/ CJS modules (32 named exports), 12 bundled command files, package.json with pkgroll pipeline created.
-Resume file: .planning/phases/05-standalone-tools/05-01-SUMMARY.md
-Next action: Execute plan 05-02 (CLI binary via bin/mgw.cjs)
+Stopped at: Plan 05-02 complete. bin/mgw.cjs CLI entry point with all 12 subcommands, pkgroll build producing dist/bin/mgw.cjs. ALL PHASES COMPLETE.
+Resume file: .planning/phases/05-standalone-tools/05-02-SUMMARY.md
+Next action: None — all 10 plans across 5 phases complete. Project ready for npm publish.

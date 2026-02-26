@@ -39,10 +39,10 @@ Requirements for the project-level orchestration expansion. Each maps to roadmap
 
 ### Standalone Tools
 
-- [ ] **TOOL-01**: `bin/mgw` CLI binary mirrors slash command surface (run, init, sync, project, milestone, next)
+- [x] **TOOL-01**: `bin/mgw` CLI binary mirrors slash command surface (run, init, sync, project, milestone, next)
 - [x] **TOOL-02**: Shared `lib/` modules (state, github, gsd, templates) are used by both slash commands and binary
 - [x] **TOOL-03**: Binary is distributable via `npm install -g mgw` or `npm link` for local development
-- [ ] **TOOL-04**: Binary works independently of Claude Code command format (format-independent fallback)
+- [x] **TOOL-04**: Binary works independently of Claude Code command format (format-independent fallback)
 
 ## v2 Requirements
 
@@ -101,10 +101,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MLST-03 | Phase 4 | Complete |
 | MLST-04 | Phase 4 | Complete |
 | MLST-05 | Phase 4 | Complete |
-| TOOL-01 | Phase 5 | Pending |
+| TOOL-01 | Phase 5 | Complete |
 | TOOL-02 | Phase 5 | Complete |
 | TOOL-03 | Phase 5 | Complete |
-| TOOL-04 | Phase 5 | Pending |
+| TOOL-04 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 22 total
