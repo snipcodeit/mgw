@@ -7,8 +7,8 @@
   "properties": {
     "type": {
       "type": "string",
-      "enum": ["web-app", "cli-tool", "library"],
-      "description": "Template type identifier"
+      "minLength": 1,
+      "description": "Project type identifier — any descriptive string (e.g. game, mobile-app, api-service, data-pipeline, saas-platform, etc.)"
     },
     "version": {
       "type": "string",
