@@ -4,7 +4,7 @@
 
 **GitHub-native issue-to-PR automation for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), powered by [Get Shit Done](https://github.com/glittercowboy/get-shit-done).**
 
-MGW bridges GitHub Issues and the GSD planning framework into a single pipeline. Point it at an issue, and it triages, plans, executes, and opens a PR — posting structured status updates along the way. No context switching, no tab juggling, no copy-pasting between GitHub and your terminal.
+MGW bridges GitHub Issues and the GSD planning framework into a single pipeline. Point it at an issue, and it triages, plans, executes, and opens a PR — posting structured status updates at every stage. No context switching, no tab juggling, no copy-pasting between GitHub and your terminal.
 
 ```
 /mgw:run 42
@@ -16,14 +16,16 @@ That's it. One command takes an issue from open to PR-ready.
 
 ## What It Does
 
-MGW is a suite of [Claude Code slash commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands) that automate the lifecycle of a GitHub issue:
+MGW is a [Claude Code slash command](https://docs.anthropic.com/en/docs/claude-code/slash-commands) suite and standalone Node.js CLI that automates the lifecycle of a GitHub issue:
 
 ```
-  Issue opened
+  /mgw:project               Scaffold milestones + issues from a description
        |
-  /mgw:issue 42         Triage: scope, validity, security, conflicts
+  /mgw:issue 42              Triage: scope, validity, security, conflicts
        |
-  /mgw:run 42           Plan → Execute → Verify → PR (autonomous)
+  /mgw:run 42                Plan → Execute → Verify → PR (autonomous)
+       |
+  /mgw:milestone              Execute all issues in dependency order
        |
   PR created + status comments posted
        |
@@ -38,16 +40,19 @@ I'm a solo developer. On any given day I might be writing a game server, reverse
 
 The result is a graveyard of GitHub issues that say "Fix auth" with zero follow-up, branches named things only I understand, and PRs that my past self apparently thought were self-documenting. They were not.
 
-So I built MGW to be the responsible adult in the room. I point it at an issue, it does all the paperwork I was never going to do, and my GitHub history finally looks like a person who has their life together. It's the professional version of me that answers emails on time and keeps a clean desk — except it's nine Markdown files and Claude doing all the work.
+So I built MGW to be the responsible adult in the room. I point it at an issue, it does all the paperwork I was never going to do, and my GitHub history finally looks like a person who has their life together. It's the professional version of me that answers emails on time and keeps a clean desk — except it's a dozen Markdown files, a Node CLI, and Claude doing all the work.
 
 ## Commands
 
 | Command | What it does |
 |---------|-------------|
+| `/mgw:project` | Scaffold a new project — generate milestones, issues, and GSD ROADMAP from a description |
 | `/mgw:init` | Bootstrap repo for MGW — creates .mgw/ state, GitHub templates, gitignore entries |
 | `/mgw:issues` | Browse and filter your GitHub issues |
 | `/mgw:issue <n>` | Deep triage — scope analysis, security review, GSD route recommendation |
+| `/mgw:next` | Show next unblocked issue based on dependency order |
 | `/mgw:run <n>` | Full autonomous pipeline: triage through PR creation |
+| `/mgw:milestone [n]` | Execute a milestone's issues in dependency order with checkpointing |
 | `/mgw:update <n>` | Post structured status comments on issues |
 | `/mgw:pr [n]` | Create PR from GSD artifacts with testing procedures |
 | `/mgw:link <ref> <ref>` | Cross-reference issues, PRs, and branches |
@@ -72,24 +77,78 @@ Based on scope, MGW recommends a GSD route:
 | Medium (3-8 files) | `gsd:quick --full` | Plan with verification loop |
 | Large (9+ files) | `gsd:new-milestone` | Full milestone with phased execution |
 
+## Status Comments
+
+Every pipeline step posts a structured comment on the issue so you (and your team) can follow along on GitHub without touching the terminal:
+
+```
+> MGW · `work-started` · 2026-02-26T03:31:00Z
+> Milestone: v1.0 — Auth & Data Layer | Phase 1: Database Schema
+
+### Work Started
+
+| | |
+|---|---|
+| **Issue** | #71 — Implement user registration |
+| **Route** | `plan-phase` |
+| **Phase** | 1 of 6 — Database Schema |
+| **Milestone** | v1.0 — Auth & Data Layer |
+
+<details>
+<summary>Milestone Progress (1/6 complete)</summary>
+| # | Issue | Status | PR |
+|---|-------|--------|----|
+| 70 | Design SQLite schema | ✓ Done | #85 |
+| **71** | **User registration** | ◆ In Progress | — |
+| 72 | JWT middleware | ○ Pending | — |
+</details>
+```
+
+Comments are posted for: `work-started`, `triage-complete`, `execution-complete`, `pr-ready`, and `pipeline-failed`. The milestone orchestrator handles all comment posting directly (not delegated to sub-agents), guaranteeing every stage is logged.
+
+## PR Descriptions
+
+PRs follow a consistent structure with milestone context:
+
+```markdown
+## Summary
+- 2-4 bullets of what was built and why
+
+Closes #71
+
+## Milestone Context
+- **Milestone:** v1.0 — Auth & Data Layer
+- **Phase:** 1 — Database Schema
+- **Issue:** 2 of 6 in milestone
+
+## Changes
+- File-level changes grouped by module
+
+## Test Plan
+- Verification checklist
+```
+
 ## State Management
 
 MGW tracks pipeline state in a local `.mgw/` directory (gitignored, per-developer):
 
 ```
 .mgw/
+  project.json         Milestones, issues, phases, and pipeline stages
+  config.json          User prefs (GitHub username, default filters)
   active/              In-progress issue pipelines
     42-fix-auth.json   Issue state: triage results, pipeline stage, artifacts
   completed/           Archived after PR merge
   cross-refs.json      Bidirectional issue/PR/branch links
 ```
 
-Pipeline stages flow: `new` → `triaged` → `planning` → `executing` → `verifying` → `pr-created` → `done`
+Pipeline stages flow: `new` → `triaged` → `planning` → `executing` → `verifying` → `pr-created` → `done` (or `failed`)
 
 The `/mgw:sync` command reconciles local state with GitHub reality — archiving completed work, flagging stale branches, and catching drift.
 
 ## Requirements
 
+- [Node.js](https://nodejs.org/) >= 18
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) (CLI)
 - [Get Shit Done](https://github.com/glittercowboy/get-shit-done) (GSD) installed in Claude Code
 - [GitHub CLI](https://cli.github.com/) (`gh`) authenticated
@@ -97,39 +156,39 @@ The `/mgw:sync` command reconciles local state with GitHub reality — archiving
 
 ## Installation
 
-### Quick Install (copy)
+### Full install (CLI + slash commands)
 
 ```bash
+git clone https://github.com/snipcodeit/mgw.git
+cd mgw
+npm install && npm run build
+npm link
+
+# Deploy slash commands to Claude Code
 mkdir -p ~/.claude/commands/mgw/workflows
 cp -r .claude/commands/mgw/* ~/.claude/commands/mgw/
 ```
 
-### GNU Stow (recommended for dotfile managers)
+### Slash commands only (no CLI)
 
-The repo is structured as a stow package. From the **parent directory** of this repo:
+If you only want the Claude Code slash commands:
 
 ```bash
-# Clone
 git clone https://github.com/snipcodeit/mgw.git
-
-# Deploy (creates symlinks at ~/.claude/commands/mgw/)
-stow -v -t ~ mgw
-```
-
-> **Note:** The stow command assumes the repo directory is named `mgw` (the default from `git clone`). If you renamed the directory, replace `mgw` with its actual name.
-
-To update after pulling changes:
-
-```bash
-cd mgw && git pull && cd ..
-stow -v -R -t ~ mgw
+mkdir -p ~/.claude/commands/mgw/workflows
+cp -r mgw/.claude/commands/mgw/* ~/.claude/commands/mgw/
 ```
 
 ### Verify
 
 ```bash
+# CLI (if installed)
+mgw --version
+
+# Slash commands
 ls ~/.claude/commands/mgw/
-# help.md  init.md  issue.md  issues.md  link.md  pr.md  run.md  sync.md  update.md  workflows/
+# help.md  init.md  issue.md  issues.md  link.md  milestone.md  next.md
+# pr.md  project.md  run.md  sync.md  update.md  workflows/
 ```
 
 Then in Claude Code:
@@ -140,12 +199,26 @@ Then in Claude Code:
 
 ## Typical Workflow
 
+### New project (from scratch)
+
+```bash
+# 1. Scaffold milestones and issues from a project description
+/mgw:project
+
+# 2. Execute the first milestone (issues run in dependency order)
+/mgw:milestone
+
+# 3. Review PRs as they're created, merge when ready
+```
+
+### Existing issues
+
 ```bash
 # 1. See what's assigned to you
 /mgw:issues
 
-# 2. Pick an issue and triage it
-/mgw:issue 42
+# 2. Pick the next unblocked issue
+/mgw:next
 
 # 3. Run the full pipeline
 /mgw:run 42
@@ -155,7 +228,7 @@ Then in Claude Code:
 # 4. Review the PR, merge when ready
 ```
 
-Or go manual for more control:
+### Manual control
 
 ```bash
 /mgw:issue 42                          # Triage
@@ -168,20 +241,40 @@ Or go manual for more control:
 ## Project Structure
 
 ```
+bin/
+  mgw.cjs                 CLI entry point (Commander.js)
+lib/
+  index.cjs               Barrel export
+  claude.cjs              Claude Code invocation helpers
+  github.cjs              GitHub CLI wrappers (issues, PRs, milestones, Projects v2)
+  gsd.cjs                 GSD integration
+  state.cjs               .mgw/ state management
+  output.cjs              Logging and formatting
+  templates.cjs           Template system
+  template-loader.cjs     Output validation (JSON Schema)
+commands/                  Slash command source files (deployed to ~/.claude/commands/mgw/)
+  help.md                 Command reference display
+  init.md                 One-time repo bootstrap (state, templates, labels)
+  project.md              AI-driven project scaffolding (milestones, issues, dependencies)
+  issues.md               Issue browser with filters
+  issue.md                Deep triage with agent analysis
+  next.md                 Next unblocked issue picker
+  run.md                  Autonomous pipeline orchestrator
+  milestone.md            Milestone execution with dependency ordering and status comments
+  update.md               Structured GitHub comment templates
+  pr.md                   PR creation from GSD artifacts with milestone context
+  link.md                 Cross-referencing system
+  sync.md                 State reconciliation
+templates/
+  schema.json             JSON Schema for project output validation
 .claude/
   commands/
-    mgw/
-      help.md              Command reference display
-      init.md               One-time repo bootstrap (state, templates, labels)
-      issues.md            Issue browser with filters
-      issue.md             Deep triage with agent analysis
-      update.md            Structured GitHub comments
-      link.md              Cross-referencing system
-      pr.md                PR creation from GSD artifacts
-      sync.md              State reconciliation
-      run.md               Autonomous pipeline orchestrator
+    mgw/                   Deployed slash commands (symlinked or copied)
       workflows/
         state.md           Shared state schema and initialization
+        github.md          Shared GitHub CLI patterns
+        gsd.md             GSD agent spawn templates
+        validation.md      Delegation boundary rules
 ```
 
 ## Acknowledgments
@@ -194,14 +287,14 @@ Seriously, if you're using Claude Code for development, go install GSD. MGW is j
 
 MGW is young and there's plenty of room to make it better:
 
-- **Smarter triage heuristics** — better scope estimation, label-based routing
+- **GitHub Projects v2 board integration** — currently scaffolds issues but needs `project` OAuth scope for board creation
 - **Multi-repo support** — monorepo and cross-repo issue tracking
 - **GitHub Actions integration** — trigger MGW from CI events
 - **Review cycle automation** — handle PR review comments → fix → re-request
 - **Dashboard** — terminal UI for pipeline visualization
 - **Webhook support** — react to issue assignments and label changes in real-time
 
-The skill files are plain Markdown with a simple frontmatter + process structure — easy to read, easy to modify. If any of the above interests you, open an issue or submit a PR. I promise MGW will keep mine updated even if I won't.
+The slash commands are plain Markdown with a simple frontmatter + process structure. The CLI is a lightweight Node.js wrapper (`bin/mgw.cjs`) that delegates AI work to Claude and handles non-AI commands (sync, issues, link) directly. If any of the above interests you, open an issue or submit a PR. I promise MGW will keep mine updated even if I won't.
 
 ## License
 
