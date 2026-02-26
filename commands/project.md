@@ -469,6 +469,24 @@ fi
 Store `PROJECT_NUMBER` and `PROJECT_URL` for inclusion in project.json and the summary report.
 </step>
 
+<step name="archive_phases">
+**Archive existing phase directories before writing new ROADMAP:**
+
+If `.planning/phases/` exists with content, archive it so previous milestone's GSD work is preserved.
+
+```bash
+ARCHIVE_STATUS="skipped (no existing phases)"
+
+if [ -d "${REPO_ROOT}/.planning/phases" ] && [ "$(ls -A "${REPO_ROOT}/.planning/phases" 2>/dev/null)" ]; then
+  ARCHIVE_SLUG="pre-${PROJECT_NAME}-$(date +%Y%m%d)"
+  ARCHIVE_DIR="${REPO_ROOT}/.planning/ARCHIVED-phases-${ARCHIVE_SLUG}"
+  mv "${REPO_ROOT}/.planning/phases" "${ARCHIVE_DIR}"
+  ARCHIVE_STATUS="archived to .planning/ARCHIVED-phases-${ARCHIVE_SLUG}/"
+  echo "  Archived existing phases to ${ARCHIVE_DIR}"
+fi
+```
+</step>
+
 <step name="write_roadmap">
 **Write GSD ROADMAP.md to the target project's .planning/ directory**
 
@@ -551,6 +569,99 @@ the file at `$ROADMAP_PATH`.
 - Milestone name → Requirements milestone reference
 - Plans section: always `TBD` initially with placeholder `{NN}-01: TBD`
 - Use `$GENERATED_TYPE` (from the AI-generated JSON) in the Overview line instead of a hardcoded template name
+</step>
+
+<step name="write_state">
+**Write GSD STATE.md to the target project's .planning/ directory**
+
+```bash
+STATE_PATH="${REPO_ROOT}/.planning/STATE.md"
+
+if [ -f "$STATE_PATH" ]; then
+  echo "STATE.md already exists -- skipping (won't overwrite existing GSD state)"
+  STATE_STATUS="skipped (exists)"
+else
+  STATE_STATUS="written"
+fi
+```
+
+If STATE.md does not exist, construct and write it following the GSD template from `/home/hat/.claude/get-shit-done/templates/state.md`:
+
+Extract first phase name from template data:
+```bash
+FIRST_PHASE_NAME=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][0]['phases'][0]['name'])
+")
+TODAY=$(date +%Y-%m-%d)
+NOW=$(date +"%Y-%m-%d %H:%M")
+CORE_VALUE=$(echo "$DESCRIPTION" | head -c 80)
+```
+
+Use the Write tool to create STATE.md with this structure:
+
+```markdown
+# Project State
+
+## Project Reference
+
+See: .planning/PROJECT.md (updated {TODAY})
+
+**Core value:** {CORE_VALUE}
+**Current focus:** {FIRST_PHASE_NAME}
+
+## Current Position
+
+Phase: 1 of {TOTAL_PHASES} ({FIRST_PHASE_NAME})
+Plan: 0 of 1 in current phase
+Status: Ready to plan
+Last activity: {TODAY} -- Project initialized via /mgw:project
+
+Progress: [..........] 0%
+
+## Performance Metrics
+
+**Velocity:**
+- Total plans completed: 0
+- Average duration: -
+- Total execution time: 0 hours
+
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| - | - | - | - |
+
+**Recent Trend:**
+- Last 5 plans: -
+- Trend: -
+
+*Updated after each plan completion*
+
+## Accumulated Context
+
+### Decisions
+
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
+
+- (none yet)
+
+### Pending Todos
+
+None yet.
+
+### Blockers/Concerns
+
+None yet.
+
+## Session Continuity
+
+Last session: {NOW}
+Stopped at: Project initialized via /mgw:project
+Resume file: None
+```
 </step>
 
 <step name="write_project_json">
@@ -672,7 +783,9 @@ Dependencies:
   (or: "None declared in template")
 
 GSD scaffold:
-  .planning/ROADMAP.md      {written|skipped (exists)}
+  .planning/ROADMAP.md      {ROADMAP_STATUS}
+  .planning/STATE.md        {STATE_STATUS}
+  Phase archival:           {ARCHIVE_STATUS}
 
 State:
   .mgw/project.json         written
@@ -711,5 +824,7 @@ Warnings:
 - [ ] .planning/ROADMAP.md written in GSD format (or skipped if exists)
 - [ ] .mgw/project.json written with full project state
 - [ ] Post-init summary displayed
+- [ ] .planning/STATE.md written in GSD format (or skipped if exists)
+- [ ] Existing .planning/phases/ archived before new ROADMAP written (or skipped if none)
 - [ ] Command does NOT trigger execution (PROJ-05)
 </success_criteria>
