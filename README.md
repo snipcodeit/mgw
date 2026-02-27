@@ -47,6 +47,37 @@ The result is a graveyard of GitHub issues that say "Fix auth" with zero follow-
 
 So I built MGW to be the responsible adult in the room. I point it at an issue, it does all the paperwork I was never going to do, and my GitHub history finally looks like a person who has their life together. It's the professional version of me that answers emails on time and keeps a clean desk — except it's a dozen Markdown files, a Node CLI, and Claude doing all the work.
 
+## Who This Is For
+
+MGW is for **solo developers and small teams using Claude Code** who want their GitHub history to reflect the work they actually did — without spending time on project management.
+
+**You'll get the most out of MGW if you:**
+
+- Use [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) as your primary development tool
+- Have a pile of GitHub issues that never get proper status updates, PR descriptions, or cross-references
+- Want a repeatable issue-to-PR pipeline that handles triage, planning, execution, and documentation automatically
+- Work across multiple projects and lose context switching between GitHub and your terminal
+
+**When to use MGW vs. Claude Code directly:**
+
+| Scenario | Use |
+|----------|-----|
+| One-off code changes with no issue tracking | Claude Code directly |
+| Issues that need triage, planning, status updates, and PRs | MGW |
+| Executing a backlog of issues in dependency order | MGW (`/mgw:milestone`) |
+| Scaffolding a new project from a description | MGW (`/mgw:project`) |
+| Quick code question or file edit | Claude Code directly |
+
+**Prerequisites:**
+
+- Node.js >= 18
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) CLI installed and working
+- [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated (`gh auth status`)
+- [Get Shit Done](https://github.com/glittercowboy/get-shit-done) (GSD) installed in Claude Code
+- A GitHub repository with issues enabled
+
+If you're already using Claude Code and GSD for development, MGW is the missing piece that connects your work back to GitHub. If you're not using either yet, start with Claude Code, then add GSD, then add MGW.
+
 ## Commands
 
 | Command | What it does |
@@ -320,6 +351,122 @@ templates/
 MGW wouldn't exist without **[Get Shit Done](https://github.com/glittercowboy/get-shit-done)** by [Lex Christopherson](https://github.com/glittercowboy) — a structured project management framework for Claude Code that handles planning, execution, and verification. GSD does the heavy lifting; MGW just connects it to GitHub so the rest of the world can see what you actually accomplished.
 
 Seriously, if you're using Claude Code for development, go install GSD. MGW is just the GitHub layer on top.
+
+## Troubleshooting
+
+### GitHub CLI not authenticated
+
+```
+Error: gh: not logged in
+```
+
+Run `gh auth status` to check. If not authenticated:
+
+```bash
+gh auth login
+# Select GitHub.com, HTTPS, and authenticate via browser
+```
+
+MGW requires the `repo` scope. If you're authenticated but getting permission errors, re-authenticate with the correct scopes:
+
+```bash
+gh auth login --scopes repo
+```
+
+### GSD not installed
+
+```
+Error: GSD slash commands not found
+```
+
+MGW delegates planning and execution to [Get Shit Done](https://github.com/glittercowboy/get-shit-done). Install it following the GSD README, then verify the commands are available in Claude Code:
+
+```
+/gsd:quick --help
+```
+
+### State file issues (.mgw/ directory)
+
+**State drift** — Local `.mgw/` state can fall out of sync with GitHub if you merge PRs from the web UI, close issues manually, or work from a different machine. Run sync to reconcile:
+
+```
+/mgw:sync
+```
+
+**Corrupted state** — If `.mgw/` gets into a bad state, you can safely delete it and re-initialize:
+
+```bash
+rm -rf .mgw/
+/mgw:init
+```
+
+This won't affect anything on GitHub. The `.mgw/` directory is local-only and gitignored.
+
+**Missing .mgw/ directory** — If you cloned a repo that uses MGW but don't have a `.mgw/` directory, run init:
+
+```
+/mgw:init
+```
+
+### Worktree cleanup
+
+MGW creates git worktrees in `.worktrees/` for each issue pipeline. If a pipeline fails mid-execution, stale worktrees can accumulate:
+
+```bash
+# List active worktrees
+git worktree list
+
+# Remove a specific stale worktree
+git worktree remove .worktrees/issue/42-fix-auth
+
+# Prune all stale worktree references
+git worktree prune
+```
+
+The associated branches are not deleted automatically. Clean them up after removing the worktree:
+
+```bash
+git branch -d issue/42-fix-auth
+```
+
+### Rate limiting
+
+MGW posts comments on GitHub issues at each pipeline stage. If you're executing many issues in quick succession (e.g., via `/mgw:milestone`), you may hit GitHub's API rate limits:
+
+```
+Error: API rate limit exceeded
+```
+
+Check your current rate limit status:
+
+```bash
+gh api rate_limit --jq '.resources.core'
+```
+
+If rate-limited, wait for the reset window (usually under an hour) or reduce the number of concurrent pipelines. Authenticated requests get 5,000 requests per hour — plenty for normal use, but milestone-level execution with many issues can approach the limit.
+
+### Common errors
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Issue #N not found` | Issue doesn't exist or is in a different repo | Check the issue number and ensure you're in the correct repo |
+| `Branch already exists` | A previous pipeline run created the branch | Delete the branch (`git branch -D issue/N-...`) or use the existing one |
+| `No GSD route determined` | Triage couldn't determine issue scope | Run `/mgw:issue N` manually to inspect the triage output |
+| `Merge conflict in worktree` | Main branch diverged during execution | Resolve conflicts in the worktree, then resume with `/mgw:run N` |
+| `Permission denied` | GitHub token lacks required scopes | Re-authenticate: `gh auth login --scopes repo` |
+
+### Uninstalling
+
+```bash
+# Remove CLI
+npm unlink mgw
+
+# Remove slash commands
+rm -rf ~/.claude/commands/mgw/
+
+# Remove local state (per-repo, if initialized)
+rm -rf .mgw/
+```
 
 ## Contributing
 
