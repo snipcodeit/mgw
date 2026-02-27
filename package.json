@@ -1,7 +1,7 @@
 {
   "name": "mgw",
   "version": "0.1.0",
-  "description": "GitHub issue pipeline automation — Day 1 idea to Go Live",
+  "description": "GitHub-native issue-to-PR automation for Claude Code, powered by Get Shit Done",
   "bin": {
     "mgw": "./dist/bin/mgw.cjs"
   },
