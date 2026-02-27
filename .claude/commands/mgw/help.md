@@ -43,6 +43,10 @@ COMMANDS
   /mgw:milestone               Execute milestone issues in dependency order (auto-sync, checkpoint)
   /mgw:next                    Show next unblocked issue — what to work on now
 
+  Query
+  ─────
+  /mgw:status [milestone] [--json]  Project dashboard — milestone progress + issue stages
+
   GitHub Operations
   ─────────────────
   /mgw:update <number> [msg]   Post status comment (auto-detects type, or custom)
