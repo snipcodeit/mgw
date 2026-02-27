@@ -1,5 +1,10 @@
 # MGW — My GSD Workflow
 
+[![npm version](https://img.shields.io/npm/v/mgw)](https://www.npmjs.com/package/mgw)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![node](https://img.shields.io/node/v/mgw)](https://nodejs.org)
+[![GitHub stars](https://img.shields.io/github/stars/snipcodeit/mgw)](https://github.com/snipcodeit/mgw)
+
 > Issue in. PR out. No excuses.
 
 **GitHub-native issue-to-PR automation for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), powered by [Get Shit Done](https://github.com/glittercowboy/get-shit-done).**
