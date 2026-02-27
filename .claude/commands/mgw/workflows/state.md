@@ -259,10 +259,10 @@ Only advance if ALL issues in current milestone completed successfully.
 
 | Pattern | Referenced By |
 |---------|-------------|
-| validate_and_load | init.md, issue.md, run.md, update.md, link.md, pr.md, sync.md, milestone.md |
+| validate_and_load | init.md, issue.md, run.md, update.md, link.md, pr.md, sync.md, milestone.md, ask.md |
 | Per-issue staleness | run.md, issue.md, update.md |
 | Batch staleness | sync.md (full reconciliation), milestone.md |
 | Issue state schema | issue.md, run.md, update.md, sync.md |
 | Cross-refs schema | link.md, run.md, pr.md, sync.md |
 | Slug generation | issue.md, run.md |
-| Project state | milestone.md, next.md |
+| Project state | milestone.md, next.md, ask.md |

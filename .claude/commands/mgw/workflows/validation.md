@@ -134,6 +134,7 @@ This rule applies to ALL MGW commands:
 | run.md | Spawns planner, executor, verifier — never reads code |
 | issue.md | Spawns analysis agent — never analyzes code itself |
 | pr.md | Spawns PR body builder — never reads code for description |
+| ask.md | Spawns classification agent — never analyzes code itself |
 | sync.md | Reads state + GitHub API only — never reads code |
 | update.md | Reads state only — posts comments |
 | link.md | Reads/writes cross-refs only |

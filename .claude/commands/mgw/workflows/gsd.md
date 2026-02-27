@@ -178,6 +178,42 @@ ARTIFACT_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify artifacts
 KEYLINK_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify key-links "${PLAN_PATH}" 2>/dev/null || echo '{"passed":true}')
 ```
 
+## Question Classification Agent Pattern
+
+Used by `/mgw:ask` to classify questions/observations during milestone execution.
+Spawns a general-purpose agent with full project context — milestone, all issues,
+active state, and recent git diff — to determine if a question is in-scope,
+adjacent, separate, duplicate, or out-of-scope.
+
+```
+Task(
+  prompt="
+    <files_to_read>
+    - ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+    - .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+    </files_to_read>
+
+    You are a question classification agent for the MGW pipeline.
+
+    <question>${QUESTION}</question>
+    <current_milestone>${MILESTONE_CONTEXT}</current_milestone>
+    <milestone_issues>${ALL_ISSUES_CONTEXT}</milestone_issues>
+    <issue_bodies>${ISSUE_BODIES}</issue_bodies>
+    <active_work>${ACTIVE_STATE}</active_work>
+    <recent_changes>${RECENT_DIFF}</recent_changes>
+
+    Classify into: in-scope | adjacent | separate | duplicate | out-of-scope
+    Return: classification, analysis, related issue, recommendation.
+  ",
+  subagent_type="general-purpose",
+  description="Classify question: ${QUESTION}"
+)
+```
+
+The agent is read-only (general-purpose, no code execution). It reads project state
+and codebase to classify, then MGW presents the result and offers follow-up actions
+(file new issue, post comment on related issue, etc.).
+
 ## Anti-Patterns
 
 - **NEVER** use Skill invocation from within a Task() agent — Skills don't resolve inside subagents
@@ -191,8 +227,9 @@ KEYLINK_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify key-links 
 
 | Pattern | Referenced By |
 |---------|-------------|
-| Standard spawn template | run.md, issue.md, pr.md |
+| Standard spawn template | run.md, issue.md, pr.md, ask.md |
 | Quick pipeline | run.md |
 | Milestone pipeline | run.md |
+| Question classification | ask.md |
 | Model resolution | run.md |
-| Utility patterns | run.md, pr.md, issue.md, sync.md, link.md, update.md |
+| Utility patterns | run.md, pr.md, issue.md, sync.md, link.md, update.md, ask.md |

@@ -237,8 +237,8 @@ Release is created as draft — user reviews and publishes manually.
 
 | Section | Referenced By |
 |---------|-------------|
-| Issue Operations | issue.md, run.md, issues.md, sync.md, milestone.md, next.md |
-| Issue Mutations | issue.md, update.md, run.md, init.md, milestone.md |
+| Issue Operations | issue.md, run.md, issues.md, sync.md, milestone.md, next.md, ask.md |
+| Issue Mutations | issue.md, update.md, run.md, init.md, milestone.md, ask.md |
 | Milestone Operations | project.md, milestone.md |
 | Dependency Labels | project.md |
 | Phase Labels | project.md |
