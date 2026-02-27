@@ -552,12 +552,23 @@ VERIFIER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gs
 
    For each phase in order:
 
-   **a. Init phase and create directory:**
+   **a. Scaffold phase directory, then init:**
+
+   `init plan-phase` requires the phase directory to exist before it can locate it.
+   Use `scaffold phase-dir` first (which creates the directory from ROADMAP data),
+   then call `init plan-phase` to get planner/checker model assignments.
+
    ```bash
+   # Generate slug from phase name (lowercase, hyphens, no special chars)
+   PHASE_SLUG=$(echo "${PHASE_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
+
+   # Scaffold creates the directory and returns the path
+   SCAFFOLD=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs scaffold phase-dir --phase "${PHASE_NUMBER}" --name "${PHASE_SLUG}")
+   phase_dir=$(echo "$SCAFFOLD" | python3 -c "import json,sys; print(json.load(sys.stdin)['directory'])")
+
+   # Now init plan-phase can find the directory for model resolution
    PHASE_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init plan-phase "${PHASE_NUMBER}")
-   # Parse PHASE_INIT JSON for: phase_dir, padded_phase, phase_slug, planner_model, checker_model
-   phase_dir=$(echo "$PHASE_INIT" | python3 -c "import json,sys; print(json.load(sys.stdin)['phase_dir'])")
-   mkdir -p "${phase_dir}"
+   # Parse PHASE_INIT JSON for: planner_model, checker_model
    ```
 
    **b. Spawn planner agent (gsd:plan-phase):**
