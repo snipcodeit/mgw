@@ -91,6 +91,8 @@ If you're already using Claude Code and GSD for development, MGW is the missing 
 | `/mgw:milestone [n]` | Execute a milestone's issues in dependency order with checkpointing |
 | `/mgw:update <n>` | Post structured status comments on issues |
 | `/mgw:pr [n]` | Create PR from GSD artifacts with testing procedures |
+| `/mgw:ask <question>` | Route a question or observation — classify as in-scope, adjacent, separate, duplicate, or out-of-scope |
+| `/mgw:review <n>` | Review and classify new comments on an issue since last triage |
 | `/mgw:link <ref> <ref>` | Cross-reference issues, PRs, and branches |
 | `/mgw:status [n]` | Project dashboard — milestone progress, issue stages, open PRs |
 | `/mgw:sync` | Reconcile local state with GitHub |
@@ -248,8 +250,9 @@ mgw --version
 
 # Slash commands
 ls ~/.claude/commands/mgw/
-# help.md  init.md  issue.md  issues.md  link.md  milestone.md  next.md
-# pr.md  project.md  run.md  status.md  sync.md  update.md  workflows/
+# ask.md  help.md  init.md  issue.md  issues.md  link.md  milestone.md
+# next.md  pr.md  project.md  review.md  run.md  status.md  sync.md
+# update.md  workflows/
 ```
 
 Then in Claude Code:
@@ -265,7 +268,7 @@ Not all commands work via `npx`. The CLI has two tiers:
 | Tier | Commands | Requirements |
 |------|----------|--------------|
 | **CLI-only** (works with npx) | `issues`, `sync`, `link`, `help`, `--help`, `--version` | Node.js >= 18, `gh` CLI |
-| **AI-powered** (requires full install) | `run`, `init`, `project`, `milestone`, `next`, `issue`, `update`, `pr` | Node.js >= 18, `gh` CLI, Claude Code CLI, GSD |
+| **AI-powered** (requires full install) | `run`, `init`, `project`, `milestone`, `next`, `issue`, `update`, `pr`, `ask`, `review` | Node.js >= 18, `gh` CLI, Claude Code CLI, GSD |
 
 AI-powered commands call `claude -p` under the hood and require the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) to be installed and authenticated. The slash command `.md` files must also be deployed to `~/.claude/commands/mgw/` for the full pipeline to work. Use `npx mgw` to explore the CLI and verify your GitHub setup before committing to a full install.
 
@@ -327,12 +330,14 @@ lib/
   templates.cjs           Template system
   template-loader.cjs     Output validation (JSON Schema)
 commands/                  Slash command source files (deployed to ~/.claude/commands/mgw/)
+  ask.md                  Contextual question routing during milestone execution
   help.md                 Command reference display
   init.md                 One-time repo bootstrap (state, templates, labels)
   project.md              AI-driven project scaffolding (milestones, issues, dependencies)
   issues.md               Issue browser with filters
   issue.md                Deep triage with agent analysis
   next.md                 Next unblocked issue picker
+  review.md               Comment review and classification since last triage
   run.md                  Autonomous pipeline orchestrator
   milestone.md            Milestone execution with dependency ordering and status comments
   update.md               Structured GitHub comment templates
