@@ -1,0 +1,114 @@
+name: Architecture Refactor
+description: Propose an architectural change or system refactoring
+labels: ["refactor"]
+body:
+  - type: textarea
+    id: bluf
+    attributes:
+      label: BLUF
+      description: Bottom Line Up Front -- one sentence summary of the refactor
+      placeholder: "Migrate from file-based state to SQLite for concurrent access support"
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-state
+    attributes:
+      label: Current State
+      description: How the system works today. Include architecture decisions, file paths, and pain points.
+      placeholder: |
+        - State stored in `.mgw/active/*.json` files
+        - No locking mechanism for concurrent access
+        - JSON parsing on every read
+    validations:
+      required: true
+
+  - type: textarea
+    id: target-state
+    attributes:
+      label: Target State
+      description: How the system should work after this refactor. Be specific about the new architecture.
+      placeholder: |
+        - State stored in `.mgw/state.db` (SQLite)
+        - WAL mode for concurrent readers
+        - Typed schema with migrations
+    validations:
+      required: true
+
+  - type: textarea
+    id: migration-strategy
+    attributes:
+      label: Migration Strategy
+      description: How to get from current state to target state. Include phasing if needed.
+      placeholder: |
+        1. Add SQLite dependency and schema
+        2. Create migration tool for existing JSON files
+        3. Update state.md patterns to use SQLite
+        4. Deprecate JSON file access
+    validations:
+      required: true
+
+  - type: textarea
+    id: risk-areas
+    attributes:
+      label: Risk Areas
+      description: Where could this go wrong? What are the highest-risk changes?
+      placeholder: |
+        - Data loss during migration if JSON files are malformed
+        - Performance regression on large state files
+    validations:
+      required: true
+
+  - type: textarea
+    id: breaking-changes
+    attributes:
+      label: Breaking Changes
+      description: What existing behavior or interfaces will change?
+      placeholder: |
+        - `.mgw/active/*.json` file format changes
+        - Commands that directly read JSON will need updating
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: Specific conditions that define 'done'
+      placeholder: |
+        - [ ] All existing state operations work with new backend
+        - [ ] Migration tool handles all existing JSON formats
+        - [ ] No performance regression on typical workloads
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope-estimate
+    attributes:
+      label: Scope Estimate
+      options:
+        - Small (1-2 files)
+        - Medium (3-8 files)
+        - Large (9+ files or new system)
+    validations:
+      required: false
+
+  - type: textarea
+    id: whats-involved
+    attributes:
+      label: What's Involved
+      description: Files, systems, and dependencies affected
+      placeholder: |
+        | File | What Changes |
+        |------|-------------|
+        | `.claude/commands/mgw/workflows/state.md` | New SQLite patterns |
+    validations:
+      required: false
+
+  - type: input
+    id: related-issues
+    attributes:
+      label: Related Issues
+      placeholder: "#42, #43"
+    validations:
+      required: false
