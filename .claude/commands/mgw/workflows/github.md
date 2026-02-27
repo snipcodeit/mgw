@@ -79,6 +79,114 @@ Used during repo initialization to ensure standard labels exist.
 gh label create "$LABEL_NAME" --description "$DESCRIPTION" --color "$HEX_COLOR" --force
 ```
 
+## Label Lifecycle Operations
+
+### MGW Pipeline Labels
+Seven labels for pipeline stage tracking. Created by init.md, managed by issue.md and run.md.
+
+| Label | Color | Description |
+|-------|-------|-------------|
+| `mgw:triaged` | `0e8a16` | Issue triaged and ready for pipeline |
+| `mgw:needs-info` | `e4e669` | Blocked — needs more detail or clarification |
+| `mgw:needs-security-review` | `d93f0b` | Blocked — requires security review |
+| `mgw:discussing` | `c5def5` | Under discussion — not yet approved |
+| `mgw:approved` | `0e8a16` | Discussion complete — approved for execution |
+| `mgw:in-progress` | `1d76db` | Pipeline actively executing |
+| `mgw:blocked` | `b60205` | Pipeline blocked by stakeholder comment |
+
+### Remove MGW Labels and Apply New
+Used when transitioning pipeline stages. Removes all `mgw:*` pipeline labels, then applies the target label.
+```bash
+# Remove all mgw: pipeline labels from issue, then apply new one
+remove_mgw_labels_and_apply() {
+  local ISSUE_NUMBER="$1"
+  local NEW_LABEL="$2"
+
+  # Get current labels
+  CURRENT_LABELS=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '.labels[].name' 2>/dev/null)
+
+  # Remove any mgw: pipeline labels
+  for LABEL in $CURRENT_LABELS; do
+    case "$LABEL" in
+      mgw:triaged|mgw:needs-info|mgw:needs-security-review|mgw:discussing|mgw:approved|mgw:in-progress|mgw:blocked)
+        gh issue edit "$ISSUE_NUMBER" --remove-label "$LABEL" 2>/dev/null
+        ;;
+    esac
+  done
+
+  # Apply new label
+  if [ -n "$NEW_LABEL" ]; then
+    gh issue edit "$ISSUE_NUMBER" --add-label "$NEW_LABEL" 2>/dev/null
+  fi
+}
+```
+
+## Triage Comment Templates
+
+### Gate Blocked Comment
+Posted immediately during /mgw:issue when triage gates fail.
+```bash
+GATE_BLOCKED_BODY=$(cat <<COMMENTEOF
+> **MGW** . \`triage-blocked\` . ${TIMESTAMP}
+
+### Triage: Action Required
+
+| Gate | Result |
+|------|--------|
+${GATE_TABLE_ROWS}
+
+**What's needed:**
+${MISSING_FIELDS_LIST}
+
+Please update the issue with the required information, then re-run \`/mgw:issue ${ISSUE_NUMBER}\`.
+COMMENTEOF
+)
+gh issue comment ${ISSUE_NUMBER} --body "$GATE_BLOCKED_BODY" 2>/dev/null || true
+```
+
+### Gate Passed Comment
+Posted immediately during /mgw:issue when all triage gates pass.
+```bash
+GATE_PASSED_BODY=$(cat <<COMMENTEOF
+> **MGW** . \`triage-complete\` . ${TIMESTAMP}
+
+### Triage Complete
+
+| | |
+|---|---|
+| **Scope** | ${SCOPE_SIZE} -- ${FILE_COUNT} files across ${SYSTEM_LIST} |
+| **Validity** | ${VALIDITY} |
+| **Security** | ${SECURITY_RISK} |
+| **Route** | \`${gsd_route}\` -- ${ROUTE_REASONING} |
+| **Gates** | All passed |
+
+Ready for pipeline execution.
+COMMENTEOF
+)
+gh issue comment ${ISSUE_NUMBER} --body "$GATE_PASSED_BODY" 2>/dev/null || true
+```
+
+### Scope Proposal Comment
+Posted when new-milestone route triggers discussion phase.
+```bash
+SCOPE_PROPOSAL_BODY=$(cat <<COMMENTEOF
+> **MGW** . \`scope-proposal\` . ${TIMESTAMP}
+
+### Scope Proposal: Discussion Requested
+
+This issue was triaged as **${SCOPE_SIZE}** scope requiring the \`new-milestone\` route.
+
+**Proposed breakdown:**
+${SCOPE_BREAKDOWN}
+
+**Estimated phases:** ${PHASE_COUNT}
+
+Please review and confirm scope, or suggest changes. Once approved, run \`/mgw:run ${ISSUE_NUMBER}\` to begin execution.
+COMMENTEOF
+)
+gh issue comment ${ISSUE_NUMBER} --body "$SCOPE_PROPOSAL_BODY" 2>/dev/null || true
+```
+
 ## Milestone Operations
 
 ### Create Milestone
@@ -272,3 +380,6 @@ Release is created as draft — user reviews and publishes manually.
 | Batch Operations | state.md (staleness detection) |
 | Rate Limit | milestone.md |
 | Release Operations | milestone.md |
+| Label Lifecycle | issue.md, run.md, init.md |
+| Triage Comment Templates | issue.md |
+| Scope Proposal Template | run.md (new-milestone discussion) |
