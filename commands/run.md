@@ -209,19 +209,17 @@ Execute the GSD quick workflow. Read and follow the quick workflow steps:
 1. **Init:** `node ~/.claude/get-shit-done/bin/gsd-tools.cjs init quick "$DESCRIPTION"`
    Parse JSON for: planner_model, executor_model, checker_model, verifier_model, next_num, slug, date, quick_dir, task_dir.
 
-   **Handle missing ROADMAP.md:** Check `roadmap_exists` from init output. If false, create minimal GSD scaffolding so quick workflow has valid state:
+   **Handle missing .planning/:** Check `roadmap_exists` from init output. If false, do NOT
+   create GSD state files — .planning/ is owned by GSD. Only create the quick task
+   directory (GSD agents need it to store plans/summaries):
    ```bash
    if [ "$roadmap_exists" = "false" ]; then
+     echo "NOTE: No .planning/ directory found. GSD manages its own state files."
+     echo "      To create a ROADMAP.md, run /gsd:new-milestone after this pipeline."
      mkdir -p .planning/quick
-     echo '{"model_profile":"balanced","commit_docs":true}' > .planning/config.json
-     cat > .planning/ROADMAP.md << 'HEREDOC'
-   # Roadmap
-   ## v1.0: MGW-Managed
-   Issue-driven development managed by MGW.
-   HEREDOC
    fi
    ```
-   This creates valid GSD state that survives if someone later uses native GSD commands.
+   MGW never writes config.json, ROADMAP.md, or STATE.md — those are GSD-owned files.
 
 2. **Create task directory:**
 ```bash
@@ -254,7 +252,6 @@ ${recent_comments}
 <files_to_read>
 - ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
 - .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
-- .planning/STATE.md (Project State)
 </files_to_read>
 
 </planning_context>
@@ -340,7 +337,6 @@ Task(
 - ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
 - .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
 - ${QUICK_DIR}/${next_num}-PLAN.md (Plan)
-- .planning/STATE.md (Project state)
 </files_to_read>
 
 Execute quick task ${next_num}.
@@ -349,7 +345,7 @@ Execute quick task ${next_num}.
 - Execute all tasks in the plan
 - Commit each task atomically
 - Create summary at: ${QUICK_DIR}/${next_num}-SUMMARY.md
-- Do NOT update ROADMAP.md (quick tasks are separate from planned phases)
+- Do NOT update ROADMAP.md or STATE.md (GSD owns .planning/ files)
 </constraints>
 ",
   subagent_type="gsd-executor",
@@ -392,9 +388,7 @@ KEYLINK_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify key-links 
 ```
 Non-blocking: if either check flags issues, include them in the PR description as warnings. Do not halt the pipeline.
 
-11. **Update STATE.md** with quick task row in "Quick Tasks Completed" table.
-
-12. **Commit artifacts:**
+11. **Commit artifacts:**
 ```bash
 node ~/.claude/get-shit-done/bin/gsd-tools.cjs commit "docs(quick-${next_num}): ${issue_title}" --files ${file_list}
 ```
