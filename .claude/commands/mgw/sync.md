@@ -56,6 +56,15 @@ git ls-remote --heads origin ${BRANCH_NAME} | grep -q . && echo "remote" || echo
 
 # Worktree existence
 git worktree list | grep -q "${BRANCH_NAME}" && echo "worktree" || echo "no-worktree"
+
+# Comment delta (detect unreviewed comments since triage)
+CURRENT_COMMENTS=$(gh issue view ${NUMBER} --json comments --jq '.comments | length' 2>/dev/null || echo "0")
+STORED_COMMENTS="${triage.last_comment_count}"  # From state file, may be null/missing
+if [ -n "$STORED_COMMENTS" ] && [ "$STORED_COMMENTS" != "null" ]; then
+  COMMENT_DELTA=$(($CURRENT_COMMENTS - $STORED_COMMENTS))
+else
+  COMMENT_DELTA=0  # No baseline — skip comment drift
+fi
 ```
 
 Classify each issue into:
@@ -64,6 +73,7 @@ Classify each issue into:
 - **Orphaned:** Branch deleted but work incomplete
 - **Active:** Still in progress, everything consistent
 - **Drift:** State file says one thing, GitHub says another
+- **Unreviewed comments:** COMMENT_DELTA > 0 — new comments posted since triage that haven't been classified
 </step>
 
 <step name="health_check">
@@ -139,10 +149,12 @@ Active:    ${active_count} issues in progress
 Completed: ${completed_count} archived
 Stale:     ${stale_count} need attention
 Orphaned:  ${orphaned_count} need attention
+Comments:  ${comment_drift_count} issues with unreviewed comments
 Branches:  ${deleted_count} cleaned up
 ${HEALTH ? 'GSD Health: ' + HEALTH.status : ''}
 
 ${details_for_each_non_active_item}
+${comment_drift_details ? 'Unreviewed comments:\n' + comment_drift_details : ''}
 ```
 </step>
 
@@ -151,9 +163,10 @@ ${details_for_each_non_active_item}
 <success_criteria>
 - [ ] All .mgw/active/ files scanned
 - [ ] GitHub state checked for each issue, PR, branch
+- [ ] Comment delta checked for each active issue
 - [ ] Completed items moved to .mgw/completed/
 - [ ] Lingering worktrees cleaned up for completed items
 - [ ] Branch deletion offered for completed items
-- [ ] Stale/orphaned/drift items flagged
+- [ ] Stale/orphaned/drift items flagged (including comment drift)
 - [ ] Summary presented
 </success_criteria>
