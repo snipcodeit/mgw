@@ -76,6 +76,7 @@ If no state file exists → issue not triaged yet. Run triage inline:
 If state file exists → load it. Check pipeline_stage:
   - "triaged" → proceed to GSD execution
   - "planning" / "executing" → resume from where we left off
+  - "blocked" → "Pipeline for #${ISSUE_NUMBER} is blocked by a stakeholder comment. Review the issue comments, resolve the blocker, then re-run."
   - "pr-created" / "done" → "Pipeline already completed for #${ISSUE_NUMBER}. Run /mgw:sync to reconcile."
 </step>
 
@@ -122,6 +123,99 @@ Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → branch.
 - File operations, git commands, and agent work use **relative paths** (CWD = worktree)
 - `.mgw/` state operations use **absolute paths**: `${REPO_ROOT}/.mgw/`
   (`.mgw/` is gitignored — it only exists in the main repo, not the worktree)
+</step>
+
+<step name="preflight_comment_check">
+**Pre-flight comment check — detect new comments since triage:**
+
+Before GSD execution begins, check if new comments have been posted on the issue
+since triage. This prevents executing against a stale plan when stakeholders have
+posted material changes, blockers, or scope updates.
+
+```bash
+# Fetch current comment count from GitHub
+CURRENT_COMMENTS=$(gh issue view $ISSUE_NUMBER --json comments --jq '.comments | length' 2>/dev/null || echo "0")
+STORED_COMMENTS="${triage.last_comment_count}"  # From state file
+
+# If stored count is missing (pre-comment-tracking state), skip check
+if [ -z "$STORED_COMMENTS" ] || [ "$STORED_COMMENTS" = "null" ] || [ "$STORED_COMMENTS" = "0" ]; then
+  STORED_COMMENTS=0
+fi
+```
+
+If new comments detected (`CURRENT_COMMENTS > STORED_COMMENTS`):
+
+1. **Fetch new comment bodies:**
+```bash
+NEW_COUNT=$(($CURRENT_COMMENTS - $STORED_COMMENTS))
+NEW_COMMENTS=$(gh issue view $ISSUE_NUMBER --json comments \
+  --jq "[.comments[-${NEW_COUNT}:]] | .[] | {author: .author.login, body: .body, createdAt: .createdAt}" 2>/dev/null)
+```
+
+2. **Spawn classification agent:**
+```
+Task(
+  prompt="
+<files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+</files_to_read>
+
+Classify new comments on GitHub issue #${ISSUE_NUMBER}.
+
+<issue_context>
+Title: ${issue_title}
+Current pipeline stage: ${pipeline_stage}
+GSD Route: ${gsd_route}
+Triage scope: ${triage.scope}
+</issue_context>
+
+<new_comments>
+${NEW_COMMENTS}
+</new_comments>
+
+<classification_rules>
+Classify each comment (and the overall batch) into ONE of:
+
+- **material** — Comment changes scope, requirements, acceptance criteria, or design.
+  Examples: 'Actually we also need to handle X', 'Changed the requirement to Y',
+  'Don't forget about edge case Z'.
+
+- **informational** — Status update, acknowledgment, question that doesn't change scope, +1.
+  Examples: 'Looks good', 'Thanks for picking this up', 'What's the ETA?', '+1'.
+
+- **blocking** — Explicit instruction to stop or wait. Must contain clear hold language.
+  Examples: 'Don't work on this yet', 'Hold off', 'Blocked by external dependency',
+  'Wait for design review'.
+
+If ANY comment in the batch is blocking, overall classification is blocking.
+If ANY comment is material (and none blocking), overall classification is material.
+Otherwise, informational.
+</classification_rules>
+
+<output_format>
+Return ONLY valid JSON:
+{
+  \"classification\": \"material|informational|blocking\",
+  \"reasoning\": \"Brief explanation of why this classification was chosen\",
+  \"new_requirements\": [\"list of new requirements if material, empty array otherwise\"],
+  \"blocking_reason\": \"reason if blocking, empty string otherwise\"
+}
+</output_format>
+",
+  subagent_type="general-purpose",
+  description="Classify comments on #${ISSUE_NUMBER}"
+)
+```
+
+3. **React based on classification:**
+
+| Classification | Action |
+|---------------|--------|
+| **informational** | Log: "MGW: ${NEW_COUNT} new comment(s) reviewed — informational, continuing." Update `triage.last_comment_count` in state file. Continue pipeline. |
+| **material** | Log: "MGW: Material comment(s) detected — scope may have changed." Update state: add new_requirements to triage context. Update `triage.last_comment_count`. Re-read issue body for updated requirements. Continue with enriched context (pass new_requirements to planner). |
+| **blocking** | Log: "MGW: Blocking comment detected — pipeline paused." Update state: `pipeline_stage = "blocked"`. Post comment on issue: `> **MGW** . \`pipeline-blocked\` . Blocked by stakeholder comment. Reason: ${blocking_reason}`. Stop pipeline execution. |
+
+If no new comments detected, continue normally.
 </step>
 
 <step name="post_triage_update">
@@ -759,6 +853,7 @@ Next:
 <success_criteria>
 - [ ] Issue number validated and state loaded (or triage run first)
 - [ ] Isolated worktree created (.worktrees/ gitignored)
+- [ ] Pre-flight comment check performed (new comments classified before execution)
 - [ ] Structured triage comment posted on issue (scope, route, files, security)
 - [ ] GSD pipeline executed in worktree (quick or milestone route)
 - [ ] Execution-complete comment posted on issue (commits, changes, test status)

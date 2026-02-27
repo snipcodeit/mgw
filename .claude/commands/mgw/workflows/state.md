@@ -129,6 +129,64 @@ check_batch_staleness() {
 - When the check fails (network, API limit, error): **continue silently** — never let staleness detection prevent command execution
 - Scope: covers **both milestone-level and issue-level state**
 
+## Comment Tracking
+
+Comment tracking detects new comments posted on an issue between triage and execution.
+The `triage.last_comment_count` and `triage.last_comment_at` fields are populated during
+triage (issue.md) and checked before GSD execution begins (run.md).
+
+### Comment Tracking Fields
+
+| Field | Type | Set By | Description |
+|-------|------|--------|-------------|
+| `triage.last_comment_count` | number | issue.md | Total comment count at triage time |
+| `triage.last_comment_at` | string\|null | issue.md | ISO timestamp of most recent comment at triage time |
+
+### Pre-Flight Comment Check
+
+Before GSD execution starts, run.md compares current comment count against the stored
+count. If new comments are detected, they are classified before proceeding:
+
+```bash
+# Fetch current comment state from GitHub
+CURRENT_COMMENTS=$(gh issue view $ISSUE_NUMBER --json comments --jq '.comments | length')
+STORED_COMMENTS="${triage.last_comment_count}"
+
+if [ "$CURRENT_COMMENTS" -gt "$STORED_COMMENTS" ]; then
+  # New comments detected — fetch and classify
+  NEW_COMMENT_BODIES=$(gh issue view $ISSUE_NUMBER --json comments \
+    --jq "[.comments[-$(($CURRENT_COMMENTS - $STORED_COMMENTS)):]] | .[].body")
+fi
+```
+
+### Comment Classification
+
+New comments are classified by a general-purpose agent into one of three categories:
+
+| Classification | Meaning | Pipeline Action |
+|---------------|---------|-----------------|
+| **material** | Changes scope, requirements, or acceptance criteria | Flag for re-triage — update state, re-run triage analysis |
+| **informational** | Status update, +1, question, acknowledgment | Log and continue — no pipeline impact |
+| **blocking** | Explicit "don't work on this yet", "hold", "wait" | Pause pipeline — set pipeline_stage to "blocked" |
+
+The classification agent receives the new comment bodies and the issue context, and returns
+a JSON result:
+
+```json
+{
+  "classification": "material|informational|blocking",
+  "reasoning": "Brief explanation",
+  "new_requirements": ["list of new requirements if material"],
+  "blocking_reason": "reason if blocking"
+}
+```
+
+### Comment Delta in Drift Detection
+
+sync.md includes comment delta as a drift signal. If the current comment count differs
+from `triage.last_comment_count`, the issue is flagged as having unreviewed comments
+in the sync report.
+
 ## Issue State Schema
 
 File: `.mgw/active/<number>-<slug>.json`
@@ -146,7 +204,9 @@ File: `.mgw/active/<number>-<slug>.json`
     "scope": { "files": 0, "systems": [] },
     "validity": "pending|confirmed|invalid",
     "security_notes": "",
-    "conflicts": []
+    "conflicts": [],
+    "last_comment_count": 0,
+    "last_comment_at": null
   },
   "gsd_route": null,
   "gsd_artifacts": { "type": null, "path": null },
@@ -238,7 +298,7 @@ with open('${MGW_DIR}/project.json', 'w') as f:
 "
 ```
 
-Valid stages: `new`, `triaged`, `planning`, `executing`, `verifying`, `pr-created`, `done`, `failed`.
+Valid stages: `new`, `triaged`, `planning`, `executing`, `verifying`, `pr-created`, `done`, `failed`, `blocked`.
 
 ### Advance Current Milestone
 Used after milestone completion to move pointer to next milestone.
@@ -262,6 +322,7 @@ Only advance if ALL issues in current milestone completed successfully.
 | validate_and_load | init.md, issue.md, run.md, update.md, link.md, pr.md, sync.md, milestone.md |
 | Per-issue staleness | run.md, issue.md, update.md |
 | Batch staleness | sync.md (full reconciliation), milestone.md |
+| Comment tracking | issue.md (populate), run.md (pre-flight check), sync.md (drift detection) |
 | Issue state schema | issue.md, run.md, update.md, sync.md |
 | Cross-refs schema | link.md, run.md, pr.md, sync.md |
 | Slug generation | issue.md, run.md |

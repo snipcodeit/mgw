@@ -35,6 +35,28 @@ Used by staleness detection to compare GitHub state with local state.
 gh issue view ${ISSUE_NUMBER} --json updatedAt -q .updatedAt
 ```
 
+### Get Comment Count
+Used by comment tracking to get the current number of comments on an issue.
+```bash
+gh issue view ${ISSUE_NUMBER} --json comments --jq '.comments | length'
+```
+
+### Get Recent Comments
+Used by pre-flight comment check and review command to fetch new comments since triage.
+```bash
+# Fetch last N comments with author, body, and timestamp
+NEW_COUNT=$((CURRENT_COMMENTS - STORED_COMMENTS))
+gh issue view ${ISSUE_NUMBER} --json comments \
+  --jq "[.comments[-${NEW_COUNT}:]] | .[] | {author: .author.login, body: .body, createdAt: .createdAt}"
+```
+
+### Get Last Comment Timestamp
+Used during triage to snapshot the most recent comment timestamp.
+```bash
+gh issue view ${ISSUE_NUMBER} --json comments \
+  --jq '.comments[-1].createdAt // empty'
+```
+
 ## Issue Mutations
 
 ### Assign to Self
@@ -238,6 +260,7 @@ Release is created as draft — user reviews and publishes manually.
 | Section | Referenced By |
 |---------|-------------|
 | Issue Operations | issue.md, run.md, issues.md, sync.md, milestone.md, next.md |
+| Comment Operations | issue.md (triage snapshot), run.md (pre-flight check), sync.md (drift), review.md |
 | Issue Mutations | issue.md, update.md, run.md, init.md, milestone.md |
 | Milestone Operations | project.md, milestone.md |
 | Dependency Labels | project.md |

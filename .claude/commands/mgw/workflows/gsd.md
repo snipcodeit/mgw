@@ -62,7 +62,49 @@ CHECKER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd
 | `gsd-executor` | Agents that write application code | Plan task execution |
 | `gsd-verifier` | Post-execution verification agents | Goal achievement checks |
 | `gsd-plan-checker` | Plan quality review agents | Plan structure and coverage review |
-| `general-purpose` | Utility agents (no code execution) | Comments, PR body, analysis, triage |
+| `general-purpose` | Utility agents (no code execution) | Comments, PR body, analysis, triage, comment classification |
+
+## Comment Classification Pattern
+
+Used by `/mgw:run` (pre-flight check) and `/mgw:review` (standalone) to classify
+new comments as material, informational, or blocking.
+
+```
+Task(
+  prompt="
+<files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+</files_to_read>
+
+Classify new comments on GitHub issue #${ISSUE_NUMBER}.
+
+<issue_context>
+Title: ${issue_title}
+Current pipeline stage: ${pipeline_stage}
+GSD Route: ${gsd_route}
+Triage scope: ${triage.scope}
+</issue_context>
+
+<new_comments>
+${NEW_COMMENTS}
+</new_comments>
+
+<classification_rules>
+- material — changes scope, requirements, acceptance criteria, or design
+- informational — status update, acknowledgment, question, +1
+- blocking — explicit instruction to stop or wait
+
+Priority: blocking > material > informational
+</classification_rules>
+
+<output_format>
+Return ONLY valid JSON with: classification, reasoning, new_requirements, blocking_reason
+</output_format>
+",
+  subagent_type="general-purpose",
+  description="Classify comments on #${ISSUE_NUMBER}"
+)
+```
 
 ## GSD Quick Pipeline Pattern
 
@@ -191,7 +233,8 @@ KEYLINK_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify key-links 
 
 | Pattern | Referenced By |
 |---------|-------------|
-| Standard spawn template | run.md, issue.md, pr.md |
+| Standard spawn template | run.md, issue.md, pr.md, review.md |
+| Comment classification | run.md (pre-flight), review.md (standalone) |
 | Quick pipeline | run.md |
 | Milestone pipeline | run.md |
 | Model resolution | run.md |
