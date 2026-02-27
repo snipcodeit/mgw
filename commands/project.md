@@ -48,8 +48,28 @@ If no GitHub remote → error: "No GitHub remote found. MGW requires a GitHub re
 
 ```bash
 if [ -f "${REPO_ROOT}/.mgw/project.json" ]; then
-  echo "Project already initialized. Run /mgw:milestone to continue."
-  exit 0
+  # Check if all milestones are complete
+  ALL_COMPLETE=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+milestones = p.get('milestones', [])
+current = p.get('current_milestone', 1)
+# All complete when current_milestone exceeds array length
+# (milestone.md increments current_milestone after completing each)
+all_done = current > len(milestones) and len(milestones) > 0
+print('true' if all_done else 'false')
+")
+
+  if [ "$ALL_COMPLETE" = "true" ]; then
+    EXTEND_MODE=true
+    EXISTING_MILESTONE_COUNT=$(python3 -c "import json; print(len(json.load(open('${REPO_ROOT}/.mgw/project.json'))['milestones']))")
+    EXISTING_PHASE_COUNT=$(python3 -c "import json; print(max((int(k) for k in json.load(open('${REPO_ROOT}/.mgw/project.json')).get('phase_map',{}).keys()), default=0))")
+    echo "All ${EXISTING_MILESTONE_COUNT} milestones complete. Entering extend mode."
+    echo "Phase numbering will continue from phase ${EXISTING_PHASE_COUNT}."
+  else
+    echo "Project already initialized. Run /mgw:milestone to continue."
+    exit 0
+  fi
 fi
 ```
 
@@ -105,6 +125,26 @@ fi
 
 # Prefix: default v1
 PREFIX="v1"
+```
+
+**In extend mode, load existing metadata and ask for new milestones:**
+
+When `EXTEND_MODE=true`, skip the questions above and instead:
+
+```bash
+if [ "$EXTEND_MODE" = true ]; then
+  # Load existing project metadata — name, repo, stack, prefix are already known
+  PROJECT_NAME=$(python3 -c "import json; print(json.load(open('${REPO_ROOT}/.mgw/project.json'))['project']['name'])")
+  STACK=$(python3 -c "import json; print(json.load(open('${REPO_ROOT}/.mgw/project.json'))['project'].get('stack','unknown'))")
+  PREFIX=$(python3 -c "import json; print(json.load(open('${REPO_ROOT}/.mgw/project.json'))['project'].get('prefix','v1'))")
+  EXISTING_MILESTONE_NAMES=$(python3 -c "import json; p=json.load(open('${REPO_ROOT}/.mgw/project.json')); print(', '.join(m['name'] for m in p['milestones']))")
+
+  # Ask only for the new work — different question for extend mode
+  # Ask: "What new milestones should we add to ${PROJECT_NAME}?"
+  # Capture as EXTENSION_DESCRIPTION
+
+  DESCRIPTION="Extension of existing project. Existing milestones: ${EXISTING_MILESTONE_NAMES}. New work: ${EXTENSION_DESCRIPTION}"
+fi
 ```
 </step>
 
@@ -221,7 +261,12 @@ TOTAL_ISSUES_CREATED=0
 FAILED_SLUGS=()
 
 # Global phase counter across milestones
-GLOBAL_PHASE_NUM=0
+# In extend mode, continue numbering from last existing phase
+if [ "$EXTEND_MODE" = true ]; then
+  GLOBAL_PHASE_NUM=$EXISTING_PHASE_COUNT
+else
+  GLOBAL_PHASE_NUM=0
+fi
 
 for MILESTONE_INDEX in $(seq 0 $((MILESTONE_COUNT - 1))); do
   # Get this milestone's GitHub number from MILESTONE_MAP
@@ -448,25 +493,54 @@ fi
 ```bash
 OWNER=$(echo "$REPO" | cut -d'/' -f1)
 
-# Create project board
-PROJECT_RESP=$(gh project create --owner "$OWNER" --title "${PROJECT_NAME} Roadmap" --format json 2>&1)
-PROJECT_NUMBER=$(echo "$PROJECT_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['number'])" 2>/dev/null || echo "")
-PROJECT_URL=$(echo "$PROJECT_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['url'])" 2>/dev/null || echo "")
+if [ "$EXTEND_MODE" = true ]; then
+  # Reuse existing project board — load number and URL from project.json
+  EXISTING_BOARD=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+board = p.get('project', {}).get('project_board', {})
+print(json.dumps(board))
+")
+  PROJECT_NUMBER=$(echo "$EXISTING_BOARD" | python3 -c "import json,sys; print(json.load(sys.stdin).get('number',''))")
+  PROJECT_URL=$(echo "$EXISTING_BOARD" | python3 -c "import json,sys; print(json.load(sys.stdin).get('url',''))")
 
-if [ -n "$PROJECT_NUMBER" ]; then
-  echo "  Created project board: #${PROJECT_NUMBER} — ${PROJECT_URL}"
+  if [ -n "$PROJECT_NUMBER" ]; then
+    echo "  Reusing existing project board: #${PROJECT_NUMBER} — ${PROJECT_URL}"
 
-  # Add all issues to the board
-  for RECORD in "${ISSUE_RECORDS[@]}"; do
-    ISSUE_NUM=$(echo "$RECORD" | cut -d':' -f2)
-    ISSUE_URL="https://github.com/${REPO}/issues/${ISSUE_NUM}"
-    gh project item-add "$PROJECT_NUMBER" --owner "$OWNER" --url "$ISSUE_URL" 2>/dev/null || true
-  done
-  echo "  Added ${TOTAL_ISSUES_CREATED} issues to project board"
-else
-  echo "  WARNING: Failed to create project board: ${PROJECT_RESP}"
-  PROJECT_NUMBER=""
-  PROJECT_URL=""
+    # Add only NEW issues to the existing board
+    for RECORD in "${ISSUE_RECORDS[@]}"; do
+      ISSUE_NUM=$(echo "$RECORD" | cut -d':' -f2)
+      ISSUE_URL="https://github.com/${REPO}/issues/${ISSUE_NUM}"
+      gh project item-add "$PROJECT_NUMBER" --owner "$OWNER" --url "$ISSUE_URL" 2>/dev/null || true
+    done
+    echo "  Added ${TOTAL_ISSUES_CREATED} new issues to existing project board"
+  else
+    # Board not found — fall through to create a new one
+    EXTEND_MODE_BOARD=false
+  fi
+fi
+
+if [ "$EXTEND_MODE" != true ] || [ "$EXTEND_MODE_BOARD" = false ]; then
+  # Create a new project board (standard flow or extend fallback)
+  PROJECT_RESP=$(gh project create --owner "$OWNER" --title "${PROJECT_NAME} Roadmap" --format json 2>&1)
+  PROJECT_NUMBER=$(echo "$PROJECT_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['number'])" 2>/dev/null || echo "")
+  PROJECT_URL=$(echo "$PROJECT_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['url'])" 2>/dev/null || echo "")
+
+  if [ -n "$PROJECT_NUMBER" ]; then
+    echo "  Created project board: #${PROJECT_NUMBER} — ${PROJECT_URL}"
+
+    # Add all issues to the board
+    for RECORD in "${ISSUE_RECORDS[@]}"; do
+      ISSUE_NUM=$(echo "$RECORD" | cut -d':' -f2)
+      ISSUE_URL="https://github.com/${REPO}/issues/${ISSUE_NUM}"
+      gh project item-add "$PROJECT_NUMBER" --owner "$OWNER" --url "$ISSUE_URL" 2>/dev/null || true
+    done
+    echo "  Added ${TOTAL_ISSUES_CREATED} issues to project board"
+  else
+    echo "  WARNING: Failed to create project board: ${PROJECT_RESP}"
+    PROJECT_NUMBER=""
+    PROJECT_URL=""
+  fi
 fi
 ```
 
@@ -567,10 +641,53 @@ a python3 dictionary and write with `json.dumps(indent=2)` at this step.
 
 Note: use `GENERATED_TYPE` (read from `/tmp/mgw-template.json`) for the `template` field in project.json,
 not a hardcoded template name.
+
+**In extend mode, use mergeProjectState instead of full write:**
+
+When `EXTEND_MODE=true`, do NOT write a full project.json. Instead, build only the new milestones
+and phase_map entries (with `template_milestone_index` offset by `EXISTING_MILESTONE_COUNT`), then call:
+
+```bash
+# Compute the current_milestone pointer for the first new milestone (1-indexed)
+NEW_CURRENT_MILESTONE=$((EXISTING_MILESTONE_COUNT + 1))
+
+# Call mergeProjectState via Node — appends without overwriting existing data
+node -e "
+const { mergeProjectState } = require('${REPO_ROOT}/lib/state.cjs');
+const newMilestones = JSON.parse(process.argv[1]);
+const newPhaseMap = JSON.parse(process.argv[2]);
+const newCurrentMilestone = parseInt(process.argv[3]);
+const merged = mergeProjectState(newMilestones, newPhaseMap, newCurrentMilestone);
+console.log('project.json updated: ' + merged.milestones.length + ' total milestones');
+" "$NEW_MILESTONES_JSON" "$NEW_PHASE_MAP_JSON" "$NEW_CURRENT_MILESTONE"
+```
+
+Where `NEW_MILESTONES_JSON` and `NEW_PHASE_MAP_JSON` are JSON-encoded strings built from only
+the newly created milestones/phases (matching the existing project.json schema). The
+`template_milestone_index` for each new milestone should be offset by `EXISTING_MILESTONE_COUNT`
+so indices remain globally unique.
+
+When `EXTEND_MODE` is false, the existing write logic (full project.json from scratch) is unchanged.
 </step>
 
 <step name="report">
 **Display post-init summary:**
+
+In extend mode, show the extended banner:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MGW ► PROJECT EXTENDED — {PROJECT_NAME}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Extended with {NEW_MILESTONE_COUNT} new milestones (total: {TOTAL_MILESTONES})
+Phase numbering: continued from {EXISTING_PHASE_COUNT} (new phases: {EXISTING_PHASE_COUNT+1}–{NEW_MAX_PHASE})
+Board: reused #{PROJECT_NUMBER}
+
+(remaining output follows the same format as project init for the new milestones/issues)
+```
+
+In standard (non-extend) mode, show the original init banner:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -629,4 +746,5 @@ Warnings:
 - [ ] .mgw/project.json written with full project state
 - [ ] Post-init summary displayed
 - [ ] Command does NOT trigger execution (PROJ-05)
+- [ ] Extend mode: all milestones complete detected, new milestones appended, existing data preserved
 </success_criteria>
