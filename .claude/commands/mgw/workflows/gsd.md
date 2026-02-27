@@ -74,15 +74,13 @@ INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init quick "$DESCRIPTION")
 # Parse: planner_model, executor_model, checker_model, verifier_model,
 #        next_num, slug, date, quick_dir, task_dir, roadmap_exists
 
-# 2. Handle missing ROADMAP.md (quick tasks in non-GSD repos)
+# 2. Handle missing .planning/ (quick tasks in non-GSD repos)
+#    MGW never writes config.json, ROADMAP.md, or STATE.md — those are GSD-owned.
+#    Only create the quick task directory (GSD agents need it).
 if [ "$roadmap_exists" = "false" ]; then
+  echo "NOTE: No .planning/ directory found. GSD manages its own state files."
+  echo "      To create a ROADMAP.md, run /gsd:new-milestone after this pipeline."
   mkdir -p .planning/quick
-  echo '{"model_profile":"balanced","commit_docs":true}' > .planning/config.json
-  cat > .planning/ROADMAP.md << 'HEREDOC'
-# Roadmap
-## v1.0: MGW-Managed
-Issue-driven development managed by MGW.
-HEREDOC
 fi
 
 # 3. Create task directory

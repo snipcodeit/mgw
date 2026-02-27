@@ -46,7 +46,7 @@ So I built MGW to be the responsible adult in the room. I point it at an issue, 
 
 | Command | What it does |
 |---------|-------------|
-| `/mgw:project` | Scaffold a new project — generate milestones, issues, and GSD ROADMAP from a description |
+| `/mgw:project` | Scaffold a new project — generate milestones, issues, and persist project state |
 | `/mgw:init` | Bootstrap repo for MGW — creates .mgw/ state, GitHub templates, gitignore entries |
 | `/mgw:issues` | Browse and filter your GitHub issues |
 | `/mgw:issue <n>` | Deep triage — scope analysis, security review, GSD route recommendation |

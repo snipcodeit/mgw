@@ -1,6 +1,6 @@
 ---
 name: mgw:project
-description: Initialize a new project — generate AI-driven milestones and issues from project description, write GSD ROADMAP and project state
+description: Initialize a new project — generate AI-driven milestones and issues from project description, persist project state
 argument-hint: ""
 allowed-tools:
   - Bash
@@ -13,9 +13,13 @@ allowed-tools:
 
 <objective>
 Turn a project description into a fully structured GitHub project: milestones created,
-issues scaffolded from AI-generated project-specific content, dependencies labeled, GSD ROADMAP.md
-written, and state persisted. The developer never leaves Claude Code and never does
-project management manually.
+issues scaffolded from AI-generated project-specific content, dependencies labeled, and
+state persisted. The developer never leaves Claude Code and never does project management
+manually.
+
+MGW does NOT write to .planning/ — that directory is owned by GSD. If a project needs
+a ROADMAP.md or other GSD files, run the appropriate GSD command (e.g., /gsd:new-milestone)
+after project initialization.
 
 This command creates structure only. It does NOT trigger execution.
 Run /mgw:milestone to begin executing the first milestone.
@@ -469,90 +473,6 @@ fi
 Store `PROJECT_NUMBER` and `PROJECT_URL` for inclusion in project.json and the summary report.
 </step>
 
-<step name="write_roadmap">
-**Write GSD ROADMAP.md to the target project's .planning/ directory**
-
-```bash
-mkdir -p "${REPO_ROOT}/.planning"
-ROADMAP_PATH="${REPO_ROOT}/.planning/ROADMAP.md"
-
-if [ -f "$ROADMAP_PATH" ]; then
-  echo "ROADMAP.md already exists — skipping (won't overwrite existing GSD work)"
-  ROADMAP_STATUS="skipped (exists)"
-else
-  ROADMAP_STATUS="written"
-fi
-```
-
-If ROADMAP.md does not exist, construct and write it using template data:
-
-The ROADMAP.md must follow the GSD format from `/home/hat/.claude/get-shit-done/templates/roadmap.md`:
-
-**Structure:**
-
-```markdown
-# Roadmap: {PROJECT_NAME}
-
-## Overview
-
-{DESCRIPTION}. This project follows the {GENERATED_TYPE} pipeline.
-
-## Phases
-
-- [ ] **Phase 1: {phase_name}** - {phase_description}
-- [ ] **Phase 2: {phase_name}** - {phase_description}
-...
-
-## Phase Details
-
-### Phase 1: {phase_name}
-**Goal**: {phase_description}
-**Depends on**: Nothing (first phase)
-**Requirements**: (tracked in GitHub — see milestone "{milestone_name}")
-**Success Criteria** (what must be TRUE):
-  1. {issue_title_1}
-  2. {issue_title_2}
-  3. {issue_title_3}
-**Plans**: TBD
-
-Plans:
-- [ ] 01-01: TBD
-
-### Phase 2: {phase_name}
-**Goal**: {phase_description}
-**Depends on**: Phase 1
-**Requirements**: (tracked in GitHub — see milestone "{milestone_name}")
-**Success Criteria** (what must be TRUE):
-  1. {issue_title_1}
-  ...
-**Plans**: TBD
-
-Plans:
-- [ ] 02-01: TBD
-
-## Progress
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. {phase_name} | 0/1 | Not started | - |
-| 2. {phase_name} | 0/1 | Not started | - |
-...
-```
-
-Generate this content using the template data from `/tmp/mgw-template.json`. Iterate over
-milestones → phases → issues to build each section. Use the Write tool to create
-the file at `$ROADMAP_PATH`.
-
-**Mapping rules:**
-- Each template phase → one GSD phase (numbered globally across milestones)
-- Phase `description` → `**Goal**`
-- Phase `issues[].title` → success criteria bullets (one per issue, as observable behaviors)
-- First phase → `**Depends on**: Nothing (first phase)`, others → `**Depends on**: Phase N-1`
-- Milestone name → Requirements milestone reference
-- Plans section: always `TBD` initially with placeholder `{NN}-01: TBD`
-- Use `$GENERATED_TYPE` (from the AI-generated JSON) in the Overview line instead of a hardcoded template name
-</step>
-
 <step name="write_project_json">
 **Write .mgw/project.json with project state**
 
@@ -671,15 +591,13 @@ Dependencies:
   {list of "#{dependent} blocked-by:#{blocking}" entries}
   (or: "None declared in template")
 
-GSD scaffold:
-  .planning/ROADMAP.md      {written|skipped (exists)}
-
 State:
   .mgw/project.json         written
   .mgw/cross-refs.json      {updated with N entries|unchanged}
 
 Next:
-  /mgw:milestone start      Execute first milestone
+  /gsd:new-milestone         Create GSD ROADMAP.md (if needed)
+  /mgw:milestone start       Execute first milestone
 ```
 
 If any milestones or issues failed to create, include:
@@ -692,7 +610,7 @@ Warnings:
 
 **CRITICAL BOUNDARY (PROJ-05):** This command ends here. It does NOT:
 - Trigger /mgw:milestone or any execution workflow
-- Spawn a GSD agent for ROADMAP.md (writes directly — fast and deterministic)
+- Write to .planning/ (GSD owns that directory — run /gsd:new-milestone to scaffold)
 - Execute any issues or plans
 </step>
 
@@ -708,7 +626,6 @@ Warnings:
 - [ ] Slug-to-number mapping built during Pass 1b
 - [ ] Dependency labels applied (Pass 2) — blocked-by:#N on dependent issues
 - [ ] cross-refs.json updated with dependency entries
-- [ ] .planning/ROADMAP.md written in GSD format (or skipped if exists)
 - [ ] .mgw/project.json written with full project state
 - [ ] Post-init summary displayed
 - [ ] Command does NOT trigger execution (PROJ-05)
