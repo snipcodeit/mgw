@@ -37,7 +37,7 @@ MGW is a [Claude Code slash command](https://docs.anthropic.com/en/docs/claude-c
   Merge → issue auto-closes
 ```
 
-Each step is composable. Use the full pipeline or pick individual commands.
+Each step is composable. Use the full pipeline or pick individual commands. For a detailed breakdown of the pipeline stages and agent delegation model, see the [Architecture Guide](docs/ARCHITECTURE.md).
 
 ## Why I Built This
 
@@ -96,6 +96,8 @@ If you're already using Claude Code and GSD for development, MGW is the missing 
 | `/mgw:sync` | Reconcile local state with GitHub |
 | `/mgw:help` | Command reference |
 
+For detailed usage of every command including flags, examples, and edge cases, see the [User Guide](docs/USER-GUIDE.md#command-reference).
+
 ## How Triage Works
 
 `/mgw:issue` spawns an analysis agent that reads your codebase and evaluates the issue across five dimensions:
@@ -113,6 +115,8 @@ Based on scope, MGW recommends a GSD route:
 | Small (1-2 files) | `gsd:quick` | Single-pass plan + execute |
 | Medium (3-8 files) | `gsd:quick --full` | Plan with verification loop |
 | Large (9+ files) | `gsd:new-milestone` | Full milestone with phased execution |
+
+For a deeper explanation of how GSD routes work, including dependency ordering and how MGW selects the right route, see the [User Guide](docs/USER-GUIDE.md#gsd-routes-explained).
 
 ## Status Comments
 
@@ -141,7 +145,7 @@ Every pipeline step posts a structured comment on the issue so you (and your tea
 </details>
 ```
 
-Comments are posted for: `work-started`, `triage-complete`, `execution-complete`, `pr-ready`, and `pipeline-failed`. The milestone orchestrator handles all comment posting directly (not delegated to sub-agents), guaranteeing every stage is logged.
+Comments are posted for: `work-started`, `triage-complete`, `execution-complete`, `pr-ready`, and `pipeline-failed`. The milestone orchestrator handles all comment posting directly (not delegated to sub-agents), guaranteeing every stage is logged. For the full list of comment formats and customization options, see the [User Guide](docs/USER-GUIDE.md#status-comments-and-pr-descriptions).
 
 ## PR Descriptions
 
@@ -181,7 +185,7 @@ MGW tracks pipeline state in a local `.mgw/` directory (gitignored, per-develope
 
 Pipeline stages flow: `new` → `triaged` → `planning` → `executing` → `verifying` → `pr-created` → `done` (or `failed`)
 
-The `/mgw:sync` command reconciles local state with GitHub reality — archiving completed work, flagging stale branches, and catching drift.
+The `/mgw:sync` command reconciles local state with GitHub reality — archiving completed work, flagging stale branches, and catching drift. For the complete state schema and configuration reference, see the [User Guide](docs/USER-GUIDE.md#the-mgw-directory). For how state flows through the system, see the [Architecture Guide](docs/ARCHITECTURE.md#state-management).
 
 ## Requirements
 
@@ -306,6 +310,8 @@ AI-powered commands call `claude -p` under the hood and require the [Claude Code
 /mgw:sync                              # Clean up stale state
 ```
 
+For step-by-step walkthroughs of common scenarios including failure recovery, see the [User Guide](docs/USER-GUIDE.md#workflow-walkthrough).
+
 ## Project Structure
 
 ```
@@ -345,6 +351,15 @@ templates/
         gsd.md             GSD agent spawn templates
         validation.md      Delegation boundary rules
 ```
+
+For a detailed walkthrough of the directory structure, slash command anatomy, and CLI architecture, see the [Architecture Guide](docs/ARCHITECTURE.md#directory-structure).
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture Guide](docs/ARCHITECTURE.md) | System design: the two-layer model (MGW orchestrates, GSD executes), delegation boundary, pipeline data flow, state schema, agent model, and slash command anatomy |
+| [User Guide](docs/USER-GUIDE.md) | Practical usage: configuration reference, full command reference with examples, workflow walkthroughs, GSD route explanations, dependency ordering, failure recovery, and FAQ |
 
 ## Acknowledgments
 
