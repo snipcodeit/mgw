@@ -29,7 +29,20 @@
     "type": "git",
     "url": "git+https://github.com/snipcodeit/mgw.git"
   },
-  "keywords": ["github", "cli", "automation", "pipeline", "gsd"],
+  "keywords": [
+    "claude-code",
+    "github",
+    "automation",
+    "project-management",
+    "gsd",
+    "cli",
+    "developer-tools",
+    "ai"
+  ],
   "author": "snipcodeit",
-  "license": "MIT"
+  "license": "MIT",
+  "homepage": "https://github.com/snipcodeit/mgw",
+  "bugs": {
+    "url": "https://github.com/snipcodeit/mgw/issues"
+  }
 }
