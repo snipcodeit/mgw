@@ -70,3 +70,54 @@ body:
       render: shell
     validations:
       required: false
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: Specific conditions that must be true for the fix to be considered complete
+      placeholder: "- [ ] User is returned to main branch after pipeline completion\n- [ ] Worktree is fully cleaned up"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope-estimate
+    attributes:
+      label: Scope Estimate
+      description: Rough estimate of the work involved
+      options:
+        - Small (1-2 files)
+        - Medium (3-8 files)
+        - Large (9+ files or new system)
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: security-impact
+    attributes:
+      label: Security Impact
+      description: Does this bug have security implications?
+      options:
+        - label: Touches authentication/authorization
+        - label: Involves user data handling
+        - label: Affects input validation/sanitization
+        - label: Involves external API calls
+        - label: No security impact
+
+  - type: textarea
+    id: whats-involved
+    attributes:
+      label: What's Involved
+      description: Files and systems that need changes (helps triage)
+      placeholder: "| File | What Changes |\n|------|-------------|\n| `commands/run.md` | Fix worktree cleanup logic |"
+    validations:
+      required: false
+
+  - type: input
+    id: related-issues
+    attributes:
+      label: Related Issues
+      description: Other issues related to this bug
+      placeholder: "#42, #43"
+    validations:
+      required: false

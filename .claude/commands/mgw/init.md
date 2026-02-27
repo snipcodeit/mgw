@@ -199,6 +199,15 @@ If exists → report "PR template already exists, skipping."
 ```bash
 gh label create "bug" --description "Something isn't working" --color "d73a4a" --force
 gh label create "enhancement" --description "New feature or improvement" --color "a2eeef" --force
+
+# MGW pipeline labels
+gh label create "mgw:triaged" --description "Issue triaged and ready for pipeline" --color "0e8a16" --force
+gh label create "mgw:needs-info" --description "Blocked — needs more detail or clarification" --color "e4e669" --force
+gh label create "mgw:needs-security-review" --description "Blocked — requires security review" --color "d93f0b" --force
+gh label create "mgw:discussing" --description "Under discussion — not yet approved" --color "c5def5" --force
+gh label create "mgw:approved" --description "Discussion complete — approved for execution" --color "0e8a16" --force
+gh label create "mgw:in-progress" --description "Pipeline actively executing" --color "1d76db" --force
+gh label create "mgw:blocked" --description "Pipeline blocked by stakeholder comment" --color "b60205" --force
 ```
 
 `--force` updates existing labels without error.
@@ -218,6 +227,7 @@ gh label create "enhancement" --description "New feature or improvement" --color
   Issue templates        ${created|exists}
   PR template            ${created|exists}
   GitHub labels          synced
+  MGW pipeline labels    synced (7 labels)
 
 Ready to use:
   /mgw:issues            Browse issues
@@ -235,5 +245,6 @@ Ready to use:
 - [ ] Issue templates created (bug + enhancement)
 - [ ] PR template created
 - [ ] GitHub labels ensured (bug, enhancement)
+- [ ] MGW pipeline labels ensured (7 mgw:* labels)
 - [ ] Setup report shown
 </success_criteria>

@@ -49,3 +49,75 @@ body:
       description: Design references, related issues, screenshots, or workflow context
     validations:
       required: false
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: Specific, testable conditions that define 'done' for this feature
+      placeholder: "- [ ] New command `/mgw:init` creates .mgw/ directory\n- [ ] GitHub templates are generated\n- [ ] .gitignore entries added"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope-estimate
+    attributes:
+      label: Scope Estimate
+      options:
+        - Small (1-2 files)
+        - Medium (3-8 files)
+        - Large (9+ files or new system)
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How urgent is this feature?
+      options:
+        - Nice to have
+        - Should have
+        - Must have
+        - Critical
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: security-impact
+    attributes:
+      label: Security Impact
+      description: Does this feature have security implications?
+      options:
+        - label: Touches authentication/authorization
+        - label: Involves user data handling
+        - label: Affects input validation/sanitization
+        - label: Involves external API calls
+        - label: No security impact
+
+  - type: textarea
+    id: whats-involved
+    attributes:
+      label: What's Involved
+      description: Files, systems, and estimated scope of changes
+      placeholder: "| File | What Changes |\n|------|-------------|\n| `commands/init.md` | New command implementation |"
+    validations:
+      required: false
+
+  - type: textarea
+    id: non-functional
+    attributes:
+      label: Non-Functional Requirements
+      description: Performance, scalability, accessibility, or other non-functional concerns
+      placeholder: "- Should complete in under 30 seconds\n- Must work offline (except GitHub API calls)"
+    validations:
+      required: false
+
+  - type: input
+    id: related-issues
+    attributes:
+      label: Related Issues
+      description: Other issues related to this feature
+      placeholder: "#42, #43"
+    validations:
+      required: false

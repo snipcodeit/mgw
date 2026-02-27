@@ -28,3 +28,12 @@ github-config:
   - changed-files:
       - any-glob-to-any-file:
           - '.github/**'
+
+triage-pipeline:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'commands/issue.md'
+          - 'commands/run.md'
+          - 'commands/review.md'
+          - '.claude/commands/mgw/workflows/state.md'
+          - '.claude/commands/mgw/workflows/github.md'

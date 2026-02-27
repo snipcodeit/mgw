@@ -206,16 +206,49 @@ File: `.mgw/active/<number>-<slug>.json`
     "security_notes": "",
     "conflicts": [],
     "last_comment_count": 0,
-    "last_comment_at": null
+    "last_comment_at": null,
+    "gate_result": {
+      "status": "passed|blocked",
+      "blockers": [],
+      "warnings": [],
+      "missing_fields": []
+    }
   },
   "gsd_route": null,
   "gsd_artifacts": { "type": null, "path": null },
-  "pipeline_stage": "new|triaged|planning|executing|verifying|pr-created|done",
+  "pipeline_stage": "new|triaged|needs-info|needs-security-review|discussing|approved|planning|executing|verifying|pr-created|done|failed|blocked",
   "comments_posted": [],
   "linked_pr": null,
   "linked_issues": [],
   "linked_branches": []
 }
+```
+
+## Stage Flow Diagram
+
+```
+new --> triaged         (triage passes all gates)
+new --> needs-info      (validity=invalid OR insufficient detail)
+new --> needs-security-review  (security=high)
+
+needs-info --> triaged  (re-triage after info provided)
+needs-security-review --> triaged  (re-triage after security ack)
+
+triaged --> discussing  (new-milestone route, large scope)
+triaged --> approved    (discussion complete, ready for execution)
+triaged --> planning    (direct route, skip discussion)
+
+discussing --> approved (stakeholder approval)
+approved --> planning
+
+planning --> executing
+executing --> verifying
+verifying --> pr-created
+pr-created --> done
+
+Any stage --> blocked   (blocking comment detected)
+blocked --> triaged     (re-triage after blocker resolved)
+Any stage --> failed    (unrecoverable error)
 ```
 
 ## Slug Generation
@@ -327,3 +360,4 @@ Only advance if ALL issues in current milestone completed successfully.
 | Cross-refs schema | link.md, run.md, pr.md, sync.md |
 | Slug generation | issue.md, run.md |
 | Project state | milestone.md, next.md, ask.md |
+| Gate result schema | issue.md (populate), run.md (validate) |

@@ -201,10 +201,129 @@ Return a structured report:
 ```
 </step>
 
+<step name="evaluate_gates">
+**Evaluate triage quality gates:**
+
+After the analysis agent returns, evaluate three quality gates against the triage report
+and the original issue data. This determines whether the issue can proceed to pipeline
+execution or requires additional information/review.
+
+Initialize gate result:
+```
+gate_result = {
+  "status": "passed",
+  "blockers": [],
+  "warnings": [],
+  "missing_fields": []
+}
+```
+
+**Gate 1: Validity**
+```
+if triage.validity == "invalid":
+  gate_result.blockers.push("Validity gate failed: issue could not be confirmed against codebase")
+  gate_result.status = "blocked"
+```
+
+**Gate 2: Security**
+```
+if triage.security_risk == "high":
+  gate_result.blockers.push("Security gate: high-risk issue requires security review before execution")
+  gate_result.status = "blocked"
+```
+
+**Gate 3: Detail Sufficiency**
+Evaluate the original issue body (not the triage report):
+```
+BODY_LENGTH = len(issue_body.strip())
+HAS_AC = issue has acceptance criteria field filled OR body contains "- [ ]" checklist items
+IS_FEATURE = "enhancement" in issue_labels OR issue template is feature_request
+
+if BODY_LENGTH < 200:
+  gate_result.blockers.push("Insufficient detail: issue body is ${BODY_LENGTH} characters (minimum 200)")
+  gate_result.missing_fields.push("Expand issue description with more detail")
+  gate_result.status = "blocked"
+
+if IS_FEATURE and not HAS_AC:
+  gate_result.blockers.push("Feature requests require acceptance criteria")
+  gate_result.missing_fields.push("Add acceptance criteria (checklist of testable conditions)")
+  gate_result.status = "blocked"
+```
+
+**Gate warnings (non-blocking):**
+```
+if triage.security_risk == "medium":
+  gate_result.warnings.push("Medium security risk — consider review before execution")
+
+if triage.scope.size == "large" and gsd_route != "gsd:new-milestone":
+  gate_result.warnings.push("Large scope detected but not routed to new-milestone")
+```
+
+Set `gate_result.status = "passed"` if no blockers. Store gate_result for state file.
+</step>
+
+<step name="post_triage_github">
+**Post immediate triage feedback to GitHub:**
+
+This step posts a comment on the GitHub issue IMMEDIATELY during /mgw:issue, not
+deferred to /mgw:run. This gives stakeholders visibility into triage results as
+soon as they happen.
+
+Generate timestamp:
+```bash
+TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+```
+
+**If gates blocked (gate_result.status == "blocked"):**
+
+Build gate table rows from gate_result.blockers:
+```
+GATE_TABLE_ROWS = gate_result.blockers formatted as "| ${blocker} | Blocked |" rows
+```
+
+Build missing fields list from gate_result.missing_fields:
+```
+MISSING_FIELDS_LIST = gate_result.missing_fields formatted as "- ${field}" list
+```
+
+Use the "Gate Blocked Comment" template from @~/.claude/commands/mgw/workflows/github.md.
+Post comment and apply label:
+```bash
+# Use remove_mgw_labels_and_apply pattern from github.md
+# For validity failures:
+#   pipeline_stage = "needs-info", label = "mgw:needs-info"
+# For security failures:
+#   pipeline_stage = "needs-security-review", label = "mgw:needs-security-review"
+# For detail failures:
+#   pipeline_stage = "needs-info", label = "mgw:needs-info"
+# If multiple blockers, use the highest-severity label (security > detail > validity)
+```
+
+**If gates passed (gate_result.status == "passed"):**
+
+Use the "Gate Passed Comment" template from @~/.claude/commands/mgw/workflows/github.md.
+
+Populate template variables:
+```
+SCOPE_SIZE = triage.scope.size
+FILE_COUNT = triage.scope.file_count
+SYSTEM_LIST = triage.scope.systems joined with ", "
+VALIDITY = triage.validity
+SECURITY_RISK = triage.security_notes
+gsd_route = recommended route
+ROUTE_REASONING = triage reasoning
+```
+
+Post comment and apply label:
+```bash
+gh issue edit ${ISSUE_NUMBER} --add-label "mgw:triaged" 2>/dev/null
+```
+</step>
+
 <step name="present_report">
 **Present triage report to user:**
 
-Display the analysis agent's report verbatim, then:
+Display the analysis agent's report verbatim, then display gate results:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -213,18 +332,48 @@ Display the analysis agent's report verbatim, then:
 
 Recommended route: ${recommended_route}
 Reasoning: ${reasoning}
+```
 
-Options:
-  1) Accept recommendation → proceed with ${recommended_route}
-  2) Override route → choose different GSD entry point
-  3) Reject → issue is invalid or out of scope
+Then display gate results:
+
+```
+${if gate_result.status == "blocked":}
+ GATES: BLOCKED
+  ${for blocker in gate_result.blockers:}
+  - ${blocker}
+  ${end}
+
+  ${if gate_result.missing_fields:}
+  Missing information:
+    ${for field in gate_result.missing_fields:}
+    - ${field}
+    ${end}
+  ${end}
+
+  The issue needs updates before pipeline execution.
+  Options:
+    1) Wait for updates → issue stays in needs-info/needs-security-review
+    2) Override → proceed despite gate failures (adds acknowledgment to state)
+    3) Reject → issue is invalid or out of scope
+
+${else:}
+  GATES: PASSED ${if gate_result.warnings: '(with warnings)'}
+  ${for warning in gate_result.warnings:}
+  - Warning: ${warning}
+  ${end}
+
+  Options:
+    1) Accept recommendation → proceed with ${recommended_route}
+    2) Override route → choose different GSD entry point
+    3) Reject → issue is invalid or out of scope
+${end}
 ```
 
 ```
 AskUserQuestion(
   header: "Triage Decision",
-  question: "Accept recommendation (1), override (2), or reject (3)?",
-  followUp: "If overriding, specify: quick, quick --full, or new-milestone"
+  question: "${gate_result.status == 'blocked' ? 'Override gates (1), wait for updates (2), or reject (3)?' : 'Accept recommendation (1), override (2), or reject (3)?'}",
+  followUp: "${gate_result.status == 'blocked' ? 'Override will log acknowledgment. Wait keeps issue in blocked state.' : 'If overriding, specify: quick, quick --full, or new-milestone'}"
 )
 ```
 </step>
@@ -232,7 +381,7 @@ AskUserQuestion(
 <step name="write_state">
 **Write issue state file:**
 
-If accepted or overridden (not rejected):
+If accepted, overridden, or gates blocked but user overrides (not rejected, not "wait"):
 
 Generate slug from title using gsd-tools:
 ```bash
@@ -246,8 +395,13 @@ Populate:
 - triage: from analysis report
 - triage.last_comment_count: from $COMMENT_COUNT (captured in fetch_issue step)
 - triage.last_comment_at: from $LAST_COMMENT_AT (captured in fetch_issue step, null if no comments)
+- triage.gate_result: from gate_result evaluation (status, blockers, warnings, missing_fields)
 - gsd_route: confirmed or overridden route
-- pipeline_stage: "triaged"
+- pipeline_stage: set based on gate outcome:
+  - Gates blocked + validity failure (and not overridden): `"needs-info"`
+  - Gates blocked + security failure (and not overridden): `"needs-security-review"`
+  - Gates blocked + user overrides: `"triaged"` (with override_log entry noting acknowledged gate failures)
+  - Gates passed: `"triaged"`
 - All other fields: defaults (empty arrays, null)
 
 Also add branch cross-ref:
@@ -260,13 +414,32 @@ Add to linked_branches if not main/master.
 <step name="offer_next">
 **Offer next steps:**
 
-If accepted/overridden:
+If accepted/overridden (gates passed):
 ```
 Issue #${ISSUE_NUMBER} triaged and tracked in .mgw/active/${filename}.
 
 Next steps:
   → /mgw:run ${ISSUE_NUMBER}  — Start autonomous pipeline
   → /mgw:update ${ISSUE_NUMBER} — Post triage comment to GitHub
+```
+
+If gates blocked and user chose "wait" (no state file written):
+```
+Issue #${ISSUE_NUMBER} is blocked pending more information.
+A comment has been posted to GitHub explaining what's needed.
+
+When the issue is updated:
+  → /mgw:issue ${ISSUE_NUMBER}  — Re-triage with updated context
+```
+
+If gates blocked and user overrode:
+```
+Issue #${ISSUE_NUMBER} triaged with gate override. Tracked in .mgw/active/${filename}.
+
+Note: Gate failures acknowledged. Override logged in state.
+
+Next steps:
+  → /mgw:run ${ISSUE_NUMBER}  — Start autonomous pipeline
 ```
 
 If rejected:
@@ -285,7 +458,12 @@ Consider closing or commenting on the issue with your reasoning.
 - [ ] Analysis agent spawned and returned structured report
 - [ ] Scope, validity, security, conflicts all assessed
 - [ ] GSD route recommended with reasoning
+- [ ] Triage gates evaluated (validity, security, detail sufficiency)
+- [ ] Gate result stored in state file
+- [ ] Triage comment posted IMMEDIATELY to GitHub
+- [ ] Blocked issues get appropriate mgw: label (mgw:needs-info or mgw:needs-security-review)
+- [ ] Passed issues get mgw:triaged label
 - [ ] User confirms, overrides, or rejects
-- [ ] State file written to .mgw/active/ (if accepted) with comment tracking fields
+- [ ] State file written to .mgw/active/ (if accepted) with comment tracking fields and gate_result
 - [ ] Next steps offered
 </success_criteria>
