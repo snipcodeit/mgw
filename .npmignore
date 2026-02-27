@@ -1,0 +1,39 @@
+# MGW npm package exclusions
+# Defense-in-depth: package.json "files" field is the primary allowlist.
+# This file provides an additional safety net to prevent accidental inclusion
+# of development, CI, and internal files.
+
+# Internal project management
+.mgw/
+.planning/
+.worktrees/
+.test/
+
+# CI/CD and GitHub
+.github/
+
+# Claude Code
+.claude/
+
+# Git
+.git
+.gitignore
+
+# Node
+node_modules/
+
+# Source (distributed as built dist/)
+lib/
+bin/
+
+# Markdown docs (README.md is always included by npm)
+CONTRIBUTING.md
+CODEOWNERS
+
+# Editor artifacts
+*.swp
+*.swo
+.DS_Store
+
+# Build tooling config
+package-lock.json
