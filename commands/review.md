@@ -124,25 +124,32 @@ Classify each comment (and the overall batch) into ONE of:
   Examples: 'Don't work on this yet', 'Hold off', 'Blocked by external dependency',
   'Wait for design review'.
 
+- **resolution** — Comment indicates a previously identified blocker or issue has been resolved.
+  Examples: 'The dependency has been updated', 'Security review complete — approved',
+  'Added the missing acceptance criteria', 'Updated the issue with more detail',
+  'Fixed the blocking issue in #42'.
+
 If ANY comment in the batch is blocking, overall classification is blocking.
-If ANY comment is material (and none blocking), overall classification is material.
+If ANY comment is resolution (and none blocking), overall classification is resolution.
+If ANY comment is material (and none blocking/resolution), overall classification is material.
 Otherwise, informational.
 </classification_rules>
 
 <output_format>
 Return ONLY valid JSON:
 {
-  \"classification\": \"material|informational|blocking\",
+  \"classification\": \"material|informational|blocking|resolution\",
   \"reasoning\": \"Brief explanation of why this classification was chosen\",
   \"per_comment\": [
     {
       \"author\": \"username\",
       \"snippet\": \"first 100 chars of comment\",
-      \"classification\": \"material|informational|blocking\"
+      \"classification\": \"material|informational|blocking|resolution\"
     }
   ],
   \"new_requirements\": [\"list of new requirements if material, empty array otherwise\"],
-  \"blocking_reason\": \"reason if blocking, empty string otherwise\"
+  \"blocking_reason\": \"reason if blocking, empty string otherwise\",
+  \"resolved_blocker\": \"description of what was resolved, empty string otherwise\"
 }
 </output_format>
 ",
@@ -216,6 +223,27 @@ AskUserQuestion(
 ```
 If block: update `pipeline_stage = "blocked"` and `triage.last_comment_count` in state.
 If override: update `triage.last_comment_count` only, keep pipeline_stage.
+
+**If resolution:**
+```
+AskUserQuestion(
+  header: "Blocker Resolution Detected",
+  question: "A previous blocker appears to be resolved. Re-triage this issue?",
+  options: [
+    { label: "Re-triage", description: "Run /mgw:issue to re-analyze with updated context" },
+    { label: "Acknowledge", description: "Update comment count, keep current pipeline stage" },
+    { label: "Ignore", description: "Don't update state" }
+  ]
+)
+```
+If re-triage:
+  - Update `triage.last_comment_count`
+  - Suggest: "Run `/mgw:issue ${ISSUE_NUMBER}` to re-triage with the resolved context."
+  - If pipeline_stage is "blocked" or "needs-info" or "needs-security-review", note:
+    "Re-triage will re-evaluate gates and may unblock the pipeline."
+If acknowledge:
+  - Update `triage.last_comment_count`
+  - Keep current pipeline_stage
 </step>
 
 </process>
@@ -228,4 +256,5 @@ If override: update `triage.last_comment_count` only, keep pipeline_stage.
 - [ ] Classification presented to user with per-comment breakdown
 - [ ] User chose action (acknowledge/re-triage/block/ignore)
 - [ ] State file updated according to user choice
+- [ ] Resolution classification type supported with re-triage prompt
 </success_criteria>

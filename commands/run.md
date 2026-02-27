@@ -78,6 +78,34 @@ If state file exists → load it. Check pipeline_stage:
   - "planning" / "executing" → resume from where we left off
   - "blocked" → "Pipeline for #${ISSUE_NUMBER} is blocked by a stakeholder comment. Review the issue comments, resolve the blocker, then re-run."
   - "pr-created" / "done" → "Pipeline already completed for #${ISSUE_NUMBER}. Run /mgw:sync to reconcile."
+  - "needs-info" → Check for --force flag in $ARGUMENTS:
+    If --force NOT present:
+      ```
+      Pipeline for #${ISSUE_NUMBER} is blocked by triage gate (needs-info).
+      The issue requires more detail before execution can begin.
+
+      To override: /mgw:run ${ISSUE_NUMBER} --force
+      To review:   /mgw:issue ${ISSUE_NUMBER} (re-triage after updating the issue)
+      ```
+      STOP.
+    If --force present:
+      Log warning: "MGW: WARNING — Overriding needs-info gate for #${ISSUE_NUMBER}. Proceeding with --force."
+      Update state: pipeline_stage = "triaged", add override_log entry.
+      Continue pipeline.
+  - "needs-security-review" → Check for --security-ack flag in $ARGUMENTS:
+    If --security-ack NOT present:
+      ```
+      Pipeline for #${ISSUE_NUMBER} requires security review.
+      This issue was flagged as high security risk during triage.
+
+      To acknowledge and proceed: /mgw:run ${ISSUE_NUMBER} --security-ack
+      To review:                  /mgw:issue ${ISSUE_NUMBER} (re-triage)
+      ```
+      STOP.
+    If --security-ack present:
+      Log warning: "MGW: WARNING — Acknowledging security risk for #${ISSUE_NUMBER}. Proceeding with --security-ack."
+      Update state: pipeline_stage = "triaged", add override_log entry.
+      Continue pipeline.
 </step>
 
 <step name="create_worktree">
@@ -118,6 +146,13 @@ cd "${WORKTREE_DIR}"
 
 Update state (at `${REPO_ROOT}/.mgw/active/`): add branch to linked_branches.
 Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → branch.
+
+**Apply in-progress label:**
+```bash
+# Use remove_mgw_labels_and_apply pattern from github.md
+gh issue edit ${ISSUE_NUMBER} --remove-label "mgw:triaged" 2>/dev/null
+gh issue edit ${ISSUE_NUMBER} --add-label "mgw:in-progress" 2>/dev/null
+```
 
 **PATH CONVENTION for remaining steps:**
 - File operations, git commands, and agent work use **relative paths** (CWD = worktree)
@@ -212,14 +247,34 @@ Return ONLY valid JSON:
 | Classification | Action |
 |---------------|--------|
 | **informational** | Log: "MGW: ${NEW_COUNT} new comment(s) reviewed — informational, continuing." Update `triage.last_comment_count` in state file. Continue pipeline. |
-| **material** | Log: "MGW: Material comment(s) detected — scope may have changed." Update state: add new_requirements to triage context. Update `triage.last_comment_count`. Re-read issue body for updated requirements. Continue with enriched context (pass new_requirements to planner). |
-| **blocking** | Log: "MGW: Blocking comment detected — pipeline paused." Update state: `pipeline_stage = "blocked"`. Post comment on issue: `> **MGW** . \`pipeline-blocked\` . Blocked by stakeholder comment. Reason: ${blocking_reason}`. Stop pipeline execution. |
+| **material** | Log: "MGW: Material comment(s) detected — scope may have changed." Update state: add new_requirements to triage context. Update `triage.last_comment_count`. Re-read issue body for updated requirements. Continue with enriched context (pass new_requirements to planner). Check for security keywords in material comments (see below). |
+| **blocking** | Log: "MGW: Blocking comment detected — pipeline paused." Update state: `pipeline_stage = "blocked"`. Apply mgw:blocked label. Post comment on issue: `> **MGW** . \`pipeline-blocked\` . Blocked by stakeholder comment. Reason: ${blocking_reason}`. Stop pipeline execution. |
+
+**Security keyword check for material comments:**
+```bash
+SECURITY_KEYWORDS="security|vulnerability|CVE|exploit|injection|XSS|CSRF|auth bypass"
+if echo "$NEW_COMMENTS" | grep -qiE "$SECURITY_KEYWORDS"; then
+  # Add warning to gate_result and prompt user
+  echo "MGW: Security-related comment detected. Re-triage recommended."
+  # Prompt: "Security-related comment detected. Re-triage recommended. Continue or re-triage?"
+fi
+```
+
+**When blocking comment detected — apply label:**
+```bash
+gh issue edit ${ISSUE_NUMBER} --remove-label "mgw:in-progress" 2>/dev/null
+gh issue edit ${ISSUE_NUMBER} --add-label "mgw:blocked" 2>/dev/null
+```
 
 If no new comments detected, continue normally.
 </step>
 
 <step name="post_triage_update">
-**Post structured triage comment on issue:**
+**Post work-starting comment on issue:**
+
+Note: The triage gate evaluation and triage-complete/triage-blocked comment are now
+posted IMMEDIATELY during /mgw:issue. This step posts a separate work-starting
+notification when pipeline execution actually begins in run.md.
 
 Gather enrichment data from triage state:
 ```bash
@@ -227,8 +282,6 @@ SCOPE_SIZE="${triage.scope.size}"  # small|medium|large
 FILE_COUNT="${triage.scope.file_count}"
 SYSTEM_LIST="${triage.scope.systems}"
 FILE_LIST="${triage.scope.files}"
-VALIDITY="${triage.validity}"
-SECURITY_RISK="${triage.security_notes}"
 CONFLICTS="${triage.conflicts}"
 ROUTE_REASONING="${triage.route_reasoning}"
 TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -248,21 +301,19 @@ for m in p['milestones']:
 fi
 ```
 
-Post the triage comment directly (no sub-agent — guarantees it happens):
+Post the work-starting comment directly (no sub-agent — guarantees it happens):
 
 ```bash
-TRIAGE_BODY=$(cat <<COMMENTEOF
-> **MGW** · \`triage-complete\` · ${TIMESTAMP}
+WORK_STARTING_BODY=$(cat <<COMMENTEOF
+> **MGW** · \`work-starting\` · ${TIMESTAMP}
 > ${MILESTONE_CONTEXT}
 
-### Triage Complete
+### Work Starting
 
 | | |
 |---|---|
-| **Scope** | ${SCOPE_SIZE} — ${FILE_COUNT} files across ${SYSTEM_LIST} |
-| **Validity** | ${VALIDITY} |
-| **Security** | ${SECURITY_RISK} |
 | **Route** | \`${gsd_route}\` — ${ROUTE_REASONING} |
+| **Scope** | ${SCOPE_SIZE} — ${FILE_COUNT} files across ${SYSTEM_LIST} |
 | **Conflicts** | ${CONFLICTS} |
 
 Work begins on branch \`${BRANCH_NAME}\`.
@@ -276,7 +327,7 @@ ${FILE_LIST as bullet points}
 COMMENTEOF
 )
 
-gh issue comment ${ISSUE_NUMBER} --body "$TRIAGE_BODY" 2>/dev/null || true
+gh issue comment ${ISSUE_NUMBER} --body "$WORK_STARTING_BODY" 2>/dev/null || true
 ```
 
 Log comment in state file (at `${REPO_ROOT}/.mgw/active/`).
@@ -504,7 +555,45 @@ EXECUTOR_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gs
 VERIFIER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-verifier --raw)
 ```
 
-1. **Create milestone:** Use `gsd-tools init new-milestone` to gather context, then attempt autonomous roadmap creation from issue data:
+1. **Discussion phase trigger for large-scope issues:**
+
+If the issue was triaged with large scope and `gsd_route == "gsd:new-milestone"`, post
+a scope proposal comment and set the discussing stage before proceeding to phase execution:
+
+```bash
+DISCUSS_TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Build scope breakdown from triage data
+SCOPE_SIZE="${triage.scope.size}"
+SCOPE_BREAKDOWN="${triage.scope.files formatted as table rows}"
+PHASE_COUNT="TBD (determined by roadmapper)"
+
+# Post scope proposal comment using template from github.md
+# Use Scope Proposal Comment template from @~/.claude/commands/mgw/workflows/github.md
+```
+
+Set pipeline_stage to "discussing" and apply "mgw:discussing" label:
+```bash
+gh issue edit ${ISSUE_NUMBER} --remove-label "mgw:in-progress" 2>/dev/null
+gh issue edit ${ISSUE_NUMBER} --add-label "mgw:discussing" 2>/dev/null
+```
+
+Present to user:
+```
+AskUserQuestion(
+  header: "Scope Proposal Posted",
+  question: "A scope proposal has been posted to GitHub. Proceed with autonomous roadmap creation, or wait for stakeholder feedback?",
+  options: [
+    { label: "Proceed", description: "Continue with roadmap creation now" },
+    { label: "Wait", description: "Pipeline paused until stakeholder approves scope" }
+  ]
+)
+```
+
+If wait: stop here. User will re-run /mgw:run after scope is approved.
+If proceed: apply "mgw:approved" label and continue.
+
+2. **Create milestone:** Use `gsd-tools init new-milestone` to gather context, then attempt autonomous roadmap creation from issue data:
 
    ```bash
    MILESTONE_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init new-milestone 2>/dev/null)
@@ -917,6 +1006,11 @@ rmdir "${REPO_ROOT}/.worktrees/issue" 2>/dev/null
 rmdir "${REPO_ROOT}/.worktrees" 2>/dev/null
 ```
 
+Remove in-progress label at completion:
+```bash
+gh issue edit ${ISSUE_NUMBER} --remove-label "mgw:in-progress" 2>/dev/null
+```
+
 Extract one-liner summary for concise comment:
 ```bash
 ONE_LINER=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs summary-extract "${gsd_artifacts_path}/*SUMMARY*" --fields one_liner --raw 2>/dev/null || echo "")
@@ -983,14 +1077,20 @@ Next:
 
 <success_criteria>
 - [ ] Issue number validated and state loaded (or triage run first)
+- [ ] Pipeline refuses needs-info without --force
+- [ ] Pipeline refuses needs-security-review without --security-ack
 - [ ] Isolated worktree created (.worktrees/ gitignored)
+- [ ] mgw:in-progress label applied during execution
 - [ ] Pre-flight comment check performed (new comments classified before execution)
-- [ ] Structured triage comment posted on issue (scope, route, files, security)
+- [ ] mgw:blocked label applied when blocking comments detected
+- [ ] Work-starting comment posted on issue (route, scope, branch)
 - [ ] GSD pipeline executed in worktree (quick or milestone route)
+- [ ] New-milestone route triggers discussion phase with mgw:discussing label
 - [ ] Execution-complete comment posted on issue (commits, changes, test status)
 - [ ] PR created with summary, milestone context, testing procedures, cross-refs
 - [ ] Structured PR-ready comment posted on issue (PR link, pipeline summary)
 - [ ] Worktree cleaned up, user returned to main workspace
+- [ ] mgw:in-progress label removed at completion
 - [ ] State file updated through all pipeline stages
 - [ ] User prompted to run /mgw:sync after merge
 </success_criteria>
