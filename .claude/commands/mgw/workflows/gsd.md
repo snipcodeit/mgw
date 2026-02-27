@@ -135,22 +135,65 @@ mkdir -p "$QUICK_DIR"
 
 ## GSD Milestone Pipeline Pattern
 
-Used by `/mgw:run` for large issues (gsd:new-milestone route).
+Used by `/mgw:run` for large issues (gsd:new-milestone route) and `/mgw:milestone` for
+milestone-level orchestration. This is the full lifecycle — each phase goes through
+plan -> execute -> verify before moving to the next.
 
 ```bash
 # 1. Init milestone
 MILESTONE_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init new-milestone 2>/dev/null)
 
-# 2. Resolve models
+# 2. Create ROADMAP (autonomous from issue data, or interactive fallback)
+# Spawn roadmapper agent -> user confirmation checkpoint -> proceed
+
+# 3. Resolve models
 PLANNER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-planner --raw)
 EXECUTOR_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-executor --raw)
 VERIFIER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-verifier --raw)
 
-# 3. For each phase in ROADMAP.md:
-#    a. Spawn planner (gsd-planner)
-#    b. Spawn executor(s) (gsd-executor)
-#    c. Spawn verifier (gsd-verifier)
-#    d. Post phase update comment on issue
+# 4. Discover phases from ROADMAP
+ROADMAP_ANALYSIS=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs roadmap analyze)
+# Extract: phase list with numbers, names, slugs
+
+# 5. Per-phase lifecycle loop:
+# for each phase:
+  # a. Init phase and create directory
+  PHASE_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init plan-phase "${PHASE_NUM}")
+  mkdir -p "${phase_dir}"
+
+  # b. Spawn planner (gsd-planner) -> creates PLAN.md files
+  # Task(subagent_type="gsd-planner", ...)
+
+  # c. Init execute-phase
+  EXEC_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init execute-phase "${PHASE_NUM}")
+
+  # d. Spawn executor (gsd-executor) -> creates SUMMARY.md files
+  # Task(subagent_type="gsd-executor", ...)
+
+  # e. Spawn verifier (gsd-verifier) -> creates VERIFICATION.md
+  # Task(subagent_type="gsd-verifier", ...)
+
+  # f. Post phase-complete comment on issue
+  # gh issue comment ...
+
+# 6. Complete milestone (archive phases, clean ROADMAP, tag release)
+# Called from milestone.md post_loop when all issues finish
+# Follows gsd:complete-milestone workflow
+```
+
+**Artifacts created per phase:**
+```
+.planning/phases/{NN}-{slug}/
+  {phase}-{plan}-PLAN.md        (from planner)
+  {phase}-{plan}-SUMMARY.md     (from executor)
+  {phase}-VERIFICATION.md       (from verifier)
+```
+
+**Artifacts created on milestone completion:**
+```
+.planning/milestones/
+  v{X.Y}-ROADMAP.md             (archived roadmap)
+  v{X.Y}-REQUIREMENTS.md        (archived requirements)
 ```
 
 ## Utility Patterns
@@ -270,7 +313,7 @@ and codebase to classify, then MGW presents the result and offers follow-up acti
 | Standard spawn template | run.md, issue.md, pr.md, ask.md, review.md |
 | Comment classification | run.md (pre-flight), review.md (standalone) |
 | Quick pipeline | run.md |
-| Milestone pipeline | run.md |
+| Milestone pipeline | run.md, milestone.md |
 | Question classification | ask.md |
 | Model resolution | run.md |
 | Utility patterns | run.md, pr.md, issue.md, sync.md, link.md, update.md, ask.md |

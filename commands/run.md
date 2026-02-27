@@ -536,29 +536,166 @@ VERIFIER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gs
    Update pipeline_stage to "planning" (at `${REPO_ROOT}/.mgw/active/`).
 
 2. **If resuming with pipeline_stage = "planning" and ROADMAP.md exists:**
-   Read ROADMAP.md to find phases. For each phase:
+   Discover phases from ROADMAP and run the full per-phase GSD lifecycle:
 
-   a. Spawn discuss + plan via task agents (following gsd:plan-phase workflow)
-   b. Spawn executor(s) via task agents (following gsd:execute-phase workflow)
-   c. Spawn verifier
-   d. Post phase update comment directly (no sub-agent):
+   ```bash
+   ROADMAP_ANALYSIS=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs roadmap analyze)
+   # Parse ROADMAP_ANALYSIS JSON for list of phases:
+   # Each phase has: phase_number, phase_name, phase_slug
+   PHASE_LIST=$(echo "$ROADMAP_ANALYSIS" | python3 -c "
+   import json, sys
+   data = json.load(sys.stdin)
+   for p in data.get('phases', []):
+       print(f\"{p['number']}|{p['name']}|{p.get('slug', '')}\")
+   ")
+   ```
+
+   For each phase in order:
+
+   **a. Scaffold phase directory, then init:**
+
+   `init plan-phase` requires the phase directory to exist before it can locate it.
+   Use `scaffold phase-dir` first (which creates the directory from ROADMAP data),
+   then call `init plan-phase` to get planner/checker model assignments.
+
+   ```bash
+   # Generate slug from phase name (lowercase, hyphens, no special chars)
+   PHASE_SLUG=$(echo "${PHASE_NAME}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//')
+
+   # Scaffold creates the directory and returns the path
+   SCAFFOLD=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs scaffold phase-dir --phase "${PHASE_NUMBER}" --name "${PHASE_SLUG}")
+   phase_dir=$(echo "$SCAFFOLD" | python3 -c "import json,sys; print(json.load(sys.stdin)['directory'])")
+
+   # Now init plan-phase can find the directory for model resolution
+   PHASE_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init plan-phase "${PHASE_NUMBER}")
+   # Parse PHASE_INIT JSON for: planner_model, checker_model
+   ```
+
+   **b. Spawn planner agent (gsd:plan-phase):**
+   ```
+   Task(
+     prompt="
+   <files_to_read>
+   - ./CLAUDE.md (Project instructions -- if exists, follow all guidelines)
+   - .agents/skills/ (Project skills -- if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+   - .planning/ROADMAP.md (Phase definitions and requirements)
+   - .planning/STATE.md (If exists -- project state)
+   </files_to_read>
+
+   You are the GSD planner. Plan phase ${PHASE_NUMBER}: ${PHASE_NAME}.
+
+   Read and follow the plan-phase workflow:
+   @~/.claude/get-shit-done/workflows/plan-phase.md
+
+   Phase directory: ${phase_dir}
+   Phase number: ${PHASE_NUMBER}
+
+   Create PLAN.md file(s) in the phase directory. Each plan must have:
+   - Frontmatter with phase, plan, type, wave, depends_on, files_modified, autonomous, requirements, must_haves
+   - Objective, context, tasks, verification, success criteria, output sections
+   - Each task with files, action, verify, done fields
+
+   Commit the plan files when done.
+   ",
+     subagent_type="gsd-planner",
+     model="${PLANNER_MODEL}",
+     description="Plan phase ${PHASE_NUMBER}: ${PHASE_NAME}"
+   )
+   ```
+
+   **c. Verify plans exist:**
+   ```bash
+   PLAN_COUNT=$(ls ${phase_dir}/*-PLAN.md 2>/dev/null | wc -l)
+   if [ "$PLAN_COUNT" -eq 0 ]; then
+     echo "ERROR: No plans created for phase ${PHASE_NUMBER}. Skipping phase execution."
+     # Post error comment and continue to next phase
+     gh issue comment ${ISSUE_NUMBER} --body "> **MGW** \`phase-error\` Phase ${PHASE_NUMBER} planning produced no plans. Skipping." 2>/dev/null || true
+     continue
+   fi
+   ```
+
+   **d. Init execute-phase and spawn executor agent (gsd:execute-phase):**
+   ```bash
+   EXEC_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init execute-phase "${PHASE_NUMBER}")
+   # Parse EXEC_INIT JSON for: executor_model, verifier_model, phase_dir, plans, incomplete_plans, plan_count
+   ```
+   ```
+   Task(
+     prompt="
+   <files_to_read>
+   - ./CLAUDE.md (Project instructions -- if exists, follow all guidelines)
+   - .agents/skills/ (Project skills -- if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+   - ${phase_dir}/*-PLAN.md (Plans to execute)
+   </files_to_read>
+
+   You are the GSD executor. Execute all plans for phase ${PHASE_NUMBER}: ${PHASE_NAME}.
+
+   Read and follow the execute-phase workflow:
+   @~/.claude/get-shit-done/workflows/execute-phase.md
+
+   Phase: ${PHASE_NUMBER}
+   Phase directory: ${phase_dir}
+
+   Execute each plan's tasks in wave order. For each plan:
+   1. Execute all tasks
+   2. Commit each task atomically
+   3. Create SUMMARY.md in the phase directory
+
+   Do NOT update ROADMAP.md or STATE.md directly -- those are managed by GSD tools.
+   ",
+     subagent_type="gsd-executor",
+     model="${EXECUTOR_MODEL}",
+     description="Execute phase ${PHASE_NUMBER}: ${PHASE_NAME}"
+   )
+   ```
+
+   **e. Spawn verifier agent (gsd:verify-phase):**
+   ```
+   Task(
+     prompt="
+   <files_to_read>
+   - ./CLAUDE.md (Project instructions -- if exists, follow all guidelines)
+   - .agents/skills/ (Project skills -- if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+   - ${phase_dir}/*-PLAN.md (Plans with must_haves)
+   - ${phase_dir}/*-SUMMARY.md (Execution summaries)
+   </files_to_read>
+
+   Verify phase ${PHASE_NUMBER}: ${PHASE_NAME} goal achievement.
+
+   Read and follow the verify-phase workflow:
+   @~/.claude/get-shit-done/workflows/verify-phase.md
+
+   Phase: ${PHASE_NUMBER}
+   Phase directory: ${phase_dir}
+
+   Check must_haves from plan frontmatter against actual codebase.
+   Create VERIFICATION.md in the phase directory.
+   ",
+     subagent_type="gsd-verifier",
+     model="${VERIFIER_MODEL}",
+     description="Verify phase ${PHASE_NUMBER}: ${PHASE_NAME}"
+   )
+   ```
+
+   **f. Post phase-complete comment directly (no sub-agent):**
    ```bash
    PHASE_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+   VERIFICATION_STATUS=$(grep -m1 "^## " "${phase_dir}/"*-VERIFICATION.md 2>/dev/null | head -1 || echo "Verification complete")
    PHASE_BODY=$(cat <<COMMENTEOF
 > **MGW** · \`phase-complete\` · ${PHASE_TIMESTAMP}
 > ${MILESTONE_CONTEXT}
 
-### Phase ${phase_num} Complete — ${phase_name}
+### Phase ${PHASE_NUMBER} Complete — ${PHASE_NAME}
 
-${brief_summary_from_executor}
+Execution complete. See ${phase_dir} for plans, summaries, and verification.
 
-**Verification:** ${verification_status}
+**Verification:** ${VERIFICATION_STATUS}
 COMMENTEOF
 )
    gh issue comment ${ISSUE_NUMBER} --body "$PHASE_BODY" 2>/dev/null || true
    ```
 
-   After all phases complete → update pipeline_stage to "verifying" (at `${REPO_ROOT}/.mgw/active/`).
+   After ALL phases complete → update pipeline_stage to "verifying" (at `${REPO_ROOT}/.mgw/active/`).
 </step>
 
 <step name="post_execution_update">
