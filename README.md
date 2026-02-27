@@ -358,6 +358,7 @@ For a detailed walkthrough of the directory structure, slash command anatomy, an
 
 | Document | Description |
 |----------|-------------|
+| [Wiki](https://github.com/snipcodeit/mgw/wiki) | Comprehensive documentation hub: getting started, commands reference, workflow guide, architecture, configuration, troubleshooting |
 | [Architecture Guide](docs/ARCHITECTURE.md) | System design: the two-layer model (MGW orchestrates, GSD executes), delegation boundary, pipeline data flow, state schema, agent model, and slash command anatomy |
 | [User Guide](docs/USER-GUIDE.md) | Practical usage: configuration reference, full command reference with examples, workflow walkthroughs, GSD route explanations, dependency ordering, failure recovery, and FAQ |
 
