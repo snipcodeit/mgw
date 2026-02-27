@@ -155,6 +155,26 @@ The `/mgw:sync` command reconciles local state with GitHub reality — archiving
 - [GitHub CLI](https://cli.github.com/) (`gh`) authenticated
 - A GitHub repository with issues enabled
 
+## Quick Start
+
+Try MGW without installing anything:
+
+```bash
+# See available commands
+npx mgw --help
+
+# List your open issues
+npx mgw issues
+
+# Sync local state with GitHub
+npx mgw sync
+
+# Cross-reference two issues
+npx mgw link 42 43
+```
+
+`npx mgw` gives you the full CLI subset that works without Claude Code. For the AI-powered pipeline commands (`run`, `issue`, `project`, `milestone`, etc.), do a full install below.
+
 ## Installation
 
 ### Full install (CLI + slash commands)
@@ -197,6 +217,17 @@ Then in Claude Code:
 ```
 /mgw:help
 ```
+
+### npx vs full install
+
+Not all commands work via `npx`. The CLI has two tiers:
+
+| Tier | Commands | Requirements |
+|------|----------|--------------|
+| **CLI-only** (works with npx) | `issues`, `sync`, `link`, `help`, `--help`, `--version` | Node.js >= 18, `gh` CLI |
+| **AI-powered** (requires full install) | `run`, `init`, `project`, `milestone`, `next`, `issue`, `update`, `pr` | Node.js >= 18, `gh` CLI, Claude Code CLI, GSD |
+
+AI-powered commands call `claude -p` under the hood and require the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) to be installed and authenticated. The slash command `.md` files must also be deployed to `~/.claude/commands/mgw/` for the full pipeline to work. Use `npx mgw` to explore the CLI and verify your GitHub setup before committing to a full install.
 
 ## Typical Workflow
 
