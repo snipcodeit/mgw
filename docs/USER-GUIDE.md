@@ -338,6 +338,8 @@ Scaffold an entire project from a description. Creates milestones, issues, depen
 
 This is an interactive command. MGW asks "What are you building?" and generates project-specific milestones, phases, and issues based on your description. It does not ask you to pick a template type -- the AI infers the project structure from your description.
 
+If all milestones in the project are already complete, `/mgw:project` enters **extend mode**: it asks what new milestones to add, appends them to the existing project.json, reuses the GitHub Projects board, and continues phase numbering from the last phase. Existing data is fully preserved.
+
 What gets created:
 - GitHub milestones with descriptions
 - Issues assigned to milestones with phase labels
@@ -607,6 +609,34 @@ Starting a brand new project from scratch:
 # Step 6: After merging, sync state
 /mgw:sync
 ```
+
+### Extending a Completed Project
+
+When all milestones are complete and you want to add more work:
+
+```
+# Run project again -- MGW detects all milestones are done
+/mgw:project
+# MGW shows: "All N milestones complete. Entering extend mode."
+# Asks: "What new milestones should we add?"
+# You describe the new work.
+
+# What happens:
+# - New milestones and issues are appended (existing ones preserved)
+# - Phase numbering continues from where it left off
+# - current_milestone is set to the first new milestone
+# - Existing project board is reused (new issues added to it)
+# - cross-refs.json is preserved and extended with new dependency entries
+
+# Then execute the new milestones
+/mgw:milestone
+```
+
+What is preserved during extension:
+- All completed milestone data and pipeline stages
+- The GitHub Projects v2 board (new issues added, old ones remain)
+- cross-refs.json entries for all existing links
+- project.json `project` metadata (name, description, repo, etc.)
 
 ### Existing Issues
 
@@ -1300,6 +1330,18 @@ MGW uses `gsd-tools.cjs generate-slug` for consistent slug generation.
 ### Can I run MGW in CI/GitHub Actions?
 
 Not currently. MGW is designed for interactive use with Claude Code. CI integration is on the roadmap.
+
+### How do I add more milestones after completing all of them?
+
+Run `/mgw:project` again. When all milestones are complete, it automatically enters extend mode:
+
+```
+/mgw:project
+# "All milestones complete. Entering extend mode."
+# Describe the new work.
+```
+
+New milestones are appended. Existing data (completed milestones, board, cross-refs) is preserved.
 
 ### How do I completely reset MGW state?
 
