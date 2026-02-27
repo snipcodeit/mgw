@@ -10,6 +10,7 @@ Thanks for considering a contribution. MGW is a small but opinionated project, a
 - [Testing Changes](#testing-changes)
 - [The Delegation Boundary (Read This First)](#the-delegation-boundary)
 - [PR Process](#pr-process)
+- [Publishing](#publishing)
 - [GSD as a Model](#gsd-as-a-model)
 
 ---
@@ -337,6 +338,45 @@ Use the [PR template](/.github/PULL_REQUEST_TEMPLATE.md). Every PR needs:
 MGW tracks issue-to-PR state in `.mgw/`. After a PR is merged:
 - The linked issue closes automatically (via `Closes #N`).
 - Run `/mgw:sync` to archive local state and clean up stale branches.
+
+---
+
+## Publishing
+
+MGW is published to [npm](https://www.npmjs.com/package/mgw) as a public package. Publishing is currently a manual process performed by maintainers.
+
+### Prerequisites
+
+- You must have an npm account with publish access to the `mgw` package.
+- You must be logged in via the npm CLI.
+
+### Publish Workflow
+
+```bash
+# 1. Authenticate with npm (one-time setup)
+npm login
+
+# 2. Build the package
+npm run build
+
+# 3. Verify the package contents before publishing
+npm pack --dry-run
+
+# 4. Publish to npm
+npm publish
+```
+
+### Pre-publish Checklist
+
+1. **Version bump** — Update `version` in `package.json` following [semver](https://semver.org/). Patch for fixes, minor for features, major for breaking changes.
+2. **CHANGELOG updated** — Add an entry to `CHANGELOG.md` for the new version.
+3. **Build passes** — `npm run build` completes without errors.
+4. **CLI works** — `mgw --version` prints the expected version.
+5. **Dry run clean** — `npm pack --dry-run` shows only intended files (check `.npmignore` if unexpected files appear).
+
+### Future Work
+
+CI-based publishing (e.g., GitHub Actions triggered on version tags) is planned but not yet implemented. For now, all publishes are manual and coordinated by maintainers.
 
 ---
 
