@@ -668,7 +668,35 @@ gh release create "$RELEASE_TAG" --draft \
   --notes "$RELEASE_BODY" 2>/dev/null
 ```
 
-3. Advance current_milestone in project.json:
+3. Finalize GSD milestone state (archive phases, clean up):
+```bash
+# Only run if .planning/phases exists (GSD was used for this milestone)
+if [ -d ".planning/phases" ]; then
+  EXECUTOR_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-executor --raw)
+  Task(
+    prompt="
+<files_to_read>
+- ./CLAUDE.md (Project instructions -- if exists, follow all guidelines)
+- .planning/ROADMAP.md (Current roadmap to archive)
+- .planning/REQUIREMENTS.md (Requirements to archive)
+</files_to_read>
+
+Complete the GSD milestone. Follow the complete-milestone workflow:
+@~/.claude/get-shit-done/workflows/complete-milestone.md
+
+This archives the milestone's ROADMAP and REQUIREMENTS to .planning/milestones/,
+cleans up ROADMAP.md for the next milestone, and tags the release in git.
+
+Milestone: ${MILESTONE_NAME}
+",
+    subagent_type="gsd-executor",
+    model="${EXECUTOR_MODEL}",
+    description="Complete GSD milestone: ${MILESTONE_NAME}"
+  )
+fi
+```
+
+4. Advance current_milestone in project.json:
 ```bash
 python3 -c "
 import json
@@ -680,7 +708,7 @@ with open('${MGW_DIR}/project.json', 'w') as f:
 "
 ```
 
-4. Display completion banner:
+5. Display completion banner:
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  MGW ► MILESTONE ${MILESTONE_NUM} COMPLETE ✓
@@ -709,7 +737,7 @@ Draft release created: ${RELEASE_TAG}
 ───────────────────────────────────────────────────────────────
 ```
 
-5. Check if next milestone exists and offer auto-advance (only if no failures in current).
+6. Check if next milestone exists and offer auto-advance (only if no failures in current).
 
 **If some issues failed:**
 
@@ -732,7 +760,7 @@ Milestone NOT closed. Resolve failures and re-run:
   /mgw:milestone ${MILESTONE_NUM}
 ```
 
-6. Post final results table as GitHub comment on the first issue in the milestone:
+7. Post final results table as GitHub comment on the first issue in the milestone:
 ```bash
 gh issue comment ${FIRST_ISSUE_NUMBER} --body "$FINAL_RESULTS_COMMENT"
 ```
