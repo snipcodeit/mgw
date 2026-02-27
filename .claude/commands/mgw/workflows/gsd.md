@@ -62,7 +62,49 @@ CHECKER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd
 | `gsd-executor` | Agents that write application code | Plan task execution |
 | `gsd-verifier` | Post-execution verification agents | Goal achievement checks |
 | `gsd-plan-checker` | Plan quality review agents | Plan structure and coverage review |
-| `general-purpose` | Utility agents (no code execution) | Comments, PR body, analysis, triage |
+| `general-purpose` | Utility agents (no code execution) | Comments, PR body, analysis, triage, comment classification |
+
+## Comment Classification Pattern
+
+Used by `/mgw:run` (pre-flight check) and `/mgw:review` (standalone) to classify
+new comments as material, informational, or blocking.
+
+```
+Task(
+  prompt="
+<files_to_read>
+- ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+</files_to_read>
+
+Classify new comments on GitHub issue #${ISSUE_NUMBER}.
+
+<issue_context>
+Title: ${issue_title}
+Current pipeline stage: ${pipeline_stage}
+GSD Route: ${gsd_route}
+Triage scope: ${triage.scope}
+</issue_context>
+
+<new_comments>
+${NEW_COMMENTS}
+</new_comments>
+
+<classification_rules>
+- material — changes scope, requirements, acceptance criteria, or design
+- informational — status update, acknowledgment, question, +1
+- blocking — explicit instruction to stop or wait
+
+Priority: blocking > material > informational
+</classification_rules>
+
+<output_format>
+Return ONLY valid JSON with: classification, reasoning, new_requirements, blocking_reason
+</output_format>
+",
+  subagent_type="general-purpose",
+  description="Classify comments on #${ISSUE_NUMBER}"
+)
+```
 
 ## GSD Quick Pipeline Pattern
 
@@ -74,15 +116,13 @@ INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init quick "$DESCRIPTION")
 # Parse: planner_model, executor_model, checker_model, verifier_model,
 #        next_num, slug, date, quick_dir, task_dir, roadmap_exists
 
-# 2. Handle missing ROADMAP.md (quick tasks in non-GSD repos)
+# 2. Handle missing .planning/ (quick tasks in non-GSD repos)
+#    MGW never writes config.json, ROADMAP.md, or STATE.md — those are GSD-owned.
+#    Only create the quick task directory (GSD agents need it).
 if [ "$roadmap_exists" = "false" ]; then
+  echo "NOTE: No .planning/ directory found. GSD manages its own state files."
+  echo "      To create a ROADMAP.md, run /gsd:new-milestone after this pipeline."
   mkdir -p .planning/quick
-  echo '{"model_profile":"balanced","commit_docs":true}' > .planning/config.json
-  cat > .planning/ROADMAP.md << 'HEREDOC'
-# Roadmap
-## v1.0: MGW-Managed
-Issue-driven development managed by MGW.
-HEREDOC
 fi
 
 # 3. Create task directory
@@ -227,7 +267,8 @@ and codebase to classify, then MGW presents the result and offers follow-up acti
 
 | Pattern | Referenced By |
 |---------|-------------|
-| Standard spawn template | run.md, issue.md, pr.md, ask.md |
+| Standard spawn template | run.md, issue.md, pr.md, ask.md, review.md |
+| Comment classification | run.md (pre-flight), review.md (standalone) |
 | Quick pipeline | run.md |
 | Milestone pipeline | run.md |
 | Question classification | ask.md |

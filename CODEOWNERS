@@ -1,0 +1,17 @@
+# CODEOWNERS — MGW
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# CLI entry point
+/bin/                          @snipcodeit
+
+# Slash command source files
+/commands/                     @snipcodeit
+
+# Deployed slash commands
+/.claude/commands/             @snipcodeit
+
+# Core library modules
+/lib/                          @snipcodeit
+
+# Templates and schemas
+/templates/                    @snipcodeit

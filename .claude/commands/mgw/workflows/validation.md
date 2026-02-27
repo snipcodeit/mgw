@@ -131,8 +131,9 @@ This rule applies to ALL MGW commands:
 
 | Command | Key Boundary Points |
 |---------|-------------------|
-| run.md | Spawns planner, executor, verifier — never reads code |
+| run.md | Spawns planner, executor, verifier, comment classifier — never reads code |
 | issue.md | Spawns analysis agent — never analyzes code itself |
+| review.md | Spawns comment classification agent — reads comments, not code |
 | pr.md | Spawns PR body builder — never reads code for description |
 | ask.md | Spawns classification agent — never analyzes code itself |
 | sync.md | Reads state + GitHub API only — never reads code |

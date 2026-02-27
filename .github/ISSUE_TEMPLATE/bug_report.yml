@@ -1,0 +1,72 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: bluf
+    attributes:
+      label: BLUF
+      description: Bottom Line Up Front — one sentence summary of the problem
+      placeholder: "mgw:run leaves user on issue branch after PR creation"
+    validations:
+      required: true
+
+  - type: input
+    id: mgw-version
+    attributes:
+      label: MGW Version
+      description: Version of MGW you're running (check package.json or `mgw --version`)
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      description: Runtime environment where the issue occurs
+      options:
+        - Claude Code CLI
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What's broken, with file paths and line numbers where relevant
+      placeholder: |
+        - `.claude/commands/mgw/run.md` line 81: uses `git checkout -b` instead of worktree
+        - User ends up on feature branch after pipeline completes
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Reproduction Steps
+      description: Step-by-step instructions to reproduce the issue
+      placeholder: |
+        1. Run `mgw:run` on issue #5
+        2. Complete the pipeline steps
+        3. Observe that the user is left on the feature branch
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen
+      placeholder: "After PR creation, the user should be returned to the main branch"
+    validations:
+      required: true
+
+  - type: textarea
+    id: error-logs
+    attributes:
+      label: Error Logs
+      description: Paste any relevant error output, logs, or stack traces
+      render: shell
+    validations:
+      required: false

@@ -46,7 +46,7 @@ So I built MGW to be the responsible adult in the room. I point it at an issue, 
 
 | Command | What it does |
 |---------|-------------|
-| `/mgw:project` | Scaffold a new project — generate milestones, issues, and GSD ROADMAP from a description |
+| `/mgw:project` | Scaffold a new project — generate milestones, issues, and persist project state |
 | `/mgw:init` | Bootstrap repo for MGW — creates .mgw/ state, GitHub templates, gitignore entries |
 | `/mgw:issues` | Browse and filter your GitHub issues |
 | `/mgw:issue <n>` | Deep triage — scope analysis, security review, GSD route recommendation |
@@ -56,6 +56,7 @@ So I built MGW to be the responsible adult in the room. I point it at an issue, 
 | `/mgw:update <n>` | Post structured status comments on issues |
 | `/mgw:pr [n]` | Create PR from GSD artifacts with testing procedures |
 | `/mgw:link <ref> <ref>` | Cross-reference issues, PRs, and branches |
+| `/mgw:status [n]` | Project dashboard — milestone progress, issue stages, open PRs |
 | `/mgw:sync` | Reconcile local state with GitHub |
 | `/mgw:help` | Command reference |
 
@@ -188,7 +189,7 @@ mgw --version
 # Slash commands
 ls ~/.claude/commands/mgw/
 # help.md  init.md  issue.md  issues.md  link.md  milestone.md  next.md
-# pr.md  project.md  run.md  sync.md  update.md  workflows/
+# pr.md  project.md  run.md  status.md  sync.md  update.md  workflows/
 ```
 
 Then in Claude Code:
@@ -264,6 +265,7 @@ commands/                  Slash command source files (deployed to ~/.claude/com
   update.md               Structured GitHub comment templates
   pr.md                   PR creation from GSD artifacts with milestone context
   link.md                 Cross-referencing system
+  status.md               Project status dashboard and milestone progress query
   sync.md                 State reconciliation
 templates/
   schema.json             JSON Schema for project output validation

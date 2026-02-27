@@ -66,6 +66,27 @@ gh issue view $ISSUE_NUMBER --json number,title,body,labels,assignees,state,comm
 If issue not found → error: "Issue #$ISSUE_NUMBER not found in this repo."
 
 Store as $ISSUE_DATA.
+
+**Capture comment tracking snapshot:**
+
+Record the current comment count and timestamp of the most recent comment. These
+are stored in the triage state and used by run.md's pre-flight comment check to
+detect new comments posted between triage and execution.
+
+```bash
+COMMENT_COUNT=$(echo "$ISSUE_DATA" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('comments', [])))")
+LAST_COMMENT_AT=$(echo "$ISSUE_DATA" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+comments = d.get('comments', [])
+if comments:
+    print(comments[-1].get('createdAt', ''))
+else:
+    print('')
+" 2>/dev/null || echo "")
+```
+
+Store $COMMENT_COUNT and $LAST_COMMENT_AT for use in the write_state step.
 </step>
 
 <step name="assign_self">
@@ -223,6 +244,8 @@ Write to `.mgw/active/${ISSUE_NUMBER}-${slug}.json` using the schema from state.
 Populate:
 - issue: from $ISSUE_DATA
 - triage: from analysis report
+- triage.last_comment_count: from $COMMENT_COUNT (captured in fetch_issue step)
+- triage.last_comment_at: from $LAST_COMMENT_AT (captured in fetch_issue step, null if no comments)
 - gsd_route: confirmed or overridden route
 - pipeline_stage: "triaged"
 - All other fields: defaults (empty arrays, null)
@@ -257,11 +280,12 @@ Consider closing or commenting on the issue with your reasoning.
 
 <success_criteria>
 - [ ] Issue fetched from GitHub via gh CLI
+- [ ] Comment tracking snapshot captured (count + last timestamp)
 - [ ] Self-assigned if not already
 - [ ] Analysis agent spawned and returned structured report
 - [ ] Scope, validity, security, conflicts all assessed
 - [ ] GSD route recommended with reasoning
 - [ ] User confirms, overrides, or rejects
-- [ ] State file written to .mgw/active/ (if accepted)
+- [ ] State file written to .mgw/active/ (if accepted) with comment tracking fields
 - [ ] Next steps offered
 </success_criteria>

@@ -1,0 +1,30 @@
+slash-commands:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'commands/**'
+          - '.claude/**'
+
+core:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'lib/**'
+
+templates:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'templates/**'
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'README.md'
+          - 'docs/**'
+          - 'CONTRIBUTING.md'
+          - 'CODEOWNERS'
+          - 'CHANGELOG.md'
+          - '*.md'
+
+github-config:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
