@@ -53,6 +53,10 @@ COMMANDS
   /mgw:pr [number] [--base b]  Create PR from GSD artifacts + issue context
   /mgw:link <ref> <ref>        Cross-reference issues/PRs/branches
 
+  Query
+  ─────
+  /mgw:ask <question>          Route a question — in-scope, adjacent, separate, duplicate, out-of-scope
+
   Maintenance
   ───────────
   /mgw:sync                    Reconcile .mgw/ state with GitHub

@@ -135,6 +135,7 @@ This rule applies to ALL MGW commands:
 | issue.md | Spawns analysis agent — never analyzes code itself |
 | review.md | Spawns comment classification agent — reads comments, not code |
 | pr.md | Spawns PR body builder — never reads code for description |
+| ask.md | Spawns classification agent — never analyzes code itself |
 | sync.md | Reads state + GitHub API only — never reads code |
 | update.md | Reads state only — posts comments |
 | link.md | Reads/writes cross-refs only |
