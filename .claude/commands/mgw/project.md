@@ -196,14 +196,38 @@ print(sum(len(m.get('issues', [])) for m in p.get('milestones', [])))
     echo "  Milestones: ${LOCAL_MILESTONE_COUNT} local / ${GH_MILESTONE_COUNT} on GitHub"
     echo "  Issues: ${TOTAL_ISSUES} tracked in project.json"
     echo ""
-    echo "Options:"
-    echo "  /mgw:milestone       Execute the next milestone"
-    echo "  /mgw:status          View project status dashboard"
-    echo "  /mgw:project         Re-run with description to extend (adds new milestones)"
+    echo "What would you like to do?"
     echo ""
-    echo "To add new milestones to this project, describe the new work you want to add."
-    echo "Otherwise, run /mgw:milestone to continue executing existing work."
-    exit 0
+    echo "  1) Continue with /mgw:milestone (execute next milestone)"
+    echo "  2) Add new milestones to this project (extend mode)"
+    echo "  3) View full status (/mgw:status)"
+    echo ""
+    read -p "Choose [1/2/3]: " ALIGNED_CHOICE
+    case "$ALIGNED_CHOICE" in
+      2)
+        echo ""
+        echo "Entering extend mode — new milestones will be added to the existing project."
+        EXTEND_MODE=true
+        EXISTING_MILESTONE_COUNT=${LOCAL_MILESTONE_COUNT}
+        EXISTING_PHASE_COUNT=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+print(sum(len(m.get('phases', [])) for m in p.get('milestones', [])))
+")
+        echo "Phase numbering will continue from phase ${EXISTING_PHASE_COUNT}."
+        # Fall through to gather_inputs — do NOT exit
+        ;;
+      3)
+        echo ""
+        echo "Run /mgw:status to view the full project status dashboard."
+        exit 0
+        ;;
+      *)
+        echo ""
+        echo "Run /mgw:milestone to execute the next milestone."
+        exit 0
+        ;;
+    esac
     ;;
 
   "Diverged")
@@ -809,6 +833,82 @@ After agent completes:
    ```
 
 4. Update .mgw/vision-draft.md frontmatter: current_stage: complete
+
+4b. Synthesize alignment-report.json for milestone_mapper:
+
+The Fresh path skips `align_from_gsd`, so `.mgw/alignment-report.json` does not exist yet.
+Synthesize it from the freshly created ROADMAP.md and PROJECT.md so `milestone_mapper` has
+consistent input regardless of which path was taken.
+
+```bash
+python3 << 'PYEOF'
+import json, re, os
+
+repo_root = os.environ.get("REPO_ROOT", ".")
+
+# --- Parse PROJECT.md for name and description ---
+project_path = os.path.join(repo_root, ".planning", "PROJECT.md")
+with open(project_path, "r") as f:
+    project_text = f.read()
+
+# Extract H1 heading as project name
+name_match = re.search(r"^#\s+(.+)$", project_text, re.MULTILINE)
+project_name = name_match.group(1).strip() if name_match else "Untitled Project"
+
+# Extract first paragraph after H1 as description
+desc_match = re.search(r"^#\s+.+\n+(.+?)(?:\n\n|\n#)", project_text, re.MULTILINE | re.DOTALL)
+project_description = desc_match.group(1).strip() if desc_match else ""
+
+# --- Parse ROADMAP.md for phases ---
+roadmap_path = os.path.join(repo_root, ".planning", "ROADMAP.md")
+with open(roadmap_path, "r") as f:
+    roadmap_text = f.read()
+
+# Extract milestone name from first heading after any frontmatter
+roadmap_body = re.sub(r"^---\n.*?\n---\n?", "", roadmap_text, flags=re.DOTALL)
+milestone_heading = re.search(r"^#{1,2}\s+(.+)$", roadmap_body, re.MULTILINE)
+milestone_name = milestone_heading.group(1).strip() if milestone_heading else "Milestone 1"
+
+# Extract phases (### Phase N: Name or ## Phase N: Name)
+phase_pattern = re.compile(r"^#{2,3}\s+Phase\s+(\d+)[:\s]+(.+)$", re.MULTILINE)
+phases = []
+for m in phase_pattern.finditer(roadmap_text):
+    phases.append({
+        "number": int(m.group(1)),
+        "name": m.group(2).strip(),
+        "status": "pending"
+    })
+
+if not phases:
+    phases = [{"number": 1, "name": milestone_name, "status": "pending"}]
+
+# Estimate ~2 issues per phase as a rough default
+total_issues_estimated = len(phases) * 2
+
+report = {
+    "project_name": project_name,
+    "project_description": project_description,
+    "milestones": [
+        {
+            "name": milestone_name,
+            "source": "ROADMAP",
+            "state": "active",
+            "phases": phases
+        }
+    ],
+    "active_milestone": milestone_name,
+    "total_phases": len(phases),
+    "total_issues_estimated": total_issues_estimated
+}
+
+output_path = os.path.join(repo_root, ".mgw", "alignment-report.json")
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
+with open(output_path, "w") as f:
+    json.dump(report, f, indent=2)
+
+print(f"Synthesized alignment-report.json: {len(phases)} phases, milestone='{milestone_name}'")
+PYEOF
+```
 
 5. Proceed to milestone_mapper step:
    The ROADMAP.md now exists, so PATH A (HAS_ROADMAP=true) logic applies.
