@@ -68,6 +68,74 @@ else
 fi
 ```
 
+**GSD milestone consistency check (maps-to links):**
+
+Read all maps-to links from .mgw/cross-refs.json:
+
+```bash
+MAPS_TO_LINKS=$(python3 -c "
+import json
+with open('.mgw/cross-refs.json') as f:
+    data = json.load(f)
+links = data.get('links', [])
+maps_to = [l for l in links if l.get('type') == 'maps-to']
+print(json.dumps(maps_to))
+")
+```
+
+For each maps-to link (format: { "a": "milestone:N", "b": "gsd-milestone:id", "type": "maps-to" }):
+1. Extract the GitHub milestone number from "a" (parse "milestone:N")
+2. Extract the GSD milestone ID from "b" (parse "gsd-milestone:id")
+3. Check if this GSD milestone ID appears in either:
+   - .planning/ROADMAP.md header (active milestone)
+   - .planning/MILESTONES.md (archived milestones)
+4. If found in neither: flag as inconsistent
+
+```bash
+# Check each maps-to link
+echo "$MAPS_TO_LINKS" | python3 -c "
+import json, sys, os
+
+links = json.load(sys.stdin)
+inconsistent = []
+
+for link in links:
+    a = link.get('a', '')
+    b = link.get('b', '')
+
+    if not a.startswith('milestone:') or not b.startswith('gsd-milestone:'):
+        continue
+
+    github_num = a.split(':')[1]
+    gsd_id = b.split(':', 1)[1]
+
+    found = False
+
+    # Check ROADMAP.md
+    if os.path.exists('.planning/ROADMAP.md'):
+        with open('.planning/ROADMAP.md') as f:
+            content = f.read()
+        if gsd_id in content:
+            found = True
+
+    # Check MILESTONES.md
+    if not found and os.path.exists('.planning/MILESTONES.md'):
+        with open('.planning/MILESTONES.md') as f:
+            content = f.read()
+        if gsd_id in content:
+            found = True
+
+    if not found:
+        inconsistent.append({'github_milestone': github_num, 'gsd_id': gsd_id})
+
+for i in inconsistent:
+    print(f\"WARN: GitHub milestone #{i['github_milestone']} maps to GSD milestone '{i['gsd_id']}' which was not found in .planning/\")
+
+if not inconsistent:
+    print('GSD milestone links: all consistent')
+"
+```
+
 Classify each issue into:
 - **Completed:** Issue closed AND (PR merged OR no PR expected)
 - **Stale:** PR merged but issue still open (auto-close missed)
@@ -203,6 +271,7 @@ ${HEALTH ? 'GSD Health: ' + HEALTH.status : ''}
 
 ${details_for_each_non_active_item}
 ${comment_drift_details ? 'Unreviewed comments:\n' + comment_drift_details : ''}
+${gsd_milestone_consistency ? 'GSD Milestone Links:\n' + gsd_milestone_consistency : ''}
 ```
 </step>
 
@@ -212,10 +281,11 @@ ${comment_drift_details ? 'Unreviewed comments:\n' + comment_drift_details : ''}
 - [ ] All .mgw/active/ files scanned
 - [ ] GitHub state checked for each issue, PR, branch
 - [ ] Comment delta checked for each active issue
+- [ ] GSD milestone consistency checked for all maps-to links
 - [ ] Completed items moved to .mgw/completed/
 - [ ] Lingering worktrees cleaned up for completed items
 - [ ] Branch deletion offered for completed items
-- [ ] Stale/orphaned/drift items flagged (including comment drift)
+- [ ] Stale/orphaned/drift items flagged (including comment drift and milestone inconsistencies)
 - [ ] Board reconciliation run — all PR cross-refs checked against board (non-blocking)
 - [ ] Summary presented
 </success_criteria>
