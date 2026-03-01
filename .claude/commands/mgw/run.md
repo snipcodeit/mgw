@@ -106,6 +106,100 @@ If state file exists → load it. Check pipeline_stage:
       Log warning: "MGW: WARNING — Acknowledging security risk for #${ISSUE_NUMBER}. Proceeding with --security-ack."
       Update state: pipeline_stage = "triaged", add override_log entry.
       Continue pipeline.
+
+**Cross-milestone detection (runs after loading issue state):**
+
+Check if this issue belongs to a non-active GSD milestone:
+
+```bash
+CROSS_MILESTONE_WARN=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+if (!state) { console.log('none'); process.exit(0); }
+
+const activeGsdId = state.active_gsd_milestone;
+
+// Find this issue's milestone in project.json
+const issueNum = ${ISSUE_NUMBER};
+let issueMilestone = null;
+for (const m of (state.milestones || [])) {
+  if ((m.issues || []).some(i => i.github_number === issueNum)) {
+    issueMilestone = m;
+    break;
+  }
+}
+
+if (!issueMilestone) { console.log('none'); process.exit(0); }
+
+const issueGsdId = issueMilestone.gsd_milestone_id;
+
+// No active_gsd_milestone set (legacy schema): no warning
+if (!activeGsdId) { console.log('none'); process.exit(0); }
+
+// Issue is in the active milestone: no warning
+if (issueGsdId === activeGsdId) { console.log('none'); process.exit(0); }
+
+// Issue is in a different milestone
+const gsdRoute = '${GSD_ROUTE}';
+if (gsdRoute === 'quick' || gsdRoute === 'gsd:quick') {
+  console.log('isolation:' + issueMilestone.name + ':' + (issueGsdId || 'unlinked'));
+} else {
+  console.log('warn:' + issueMilestone.name + ':' + (issueGsdId || 'unlinked') + ':' + activeGsdId);
+}
+")
+
+case "$CROSS_MILESTONE_WARN" in
+  none)
+    # No cross-milestone issue — proceed normally
+    ;;
+  isolation:*)
+    MILESTONE_NAME=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f2)
+    GSD_ID=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f3)
+    echo ""
+    echo "NOTE: Issue #${ISSUE_NUMBER} belongs to milestone '${MILESTONE_NAME}' (GSD: ${GSD_ID})"
+    echo "      This is a gsd:quick issue — running in isolation (no ROADMAP.md context needed)."
+    echo ""
+    ;;
+  warn:*)
+    ISSUE_MILESTONE=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f2)
+    ISSUE_GSD=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f3)
+    ACTIVE_GSD=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f4)
+    echo ""
+    echo "⚠️  Cross-milestone issue detected:"
+    echo "   Issue #${ISSUE_NUMBER} belongs to: '${ISSUE_MILESTONE}' (GSD: ${ISSUE_GSD})"
+    echo "   Active GSD milestone:              ${ACTIVE_GSD}"
+    echo ""
+    echo "This issue requires plan-phase work that depends on ROADMAP.md context."
+    echo "Running it against the wrong active milestone may produce incorrect plans."
+    echo ""
+    echo "Options:"
+    echo "  1) Switch active milestone to '${ISSUE_GSD}' and continue"
+    echo "  2) Continue anyway (not recommended)"
+    echo "  3) Abort — run /gsd:new-milestone to set up the correct milestone first"
+    echo ""
+    read -p "Choice [1/2/3]: " MILESTONE_CHOICE
+    case "$MILESTONE_CHOICE" in
+      1)
+        node -e "
+const { loadProjectState, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+state.active_gsd_milestone = '${ISSUE_GSD}';
+writeProjectState(state);
+console.log('Switched active_gsd_milestone to: ${ISSUE_GSD}');
+"
+        echo "Active milestone updated. Note: ROADMAP.md must match — verify .planning/ROADMAP.md."
+        ;;
+      2)
+        echo "Proceeding with cross-milestone issue (may affect plan quality)."
+        ;;
+      *)
+        echo "Aborted. Run /gsd:new-milestone then /mgw:project to align milestones."
+        exit 0
+        ;;
+    esac
+    ;;
+esac
+```
 </step>
 
 <step name="create_worktree">
