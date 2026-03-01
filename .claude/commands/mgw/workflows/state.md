@@ -361,3 +361,4 @@ Only advance if ALL issues in current milestone completed successfully.
 | Slug generation | issue.md, run.md |
 | Project state | milestone.md, next.md, ask.md |
 | Gate result schema | issue.md (populate), run.md (validate) |
+| Board status sync | board-sync.md (utility), issue.md (triage transitions), run.md (pipeline transitions) |

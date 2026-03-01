@@ -38,6 +38,7 @@ Checkpoints requiring user input:
 @~/.claude/commands/mgw/workflows/github.md
 @~/.claude/commands/mgw/workflows/gsd.md
 @~/.claude/commands/mgw/workflows/validation.md
+@~/.claude/commands/mgw/workflows/board-sync.md
 </execution_context>
 
 <context>
@@ -55,6 +56,66 @@ Store repo root and default branch (used throughout):
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
 DEFAULT=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
+```
+
+Define the board sync utility (non-blocking — see board-sync.md for full reference):
+```bash
+update_board_status() {
+  local ISSUE_NUMBER="$1"
+  local NEW_STAGE="$2"
+  if [ -z "$ISSUE_NUMBER" ] || [ -z "$NEW_STAGE" ]; then return 0; fi
+  BOARD_NODE_ID=$(python3 -c "
+import json,sys,os
+try:
+    p=json.load(open('${REPO_ROOT}/.mgw/project.json'))
+    print(p.get('project',{}).get('project_board',{}).get('node_id',''))
+except: print('')
+" 2>/dev/null || echo "")
+  if [ -z "$BOARD_NODE_ID" ]; then return 0; fi
+  ITEM_ID=$(python3 -c "
+import json,sys
+try:
+    p=json.load(open('${REPO_ROOT}/.mgw/project.json'))
+    for m in p.get('milestones',[]):
+        for i in m.get('issues',[]):
+            if i.get('github_number')==${ISSUE_NUMBER}:
+                print(i.get('board_item_id','')); sys.exit(0)
+    print('')
+except: print('')
+" 2>/dev/null || echo "")
+  if [ -z "$ITEM_ID" ]; then return 0; fi
+  FIELD_ID=$(python3 -c "
+import json,sys,os
+try:
+    s='${REPO_ROOT}/.mgw/board-schema.json'
+    if os.path.exists(s):
+        print(json.load(open(s)).get('fields',{}).get('status',{}).get('field_id',''))
+    else:
+        p=json.load(open('${REPO_ROOT}/.mgw/project.json'))
+        print(p.get('project',{}).get('project_board',{}).get('fields',{}).get('status',{}).get('field_id',''))
+except: print('')
+" 2>/dev/null || echo "")
+  if [ -z "$FIELD_ID" ]; then return 0; fi
+  OPTION_ID=$(python3 -c "
+import json,sys,os
+try:
+    stage='${NEW_STAGE}'
+    s='${REPO_ROOT}/.mgw/board-schema.json'
+    if os.path.exists(s):
+        print(json.load(open(s)).get('fields',{}).get('status',{}).get('options',{}).get(stage,''))
+    else:
+        p=json.load(open('${REPO_ROOT}/.mgw/project.json'))
+        print(p.get('project',{}).get('project_board',{}).get('fields',{}).get('status',{}).get('options',{}).get(stage,''))
+except: print('')
+" 2>/dev/null || echo "")
+  if [ -z "$OPTION_ID" ]; then return 0; fi
+  gh api graphql -f query='
+    mutation($projectId:ID!,$itemId:ID!,$fieldId:ID!,$optionId:String!){
+      updateProjectV2ItemFieldValue(input:{projectId:$projectId,itemId:$itemId,fieldId:$fieldId,value:{singleSelectOptionId:$optionId}}){projectV2Item{id}}
+    }
+  ' -f projectId="$BOARD_NODE_ID" -f itemId="$ITEM_ID" \
+    -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" 2>/dev/null || true
+}
 ```
 
 Parse $ARGUMENTS for issue number. If missing:
@@ -248,7 +309,7 @@ Return ONLY valid JSON:
 |---------------|--------|
 | **informational** | Log: "MGW: ${NEW_COUNT} new comment(s) reviewed — informational, continuing." Update `triage.last_comment_count` in state file. Continue pipeline. |
 | **material** | Log: "MGW: Material comment(s) detected — scope may have changed." Update state: add new_requirements to triage context. Update `triage.last_comment_count`. Re-read issue body for updated requirements. Continue with enriched context (pass new_requirements to planner). Check for security keywords in material comments (see below). |
-| **blocking** | Log: "MGW: Blocking comment detected — pipeline paused." Update state: `pipeline_stage = "blocked"`. Apply mgw:blocked label. Post comment on issue: `> **MGW** . \`pipeline-blocked\` . Blocked by stakeholder comment. Reason: ${blocking_reason}`. Stop pipeline execution. |
+| **blocking** | Log: "MGW: Blocking comment detected — pipeline paused." Update state: `pipeline_stage = "blocked"`. Apply mgw:blocked label. Call `update_board_status $ISSUE_NUMBER "blocked"` (non-blocking). Post comment on issue: `> **MGW** . \`pipeline-blocked\` . Blocked by stakeholder comment. Reason: ${blocking_reason}`. Stop pipeline execution. |
 
 **Security keyword check for material comments:**
 ```bash
@@ -339,6 +400,9 @@ Log comment in state file (at `${REPO_ROOT}/.mgw/active/`).
 Only run this step if gsd_route is "gsd:quick" or "gsd:quick --full".
 
 Update pipeline_stage to "executing" in state file (at `${REPO_ROOT}/.mgw/active/`).
+```bash
+update_board_status $ISSUE_NUMBER "executing"  # non-blocking board sync
+```
 
 Determine flags:
 - "gsd:quick" → $QUICK_FLAGS = ""
@@ -539,6 +603,9 @@ node ~/.claude/get-shit-done/bin/gsd-tools.cjs commit "docs(quick-${next_num}): 
 ```
 
 Update state (at `${REPO_ROOT}/.mgw/active/`): gsd_artifacts.path = $QUICK_DIR, pipeline_stage = "verifying".
+```bash
+update_board_status $ISSUE_NUMBER "verifying"  # non-blocking board sync
+```
 </step>
 
 <step name="execute_gsd_milestone">
@@ -576,6 +643,7 @@ Set pipeline_stage to "discussing" and apply "mgw:discussing" label:
 ```bash
 gh issue edit ${ISSUE_NUMBER} --remove-label "mgw:in-progress" 2>/dev/null
 gh issue edit ${ISSUE_NUMBER} --add-label "mgw:discussing" 2>/dev/null
+update_board_status $ISSUE_NUMBER "discussing"  # non-blocking board sync
 ```
 
 Present to user:
@@ -623,6 +691,9 @@ If proceed: apply "mgw:approved" label and continue.
      ```
 
    Update pipeline_stage to "planning" (at `${REPO_ROOT}/.mgw/active/`).
+   ```bash
+   update_board_status $ISSUE_NUMBER "planning"  # non-blocking board sync
+   ```
 
 2. **If resuming with pipeline_stage = "planning" and ROADMAP.md exists:**
    Discover phases from ROADMAP and run the full per-phase GSD lifecycle:
@@ -785,6 +856,9 @@ COMMENTEOF
    ```
 
    After ALL phases complete → update pipeline_stage to "verifying" (at `${REPO_ROOT}/.mgw/active/`).
+   ```bash
+   update_board_status $ISSUE_NUMBER "verifying"  # non-blocking board sync
+   ```
 </step>
 
 <step name="post_execution_update">
@@ -822,6 +896,9 @@ gh issue comment ${ISSUE_NUMBER} --body "$EXEC_BODY" 2>/dev/null || true
 ```
 
 Update pipeline_stage to "pr-pending" (at `${REPO_ROOT}/.mgw/active/`).
+```bash
+update_board_status $ISSUE_NUMBER "pr-created"  # non-blocking board sync (pr-pending maps to pr-created on board)
+```
 </step>
 
 <step name="create_pr">
@@ -992,6 +1069,10 @@ Update state (at `${REPO_ROOT}/.mgw/active/`):
 - linked_pr = PR number
 - pipeline_stage = "pr-created"
 
+```bash
+update_board_status $ISSUE_NUMBER "pr-created"  # non-blocking board sync
+```
+
 Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → PR.
 </step>
 
@@ -1052,6 +1133,9 @@ gh issue comment ${ISSUE_NUMBER} --body "$PR_READY_BODY" 2>/dev/null || true
 ```
 
 Update pipeline_stage to "done" (at `${REPO_ROOT}/.mgw/active/`).
+```bash
+update_board_status $ISSUE_NUMBER "done"  # non-blocking board sync
+```
 
 Report to user:
 ```
@@ -1092,5 +1176,7 @@ Next:
 - [ ] Worktree cleaned up, user returned to main workspace
 - [ ] mgw:in-progress label removed at completion
 - [ ] State file updated through all pipeline stages
+- [ ] Board Status field synced at each pipeline_stage transition (non-blocking)
+- [ ] Board sync failures never block pipeline execution
 - [ ] User prompted to run /mgw:sync after merge
 </success_criteria>
