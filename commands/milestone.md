@@ -250,6 +250,72 @@ fi
 ```
 </step>
 
+<step name="post_start_hook">
+**Post milestone-start announcement to GitHub Discussions (or first-issue comment fallback):**
+
+Runs once before the execute loop. Skipped if --dry-run is set. Failure is non-blocking — a warning is logged and execution continues.
+
+```bash
+if [ "$DRY_RUN" = true ]; then
+  echo "MGW: Skipping milestone-start announcement (dry-run mode)"
+else
+  # Gather board URL from project.json if present (non-blocking)
+  BOARD_URL=$(echo "$PROJECT_JSON" | python3 -c "
+import json,sys
+p = json.load(sys.stdin)
+m = p['milestones'][${MILESTONE_NUM} - 1]
+print(m.get('board_url', ''))
+" 2>/dev/null || echo "")
+
+  # Build issues JSON array with assignee and gsd_route per issue
+  ISSUES_PAYLOAD=$(echo "$ISSUES_JSON" | python3 -c "
+import json,sys
+issues = json.load(sys.stdin)
+result = []
+for i in issues:
+    result.append({
+        'number': i.get('github_number', 0),
+        'title': i.get('title', '')[:60],
+        'assignee': i.get('assignee') or None,
+        'gsdRoute': i.get('gsd_route', 'plan-phase')
+    })
+print(json.dumps(result))
+" 2>/dev/null || echo "[]")
+
+  # Get first issue number for fallback comment (non-blocking)
+  FIRST_ISSUE_NUM=$(echo "$ISSUES_JSON" | python3 -c "
+import json,sys
+issues = json.load(sys.stdin)
+print(issues[0]['github_number'] if issues else '')
+" 2>/dev/null || echo "")
+
+  REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+
+  REPO="$REPO" \
+  MILESTONE_NAME="$MILESTONE_NAME" \
+  BOARD_URL="$BOARD_URL" \
+  ISSUES_PAYLOAD="$ISSUES_PAYLOAD" \
+  FIRST_ISSUE_NUM="$FIRST_ISSUE_NUM" \
+  node -e "
+const { postMilestoneStartAnnouncement } = require('./lib/index.cjs');
+const result = postMilestoneStartAnnouncement({
+  repo: process.env.REPO,
+  milestoneName: process.env.MILESTONE_NAME,
+  boardUrl: process.env.BOARD_URL || undefined,
+  issues: JSON.parse(process.env.ISSUES_PAYLOAD || '[]'),
+  firstIssueNumber: process.env.FIRST_ISSUE_NUM ? parseInt(process.env.FIRST_ISSUE_NUM) : undefined
+});
+if (result.posted) {
+  const detail = result.url ? ': ' + result.url : '';
+  console.log('MGW: Milestone-start announcement posted via ' + result.method + detail);
+} else {
+  console.log('MGW: Milestone-start announcement skipped (Discussions unavailable, no fallback)');
+}
+" 2>/dev/null || echo "MGW: Announcement step failed (non-blocking) — continuing"
+fi
+```
+</step>
+
 <step name="dry_run">
 **If --dry-run flag: display execution plan and exit:**
 
