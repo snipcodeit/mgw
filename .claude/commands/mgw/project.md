@@ -311,7 +311,10 @@ print(d['milestones'][${MILESTONE_INDEX}]['name'])
 ")
 
     # Generate phase slug for label
-    PHASE_SLUG=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs generate-slug "${PHASE_NAME}" --raw 2>/dev/null | head -c 40 || echo "${PHASE_NAME,,}" | tr ' ' '-' | cut -c1-40)
+    PHASE_SLUG=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs generate-slug "${PHASE_NAME}" --raw 2>/dev/null | head -c 40)
+    if [ -z "$PHASE_SLUG" ] && [ -n "$PHASE_NAME" ]; then
+      PHASE_SLUG=$(echo "$PHASE_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-' | cut -c1-40)
+    fi
 
     # Create phase label (idempotent)
     gh label create "phase:${GLOBAL_PHASE_NUM}-${PHASE_SLUG}" \
@@ -350,7 +353,10 @@ print(','.join(deps))
 ")
 
       # Generate slug for this issue (for dependency resolution)
-      ISSUE_SLUG=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs generate-slug "${ISSUE_TITLE}" --raw 2>/dev/null | head -c 40 || echo "${ISSUE_TITLE,,}" | tr ' ' '-' | cut -c1-40)
+      ISSUE_SLUG=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs generate-slug "${ISSUE_TITLE}" --raw 2>/dev/null | head -c 40)
+      if [ -z "$ISSUE_SLUG" ] && [ -n "$ISSUE_TITLE" ]; then
+        ISSUE_SLUG=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-' | cut -c1-40)
+      fi
 
       # Build structured issue body (heredoc — preserves newlines)
       DEPENDS_DISPLAY="${DEPENDS_ON_JSON:-_none_}"
