@@ -791,7 +791,89 @@ writeProjectState(state);
 "
 ```
 
-5. Display completion banner:
+5. Milestone mapping verification:
+
+After advancing to the next milestone, check its GSD linkage:
+
+```bash
+NEXT_MILESTONE_CHECK=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+const activeIdx = resolveActiveMilestoneIndex(state);
+
+if (activeIdx < 0 || activeIdx >= state.milestones.length) {
+  console.log('none');
+  process.exit(0);
+}
+
+const nextMilestone = state.milestones[activeIdx];
+if (!nextMilestone) {
+  console.log('none');
+  process.exit(0);
+}
+
+const gsdId = nextMilestone.gsd_milestone_id;
+const name = nextMilestone.name;
+
+if (!gsdId) {
+  console.log('unlinked:' + name);
+} else {
+  console.log('linked:' + name + ':' + gsdId);
+}
+")
+
+case "$NEXT_MILESTONE_CHECK" in
+  none)
+    echo "All milestones complete — project is done!"
+    ;;
+  unlinked:*)
+    NEXT_NAME=$(echo "$NEXT_MILESTONE_CHECK" | cut -d':' -f2-)
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo " Next milestone '${NEXT_NAME}' has no GSD milestone linked."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Before running /mgw:milestone for the next milestone:"
+    echo "  1) Run /gsd:new-milestone to create GSD state for '${NEXT_NAME}'"
+    echo "  2) Run /mgw:project extend to link the new GSD milestone"
+    echo ""
+    ;;
+  linked:*)
+    NEXT_NAME=$(echo "$NEXT_MILESTONE_CHECK" | cut -d':' -f2)
+    GSD_ID=$(echo "$NEXT_MILESTONE_CHECK" | cut -d':' -f3)
+    # Verify ROADMAP.md matches expected GSD milestone
+    ROADMAP_CHECK=$(python3 -c "
+import os, sys
+if not os.path.exists('.planning/ROADMAP.md'):
+    print('no_roadmap')
+    sys.exit()
+with open('.planning/ROADMAP.md') as f:
+    content = f.read()
+if '${GSD_ID}' in content:
+    print('match')
+else:
+    print('mismatch')
+" 2>/dev/null || echo "no_roadmap")
+
+    case "$ROADMAP_CHECK" in
+      match)
+        echo "Next milestone '${NEXT_NAME}' (GSD: ${GSD_ID}) — ROADMAP.md is ready."
+        ;;
+      mismatch)
+        echo "Next milestone '${NEXT_NAME}' links to GSD milestone '${GSD_ID}'"
+        echo "    but .planning/ROADMAP.md does not contain that milestone ID."
+        echo "    Run /gsd:new-milestone to update ROADMAP.md before proceeding."
+        ;;
+      no_roadmap)
+        echo "NOTE: Next milestone '${NEXT_NAME}' (GSD: ${GSD_ID}) linked."
+        echo "      No .planning/ROADMAP.md found — run /gsd:new-milestone when ready."
+        ;;
+    esac
+    ;;
+esac
+```
+
+6. Display completion banner:
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  MGW ► MILESTONE ${MILESTONE_NUM} COMPLETE ✓
@@ -820,7 +902,7 @@ Draft release created: ${RELEASE_TAG}
 ───────────────────────────────────────────────────────────────
 ```
 
-6. Check if next milestone exists and offer auto-advance (only if no failures in current).
+7. Check if next milestone exists and offer auto-advance (only if no failures in current).
 
 **If some issues failed:**
 
@@ -843,7 +925,7 @@ Milestone NOT closed. Resolve failures and re-run:
   /mgw:milestone ${MILESTONE_NUM}
 ```
 
-7. Post final results table as GitHub comment on the first issue in the milestone:
+8. Post final results table as GitHub comment on the first issue in the milestone:
 ```bash
 gh issue comment ${FIRST_ISSUE_NUMBER} --body "$FINAL_RESULTS_COMMENT"
 ```

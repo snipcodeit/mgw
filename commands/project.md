@@ -1446,6 +1446,23 @@ the newly created milestones/phases (matching the existing project.json schema).
 so indices remain globally unique.
 
 When `EXTEND_MODE` is false, the existing write logic (full project.json from scratch) is unchanged.
+
+**Extend mode: verify new milestone GSD linkage**
+
+After writing the updated project.json in extend mode, report the GSD linkage status for each newly added milestone:
+
+```bash
+if [ "$EXTEND_MODE" = true ]; then
+  echo ""
+  echo "New milestone linkage status:"
+  for MILESTONE in "${NEW_MILESTONES[@]}"; do
+    MILE_NAME=$(echo "$MILESTONE" | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])" 2>/dev/null || echo "unknown")
+    echo "  o '${MILE_NAME}' — no GSD milestone linked yet"
+    echo "    -> Run /gsd:new-milestone after completing the previous milestone to link"
+  done
+  echo ""
+fi
+```
 </step>
 
 <step name="report">
