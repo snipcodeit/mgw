@@ -1,7 +1,7 @@
 ---
 name: mgw:status
 description: Project status dashboard — milestone progress, issue pipeline stages, open PRs
-argument-hint: "[milestone_number] [--json]"
+argument-hint: "[milestone_number] [--json] [--board]"
 allowed-tools:
   - Bash
   - Read
@@ -34,10 +34,12 @@ Repo detected via: gh repo view --json nameWithOwner -q .nameWithOwner
 ```bash
 MILESTONE_NUM=""
 JSON_OUTPUT=false
+OPEN_BOARD=false
 
 for ARG in $ARGUMENTS; do
   case "$ARG" in
     --json) JSON_OUTPUT=true ;;
+    --board) OPEN_BOARD=true ;;
     [0-9]*) MILESTONE_NUM="$ARG" ;;
   esac
 done
@@ -52,6 +54,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 MGW_DIR="${REPO_ROOT}/.mgw"
 REPO_NAME=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || basename "$REPO_ROOT")
 
+BOARD_URL=""
 if [ ! -f "${MGW_DIR}/project.json" ]; then
   # No project.json — fall back to GitHub-only mode
   FALLBACK_MODE=true
@@ -102,8 +105,18 @@ Exit after display.
 ```bash
 PROJECT_JSON=$(cat "${MGW_DIR}/project.json")
 
-# Get current milestone pointer
-CURRENT_MILESTONE=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['current_milestone'])")
+# Resolve active milestone index (0-based) via state resolution (supports both schema versions)
+ACTIVE_IDX=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+const idx = resolveActiveMilestoneIndex(state);
+const milestone = state.milestones ? state.milestones[idx] : null;
+const gsdId = state.active_gsd_milestone || ('legacy:' + state.current_milestone);
+console.log(JSON.stringify({ idx, gsd_id: gsdId, name: milestone ? milestone.name : 'unknown' }));
+")
+CURRENT_MILESTONE_IDX=$(echo "$ACTIVE_IDX" | python3 -c "import json,sys; print(json.load(sys.stdin)['idx'])")
+# Convert 0-based index to 1-indexed milestone number for display and compatibility
+CURRENT_MILESTONE=$((CURRENT_MILESTONE_IDX + 1))
 TOTAL_MILESTONES=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['milestones']))")
 
 # Use specified milestone or current
@@ -124,7 +137,36 @@ print(json.dumps(m))
 MILESTONE_NAME=$(echo "$MILESTONE_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")
 ISSUES_JSON=$(echo "$MILESTONE_DATA" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['issues']))")
 TOTAL_ISSUES=$(echo "$ISSUES_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
+
+# Extract board URL from project.json (top-level board_url or nested board.url)
+BOARD_URL=$(echo "$PROJECT_JSON" | python3 -c "
+import json, sys
+p = json.load(sys.stdin)
+# Check top-level board_url first, then board.url (nested)
+url = p.get('board_url') or (p.get('board') or {}).get('url', '')
+print(url or '')
+" 2>/dev/null || echo "")
 ```
+</step>
+
+<step name="open_board">
+**Handle --board flag — open board in browser and exit early:**
+
+```bash
+if [ "$OPEN_BOARD" = true ]; then
+  if [ -z "$BOARD_URL" ]; then
+    echo "No board configured in project.json. Run /mgw:board create first." >&2
+    exit 1
+  fi
+  echo "Opening board: ${BOARD_URL}"
+  xdg-open "${BOARD_URL}" 2>/dev/null \
+    || open "${BOARD_URL}" 2>/dev/null \
+    || echo "Could not open browser. Board URL: ${BOARD_URL}"
+  exit 0
+fi
+```
+
+This step exits early — do not continue to the dashboard display.
 </step>
 
 <step name="compute_progress">
@@ -169,6 +211,71 @@ print(json.dumps({
     'bar': bar
 }))
 ")
+```
+</step>
+
+<step name="compute_health">
+**Compute milestone health metrics — velocity, done count, blocked count:**
+
+```bash
+HEALTH_DATA=$(echo "$ISSUES_JSON" | python3 -c "
+import json, sys, os, glob
+
+issues = json.load(sys.stdin)
+repo_root = os.environ.get('REPO_ROOT', os.getcwd())
+mgw_dir = os.path.join(repo_root, '.mgw')
+
+done_stages = {'done', 'pr-created'}
+blocked_stages = {'blocked'}
+
+done_count = 0
+blocked_count = 0
+done_timestamps = []
+
+for issue in issues:
+    stage = issue.get('pipeline_stage', 'new')
+    num = issue.get('github_number', 0)
+
+    if stage in done_stages:
+        done_count += 1
+        # Use .mgw/active/ or .mgw/completed/ file mtime as done timestamp proxy
+        for subdir in ['active', 'completed']:
+            pattern = os.path.join(mgw_dir, subdir, str(num) + '-*.json')
+            matches = glob.glob(pattern)
+            if matches:
+                try:
+                    done_timestamps.append(os.path.getmtime(matches[0]))
+                except Exception:
+                    pass
+                break
+    elif stage in blocked_stages:
+        blocked_count += 1
+
+# Compute velocity (issues completed per day)
+if done_count == 0:
+    velocity_str = '0/day'
+elif len(done_timestamps) >= 2:
+    span_days = (max(done_timestamps) - min(done_timestamps)) / 86400.0
+    if span_days >= 0.1:
+        velocity_str = '{:.1f}/day'.format(done_count / span_days)
+    else:
+        velocity_str = str(done_count) + ' (same day)'
+elif done_count == 1:
+    velocity_str = '1 (single)'
+else:
+    velocity_str = str(done_count) + '/day'
+
+import json as json2
+print(json2.dumps({
+    'done_count': done_count,
+    'blocked_count': blocked_count,
+    'velocity': velocity_str
+}))
+")
+
+HEALTH_DONE=$(echo "$HEALTH_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['done_count'])" 2>/dev/null || echo "0")
+HEALTH_BLOCKED=$(echo "$HEALTH_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['blocked_count'])" 2>/dev/null || echo "0")
+HEALTH_VELOCITY=$(echo "$HEALTH_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['velocity'])" 2>/dev/null || echo "N/A")
 ```
 </step>
 
@@ -243,6 +350,13 @@ fi
 <step name="display_dashboard">
 **Display the status dashboard:**
 
+```bash
+# Print board URL prominently at top if configured
+if [ -n "$BOARD_URL" ]; then
+  echo " Board: ${BOARD_URL}"
+fi
+```
+
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  MGW > PROJECT STATUS: ${REPO_NAME}
@@ -256,16 +370,51 @@ Progress: ${bar} ${pct}%
   #37  ⏳ new         /mgw:status dashboard
   #38  🔒 blocked     contextual routing (blocked by #37)
 
+Milestone Health:
+  Completed: ${HEALTH_DONE}/${TOTAL_ISSUES}
+  Velocity:  ${HEALTH_VELOCITY}
+  Blocked:   ${HEALTH_BLOCKED}
+
 Open PRs:
   #40  ← #36  comment-aware pipeline (review requested)
 
 Next Milestone: ${next_name} (${next_done}/${next_total} done)
 ```
 
+Full display example with board configured:
+```
+ Board: https://github.com/orgs/snipcodeit/projects/1
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MGW > PROJECT STATUS: snipcodeit/mgw
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Current Milestone: v2 — Team Collaboration (3/6 done)
+Progress: ████████░░░░░░░░ 50%
+
+  #80  ✅ done       Add mgw:assign command
+  #81  ✅ done       Post board link to Discussions
+  #82  ✅ done       Add mgw:board sync
+  #83  🔄 executing   Add milestone health report
+  #84  ⏳ new         Create mgw:roadmap command
+  #85  ⏳ new         Add growth analytics
+
+Milestone Health:
+  Completed: 3/6
+  Velocity:  2.1/day
+  Blocked:   0
+
+Open PRs:
+  (none matched to this milestone)
+
+Next Milestone: v3 — Analytics & Extensions (0/5 done)
+```
+
 Rendering rules:
+- Print board URL line (` Board: ${BOARD_URL}`) only when BOARD_URL is non-empty
 - Use stage icons from the issue table
 - Right-align issue numbers
 - Truncate titles to 50 chars
+- Milestone Health section always appears in project mode (after issue table, before Open PRs)
 - If no open PRs matched to milestone, show "No open PRs for this milestone."
 - If no next milestone, show "No more milestones planned."
 - If `TARGET_MILESTONE != CURRENT_MILESTONE`, add "(viewing milestone ${TARGET_MILESTONE})" to header
@@ -282,13 +431,21 @@ import json
 
 result = {
     'repo': '${REPO_NAME}',
-    'current_milestone': ${CURRENT_MILESTONE},
+    'board_url': '${BOARD_URL}',
+    'current_milestone': ${CURRENT_MILESTONE},  # 1-indexed (legacy compat)
+    'active_milestone_idx': ${CURRENT_MILESTONE_IDX},  # 0-based resolved index
     'viewing_milestone': ${TARGET_MILESTONE},
     'milestone': {
         'name': '${MILESTONE_NAME}',
         'total_issues': ${TOTAL_ISSUES},
         'done': done_count,
         'progress_pct': pct,
+        'health': {
+            'done': int('${HEALTH_DONE}' or '0'),
+            'total': ${TOTAL_ISSUES},
+            'blocked': int('${HEALTH_BLOCKED}' or '0'),
+            'velocity': '${HEALTH_VELOCITY}'
+        },
         'issues': issues_with_stages
     },
     'open_prs': matched_prs,
@@ -305,32 +462,40 @@ The JSON structure:
 ```json
 {
   "repo": "owner/repo",
+  "board_url": "https://github.com/orgs/snipcodeit/projects/1",
   "current_milestone": 2,
+  "active_milestone_idx": 1,
   "viewing_milestone": 2,
   "milestone": {
-    "name": "v1 — Pipeline Intelligence",
-    "total_issues": 4,
-    "done": 2,
+    "name": "v2 — Team Collaboration & Lifecycle Orchestration",
+    "total_issues": 6,
+    "done": 3,
     "progress_pct": 50,
+    "health": {
+      "done": 3,
+      "total": 6,
+      "blocked": 0,
+      "velocity": "2.1/day"
+    },
     "issues": [
       {
-        "number": 35,
-        "title": "refactor: remove .planning/ writes",
+        "number": 80,
+        "title": "Add mgw:assign command",
         "pipeline_stage": "done",
-        "labels": ["refactor"]
+        "labels": ["enhancement"]
       }
     ]
   },
   "open_prs": [
     {
-      "number": 40,
-      "title": "comment-aware pipeline",
-      "linked_issue": 36,
-      "review_status": "review_requested"
+      "number": 95,
+      "title": "Add mgw:assign command",
+      "linked_issue": 80,
+      "review_status": "approved"
     }
   ],
   "next_milestone": {
-    "name": "v1 — NPM Publishing & Distribution",
+    "name": "v3 — Analytics & Extensions",
     "total_issues": 5,
     "done": 0
   }
@@ -351,4 +516,11 @@ The JSON structure:
 - [ ] Milestone number argument selects non-current milestone
 - [ ] Read-only: no state modifications, no GitHub writes
 - [ ] No agent spawns, no side effects
+- [ ] Board URL displayed before header when board_url is set in project.json
+- [ ] --board flag opens board URL via xdg-open (open on macOS fallback) and exits 0
+- [ ] --board flag exits 1 with helpful error when no board configured
+- [ ] Milestone Health section shows Completed N/total, Velocity, and Blocked count
+- [ ] Velocity computed from .mgw/active/ and .mgw/completed/ file mtimes
+- [ ] --json output includes board_url and milestone.health object
+- [ ] Board URL line omitted when board_url is not set in project.json
 </success_criteria>

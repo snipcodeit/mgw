@@ -289,14 +289,19 @@ TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --r
 # Load milestone/phase context from project.json if available
 MILESTONE_CONTEXT=""
 if [ -f "${REPO_ROOT}/.mgw/project.json" ]; then
-  MILESTONE_CONTEXT=$(python3 -c "
-import json
-p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
-for m in p['milestones']:
-  for i in m.get('issues', []):
-    if i.get('github_number') == ${ISSUE_NUMBER}:
-      print(f\"Milestone: {m['name']} | Phase {i['phase_number']}: {i['phase_name']}\")
-      break
+  MILESTONE_CONTEXT=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+if (!state) process.exit(0);
+// Search all milestones for the issue (not just active) to handle cross-milestone lookups
+for (const m of (state.milestones || [])) {
+  for (const i of (m.issues || [])) {
+    if (i.github_number === ${ISSUE_NUMBER}) {
+      console.log('Milestone: ' + m.name + ' | Phase ' + i.phase_number + ': ' + i.phase_name);
+      process.exit(0);
+    }
+  }
+}
 " 2>/dev/null || echo "")
 fi
 ```

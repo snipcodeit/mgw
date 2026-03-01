@@ -38,14 +38,20 @@ if [ ! -f "${MGW_DIR}/project.json" ]; then
 fi
 
 PROJECT_JSON=$(cat "${MGW_DIR}/project.json")
-CURRENT_MILESTONE=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['current_milestone'])")
+
+# Resolve active milestone index using state resolution (supports both schema versions)
+ACTIVE_IDX=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+console.log(resolveActiveMilestoneIndex(state));
+")
 
 # Get milestone data
 MILESTONE_DATA=$(echo "$PROJECT_JSON" | python3 -c "
 import json,sys
 p = json.load(sys.stdin)
-idx = p['current_milestone'] - 1
-if idx >= len(p['milestones']):
+idx = ${ACTIVE_IDX}
+if idx < 0 or idx >= len(p['milestones']):
     print(json.dumps({'error': 'No more milestones'}))
     sys.exit(0)
 m = p['milestones'][idx]
@@ -310,30 +316,6 @@ If ALT_COUNT > 0:
 Also unblocked:
   #${alt1_number} — ${alt1_title} (${alt1_gsd_route})
   #${alt2_number} — ${alt2_title} (${alt2_gsd_route})
-```
-
-**Append failed issue advisory (informational — does not block the primary recommendation):**
-
-```bash
-FAILED_LIST=$(echo "$DEPENDENCY_RESULT" | python3 -c "
-import json,sys
-r = json.load(sys.stdin)
-for f in r.get('failed', []):
-    print(f\"  #{f['number']}: {f['title']}\")
-")
-FAILED_COUNT=$(echo "$DEPENDENCY_RESULT" | python3 -c "
-import json,sys
-r = json.load(sys.stdin)
-print(len(r.get('failed', [])))
-")
-```
-
-If FAILED_COUNT > 0:
-```
-Note: ${FAILED_COUNT} issue(s) previously failed:
-${FAILED_LIST}
-
-Use /mgw:run <number> to retry.
 ```
 </step>
 
