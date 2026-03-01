@@ -223,61 +223,125 @@ esac
 <step name="align_from_gsd">
 **Align MGW state from existing GSD artifacts (STATE_CLASS = GSD-Only or GSD-Mid-Exec):**
 
-TODO: A2 will implement this step.
+Spawn alignment-analyzer agent:
 
-This step will:
-1. Spawn an alignment-analyzer Task agent that reads `.planning/PROJECT.md`, `.planning/ROADMAP.md`, `.planning/MILESTONES.md`, and `.planning/STATE.md`
-2. Produce a structured alignment report at `.mgw/alignment-report.json`
-3. Present the report to the user and ask whether to import GSD state into MGW
-4. If yes, create GitHub milestones and project.json from GSD artifacts
-5. If no, exit with instructions
+Task(
+  description="Analyze GSD state for alignment",
+  subagent_type="general-purpose",
+  prompt="
+<files_to_read>
+- ./CLAUDE.md
+- .planning/PROJECT.md (if exists)
+- .planning/ROADMAP.md (if exists)
+- .planning/MILESTONES.md (if exists)
+- .planning/STATE.md (if exists)
+</files_to_read>
 
-For now, when STATE_CLASS is GSD-Only or GSD-Mid-Exec, display:
+Analyze existing GSD project state and produce an alignment report.
 
-```
-GSD project detected (STATE_CLASS: ${STATE_CLASS}).
-  .planning/PROJECT.md  found: ${P}
-  .planning/ROADMAP.md  found: ${R}
-  .planning/STATE.md    found: ${S}
+Read each file that exists. Extract:
+- Project name and description from PROJECT.md (H1 heading, description paragraph)
+- Active milestone: from ROADMAP.md header or STATE.md current milestone name
+- Archived milestones: from MILESTONES.md — list each milestone with name and phase count
+- Phases per milestone: from ROADMAP.md sections (### Phase N:) and MILESTONES.md
 
-Alignment from GSD artifacts is not yet implemented (coming in A2).
+For each milestone found:
+- name: milestone name string
+- source: 'ROADMAP' (if from current ROADMAP.md) or 'MILESTONES' (if archived)
+- state: 'active' (ROADMAP source), 'completed' (archived in MILESTONES.md), 'planned' (referenced but not yet created)
+- phases: array of { number, name, status } objects
 
-To initialize MGW for this project:
-  1. Run /mgw:project with a description to create GitHub milestones from scratch.
-     (Your GSD ROADMAP.md and execution history will remain untouched.)
-  2. Or wait for A2 which will auto-import your GSD roadmap into MGW.
-```
+<output>
+Write JSON to .mgw/alignment-report.json:
+{
+  \"project_name\": \"extracted from PROJECT.md\",
+  \"project_description\": \"extracted from PROJECT.md\",
+  \"milestones\": [
+    {
+      \"name\": \"milestone name\",
+      \"source\": \"ROADMAP|MILESTONES\",
+      \"state\": \"active|completed|planned\",
+      \"phases\": [{ \"number\": N, \"name\": \"...\", \"status\": \"...\" }]
+    }
+  ],
+  \"active_milestone\": \"name of currently active milestone or null\",
+  \"total_phases\": N,
+  \"total_issues_estimated\": N
+}
+</output>
+"
+)
 
-Then exit 0.
+After agent completes:
+1. Read .mgw/alignment-report.json
+2. Display alignment summary to user:
+   - Project: {project_name}
+   - Milestones found: {count} ({active_milestone} active, N completed)
+   - Phases: {total_phases} total, ~{total_issues_estimated} issues estimated
+3. Ask: "Import this GSD state into MGW? This will create GitHub milestones and issues, and build project.json. (Y/N)"
+4. If Y: proceed to step milestone_mapper
+5. If N: exit with message "Run /mgw:project again when ready to import."
 </step>
 
 <step name="reconcile_drift">
-**Reconcile drift between .mgw/project.json and GitHub state (STATE_CLASS = Diverged):**
+**Reconcile diverged state (STATE_CLASS = Diverged):**
 
-TODO: A5 will implement this step.
+Spawn drift-analyzer agent:
 
-This step will:
-1. Spawn a drift-analyzer Task agent that compares `.mgw/project.json` milestones vs live GitHub milestones
-2. Classify each milestone as: matched, renamed, missing-local, missing-github
-3. Produce a reconciliation plan
-4. Present diff to user with options: auto-reconcile, manual review, or reset
+Task(
+  description="Analyze project state drift",
+  subagent_type="general-purpose",
+  prompt="
+<files_to_read>
+- ./CLAUDE.md
+- .mgw/project.json
+</files_to_read>
 
-For now, when STATE_CLASS is Diverged, display:
+Compare .mgw/project.json with live GitHub state.
 
-```
-Drift detected between .mgw/project.json and GitHub milestones (STATE_CLASS: Diverged).
-  Local milestone count:  ${LOCAL_MILESTONE_COUNT}
-  GitHub milestone count: ${GH_MILESTONE_COUNT}
+1. Read project.json: parse milestones array, get repo name from project.repo
+2. Query GitHub milestones:
+   gh api repos/{REPO}/milestones --jq '.[] | {number, title, state, open_issues, closed_issues}'
+3. For each milestone in project.json:
+   - Does a GitHub milestone with matching title exist? (fuzzy: case-insensitive, strip emoji)
+   - If no match: flag as missing_github
+   - If match: compare issue count (open + closed GitHub vs issues array length)
+4. For each GitHub milestone NOT matched to project.json entry: flag as missing_local
+5. For issues: check pipeline_stage vs GitHub issue state
+   - GitHub closed + local not 'done' or 'pr-created': flag as stage_mismatch
 
-Drift reconciliation is not yet implemented (coming in A5).
+<output>
+Write JSON to .mgw/drift-report.json:
+{
+  \"mismatches\": [
+    {\"type\": \"missing_github\", \"milestone_name\": \"...\", \"local_issue_count\": N, \"action\": \"create_github_milestone\"},
+    {\"type\": \"missing_local\", \"github_number\": N, \"github_title\": \"...\", \"action\": \"import_to_project_json\"},
+    {\"type\": \"count_mismatch\", \"milestone_name\": \"...\", \"local\": N, \"github\": M, \"action\": \"review_manually\"},
+    {\"type\": \"stage_mismatch\", \"issue\": N, \"local_stage\": \"...\", \"github_state\": \"closed\", \"action\": \"update_local_stage\"}
+  ],
+  \"summary\": \"N mismatches found across M milestones\"
+}
+</output>
+"
+)
 
-To resolve manually:
-  1. Run /mgw:sync to attempt automatic reconciliation.
-  2. Or delete .mgw/project.json and re-run /mgw:project to reinitialize from scratch.
-     WARNING: This will lose pipeline stage tracking for existing issues.
-```
+After agent completes:
+1. Read .mgw/drift-report.json
+2. Display mismatches as a table:
 
-Then exit 0.
+   | Type | Detail | Suggested Action |
+   |------|--------|-----------------|
+   | missing_github | Milestone: {name} ({N} local issues) | Create GitHub milestone |
+   | missing_local | GitHub #N: {title} | Import to project.json |
+   | count_mismatch | {name}: local={N}, github={M} | Review manually |
+   | stage_mismatch | Issue #{N}: local={stage}, github=closed | Update local stage to done |
+
+3. If no mismatches: echo "No drift detected — state is consistent. Reclassifying as Aligned." and proceed to report alignment status.
+4. If mismatches: Ask "Apply auto-fixes? Options: (A)ll / (S)elective / (N)one"
+   - All: apply each action (create missing milestones, update stages in project.json)
+   - Selective: present each fix individually, Y/N per item
+   - None: exit with "Drift noted. Run /mgw:sync to reconcile later."
+5. After applying fixes: write updated project.json and display summary.
 </step>
 
 <step name="gather_inputs">
