@@ -409,6 +409,74 @@ Also add branch cross-ref:
 BRANCH=$(git branch --show-current)
 ```
 Add to linked_branches if not main/master.
+
+After writing the state file, sync the board Status field (non-blocking):
+```bash
+# Board sync — update board Status field to reflect new pipeline_stage
+# Source the shared utility from board-sync.md, then call it
+# Reads REPO_ROOT from environment (set in validate_and_load / init_state)
+update_board_status() {
+  local ISSUE_NUMBER="$1"
+  local NEW_STAGE="$2"
+  if [ -z "$ISSUE_NUMBER" ] || [ -z "$NEW_STAGE" ]; then return 0; fi
+  BOARD_NODE_ID=$(python3 -c "
+import json,sys,os
+try:
+    p=json.load(open('${REPO_ROOT}/.mgw/project.json'))
+    print(p.get('project',{}).get('project_board',{}).get('node_id',''))
+except: print('')
+" 2>/dev/null || echo "")
+  if [ -z "$BOARD_NODE_ID" ]; then return 0; fi
+  ITEM_ID=$(python3 -c "
+import json,sys
+try:
+    p=json.load(open('${REPO_ROOT}/.mgw/project.json'))
+    for m in p.get('milestones',[]):
+        for i in m.get('issues',[]):
+            if i.get('github_number')==${ISSUE_NUMBER}:
+                print(i.get('board_item_id','')); sys.exit(0)
+    print('')
+except: print('')
+" 2>/dev/null || echo "")
+  if [ -z "$ITEM_ID" ]; then return 0; fi
+  FIELD_ID=$(python3 -c "
+import json,sys,os
+try:
+    s='${REPO_ROOT}/.mgw/board-schema.json'
+    if os.path.exists(s):
+        print(json.load(open(s)).get('fields',{}).get('status',{}).get('field_id',''))
+    else:
+        p=json.load(open('${REPO_ROOT}/.mgw/project.json'))
+        print(p.get('project',{}).get('project_board',{}).get('fields',{}).get('status',{}).get('field_id',''))
+except: print('')
+" 2>/dev/null || echo "")
+  if [ -z "$FIELD_ID" ]; then return 0; fi
+  OPTION_ID=$(python3 -c "
+import json,sys,os
+try:
+    stage='${NEW_STAGE}'
+    s='${REPO_ROOT}/.mgw/board-schema.json'
+    if os.path.exists(s):
+        print(json.load(open(s)).get('fields',{}).get('status',{}).get('options',{}).get(stage,''))
+    else:
+        p=json.load(open('${REPO_ROOT}/.mgw/project.json'))
+        print(p.get('project',{}).get('project_board',{}).get('fields',{}).get('status',{}).get('options',{}).get(stage,''))
+except: print('')
+" 2>/dev/null || echo "")
+  if [ -z "$OPTION_ID" ]; then return 0; fi
+  gh api graphql -f query='
+    mutation($projectId:ID!,$itemId:ID!,$fieldId:ID!,$optionId:String!){
+      updateProjectV2ItemFieldValue(input:{projectId:$projectId,itemId:$itemId,fieldId:$fieldId,value:{singleSelectOptionId:$optionId}}){projectV2Item{id}}
+    }
+  ' -f projectId="$BOARD_NODE_ID" -f itemId="$ITEM_ID" \
+    -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" 2>/dev/null || true
+}
+
+# Call after state file is written — non-blocking, never fails the pipeline
+update_board_status $ISSUE_NUMBER "$pipeline_stage"
+```
+
+See @~/.claude/commands/mgw/workflows/board-sync.md for the full utility and data source reference.
 </step>
 
 <step name="offer_next">
@@ -465,5 +533,6 @@ Consider closing or commenting on the issue with your reasoning.
 - [ ] Passed issues get mgw:triaged label
 - [ ] User confirms, overrides, or rejects
 - [ ] State file written to .mgw/active/ (if accepted) with comment tracking fields and gate_result
+- [ ] Board Status field updated via update_board_status (non-blocking — failure does not block)
 - [ ] Next steps offered
 </success_criteria>

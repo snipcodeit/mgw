@@ -24,6 +24,7 @@ Run periodically or when starting a new session to get a clean view.
 @~/.claude/commands/mgw/workflows/github.md
 @~/.claude/commands/mgw/workflows/gsd.md
 @~/.claude/commands/mgw/workflows/validation.md
+@~/.claude/commands/mgw/workflows/board-sync.md
 </execution_context>
 
 <process>
@@ -86,6 +87,53 @@ if [ -d ".planning" ]; then
 fi
 ```
 This is read-only and additive — health status is included in the sync summary but does not block any reconciliation actions.
+</step>
+
+<step name="board_reconcile">
+**Board reconciliation — ensure PR cross-refs are reflected on the board (non-blocking):**
+
+If the project board is configured, check cross-refs for any issue→PR `implements` links
+and ensure each linked PR exists as a board item. Uses `sync_pr_to_board` from
+board-sync.md which is idempotent — adding a PR that's already on the board is a no-op.
+
+```bash
+# Non-blocking throughout — board sync failures never block reconciliation
+if [ -f "${REPO_ROOT}/.mgw/project.json" ] && [ -f "${REPO_ROOT}/.mgw/cross-refs.json" ]; then
+  BOARD_NODE_ID=$(python3 -c "
+import json, sys
+try:
+    p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+    print(p.get('project', {}).get('project_board', {}).get('node_id', ''))
+except:
+    print('')
+" 2>/dev/null || echo "")
+
+  if [ -n "$BOARD_NODE_ID" ]; then
+    # Find all issue→PR implements links in cross-refs
+    PR_LINKS=$(python3 -c "
+import json
+refs = json.load(open('${REPO_ROOT}/.mgw/cross-refs.json'))
+for link in refs.get('links', []):
+    if link.get('type') == 'implements' and link['a'].startswith('issue:') and link['b'].startswith('pr:'):
+        issue_num = link['a'].split(':')[1]
+        pr_num = link['b'].split(':')[1]
+        print(f'{issue_num} {pr_num}')
+" 2>/dev/null || echo "")
+
+    # For each issue→PR link, ensure the PR is on the board
+    PR_SYNCED=0
+    while IFS=' ' read -r LINKED_ISSUE LINKED_PR; do
+      [ -z "$LINKED_PR" ] && continue
+      sync_pr_to_board "$LINKED_ISSUE" "$LINKED_PR"  # non-blocking
+      PR_SYNCED=$((PR_SYNCED + 1))
+    done <<< "$PR_LINKS"
+
+    if [ "$PR_SYNCED" -gt 0 ]; then
+      echo "MGW: Board reconciliation — checked ${PR_SYNCED} PR cross-ref(s)"
+    fi
+  fi
+fi
+```
 </step>
 
 <step name="reconcile">
@@ -168,5 +216,6 @@ ${comment_drift_details ? 'Unreviewed comments:\n' + comment_drift_details : ''}
 - [ ] Lingering worktrees cleaned up for completed items
 - [ ] Branch deletion offered for completed items
 - [ ] Stale/orphaned/drift items flagged (including comment drift)
+- [ ] Board reconciliation run — all PR cross-refs checked against board (non-blocking)
 - [ ] Summary presented
 </success_criteria>
