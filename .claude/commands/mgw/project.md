@@ -509,7 +509,94 @@ After agent completes:
   - Questions generated: {count}
   ```
 - Update vision-draft.md frontmatter: current_stage: questioning
-- Proceed to vision_questioning step (B3 will implement this)
+- Proceed to vision_questioning step.
+</step>
+
+<step name="vision_questioning">
+**Structured Questioning Loop (Fresh path only)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Read .mgw/vision-research.json to get suggested_questions.
+Read .mgw/vision-draft.md to get current state.
+
+Initialize loop:
+```bash
+ROUND=0
+SOFT_CAP=8
+HARD_CAP=15
+SOFT_CAP_REACHED=false
+```
+
+**Questioning loop:**
+
+Each round:
+
+1. Load questions remaining from .mgw/vision-research.json suggested_questions (dequeue used ones).
+   Also allow orchestrator to generate follow-up questions based on previous answers.
+
+2. Present 2-4 questions to user (never more than 4 per round):
+   ```
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Vision Cycle — Round {N} of {SOFT_CAP}
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   1) {question_1}
+   2) {question_2}
+   3) {question_3}
+
+   (Answer all, some, or type 'done' to proceed to synthesis)
+   ```
+
+3. Capture user answers as ANSWERS_ROUND_N.
+
+4. Append round to .mgw/vision-draft.md:
+   ```markdown
+   ## Round {N} — {TIMESTAMP}
+   **Questions asked:**
+   1. {q1}
+   2. {q2}
+
+   **Answers:**
+   {ANSWERS_ROUND_N}
+
+   **Key decisions extracted:**
+   - {decision_1}
+   - {decision_2}
+   ```
+   (Key decisions: orchestrator extracts 1-3 concrete decisions from answers inline — no agent spawn needed)
+
+5. Increment ROUND.
+   Update .mgw/vision-draft.md frontmatter: rounds_completed={ROUND}
+
+6. **Soft cap check** (after round {SOFT_CAP}):
+   If ROUND >= SOFT_CAP and !SOFT_CAP_REACHED:
+     Set SOFT_CAP_REACHED=true
+     Update vision-draft.md frontmatter: soft_cap_reached=true
+     Display:
+     ```
+     ─────────────────────────────────────
+     We've covered {ROUND} rounds of questions.
+
+     Options:
+       D) Dig deeper — continue questioning (up to {HARD_CAP} rounds total)
+       S) Synthesize — proceed to Vision Brief generation
+     ─────────────────────────────────────
+     ```
+     If user chooses S: exit loop and proceed to vision_synthesis
+     If user chooses D: continue loop
+
+7. **Hard cap** (ROUND >= HARD_CAP): automatically exit loop with notice:
+   ```
+   Reached {HARD_CAP}-round limit. Proceeding to synthesis.
+   ```
+
+8. **User 'done'**: if user types 'done' as answer: exit loop immediately.
+
+After loop exits:
+- Update vision-draft.md frontmatter: current_stage: synthesizing
+- Display: "Questioning complete ({ROUND} rounds). Generating Vision Brief..."
+- Proceed to vision_synthesis step (B4 will implement this)
 </step>
 
 <step name="gather_inputs">
