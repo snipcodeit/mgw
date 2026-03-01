@@ -574,6 +574,228 @@ fi
 Store `PROJECT_NUMBER` and `PROJECT_URL` for inclusion in project.json and the summary report.
 </step>
 
+<step name="sync_milestone_to_board">
+**Sync newly created issues onto the board as items with field values (non-blocking):**
+
+This step runs after `create_project_board` (both init and extend modes). It adds each
+newly created issue as a board item and sets Milestone, Phase, and GSD Route field values.
+Board item IDs are collected here and stored in project.json (as `board_item_id` per issue).
+
+If no board is configured (PROJECT_NUMBER is empty) or the board has no custom fields
+configured (node_id or fields missing from project.json), skip silently.
+
+Non-blocking: any GraphQL error is logged as a WARNING and does not halt the pipeline.
+
+```bash
+# Load board field metadata from project.json
+BOARD_NODE_ID=$(python3 -c "
+import json
+try:
+  p = json.load(open('${MGW_DIR}/project.json'))
+  print(p.get('project', {}).get('project_board', {}).get('node_id', ''))
+except:
+  print('')
+" 2>/dev/null || echo "")
+
+BOARD_FIELDS_JSON=$(python3 -c "
+import json
+try:
+  p = json.load(open('${MGW_DIR}/project.json'))
+  fields = p.get('project', {}).get('project_board', {}).get('fields', {})
+  print(json.dumps(fields))
+except:
+  print('{}')
+" 2>/dev/null || echo "{}")
+
+# Resolve field IDs from stored metadata
+MILESTONE_FIELD_ID=$(echo "$BOARD_FIELDS_JSON" | python3 -c "
+import json,sys
+fields = json.load(sys.stdin)
+print(fields.get('milestone', {}).get('field_id', ''))
+" 2>/dev/null || echo "")
+
+PHASE_FIELD_ID=$(echo "$BOARD_FIELDS_JSON" | python3 -c "
+import json,sys
+fields = json.load(sys.stdin)
+print(fields.get('phase', {}).get('field_id', ''))
+" 2>/dev/null || echo "")
+
+GSD_ROUTE_FIELD_ID=$(echo "$BOARD_FIELDS_JSON" | python3 -c "
+import json,sys
+fields = json.load(sys.stdin)
+print(fields.get('gsd_route', {}).get('field_id', ''))
+" 2>/dev/null || echo "")
+
+GSD_ROUTE_OPTIONS=$(echo "$BOARD_FIELDS_JSON" | python3 -c "
+import json,sys
+fields = json.load(sys.stdin)
+print(json.dumps(fields.get('gsd_route', {}).get('options', {})))
+" 2>/dev/null || echo "{}")
+
+# Determine if sync is possible
+BOARD_SYNC_ENABLED=false
+if [ -n "$PROJECT_NUMBER" ] && [ -n "$BOARD_NODE_ID" ]; then
+  BOARD_SYNC_ENABLED=true
+  echo ""
+  echo "Syncing ${TOTAL_ISSUES_CREATED} issues onto board #${PROJECT_NUMBER}..."
+elif [ -n "$PROJECT_NUMBER" ] && [ -z "$BOARD_NODE_ID" ]; then
+  echo ""
+  echo "NOTE: Board #${PROJECT_NUMBER} exists but custom fields not configured."
+  echo "      Run /mgw:board create to set up fields, then board sync will be available."
+fi
+
+# ISSUE_RECORD format: "milestone_index:issue_number:title:phase_num:phase_name:gsd_route:depends_on"
+# ITEM_ID_MAP accumulates: "issue_number:item_id" for project.json storage
+ITEM_ID_MAP=()
+BOARD_SYNC_WARNINGS=()
+
+if [ "$BOARD_SYNC_ENABLED" = "true" ]; then
+  for RECORD in "${ISSUE_RECORDS[@]}"; do
+    ISSUE_NUM=$(echo "$RECORD" | cut -d':' -f2)
+    ISSUE_PHASE_NUM=$(echo "$RECORD" | cut -d':' -f4)
+    ISSUE_PHASE_NAME=$(echo "$RECORD" | cut -d':' -f5)
+    ISSUE_GSD_ROUTE=$(echo "$RECORD" | cut -d':' -f6)
+    ISSUE_MILESTONE_IDX=$(echo "$RECORD" | cut -d':' -f1)
+
+    # Get milestone name for this issue
+    ISSUE_MILESTONE_NAME=$(python3 -c "
+import json
+try:
+  d = json.load(open('/tmp/mgw-template.json'))
+  print(d['milestones'][${ISSUE_MILESTONE_IDX}]['name'])
+except:
+  print('')
+" 2>/dev/null || echo "")
+
+    # Resolve GitHub issue node ID (needed for addProjectV2ItemById)
+    ISSUE_NODE_ID=$(gh api graphql -f query='
+      query($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          issue(number: $number) { id }
+        }
+      }
+    ' -f owner="$OWNER" -f repo="$REPO_NAME" -F number="${ISSUE_NUM}" \
+      --jq '.data.repository.issue.id' 2>/dev/null || echo "")
+
+    if [ -z "$ISSUE_NODE_ID" ]; then
+      BOARD_SYNC_WARNINGS+=("WARNING: Could not resolve node ID for issue #${ISSUE_NUM} — skipping board sync for this issue")
+      continue
+    fi
+
+    # Add issue to board
+    ADD_RESULT=$(gh api graphql -f query='
+      mutation($projectId: ID!, $contentId: ID!) {
+        addProjectV2ItemById(input: {
+          projectId: $projectId
+          contentId: $contentId
+        }) {
+          item { id }
+        }
+      }
+    ' -f projectId="$BOARD_NODE_ID" -f contentId="$ISSUE_NODE_ID" 2>/dev/null)
+
+    ITEM_ID=$(echo "$ADD_RESULT" | python3 -c "
+import json,sys
+try:
+  d = json.load(sys.stdin)
+  print(d['data']['addProjectV2ItemById']['item']['id'])
+except:
+  print('')
+" 2>/dev/null || echo "")
+
+    if [ -z "$ITEM_ID" ]; then
+      BOARD_SYNC_WARNINGS+=("WARNING: Failed to add issue #${ISSUE_NUM} to board")
+      continue
+    fi
+
+    echo "  Added #${ISSUE_NUM} to board (item: ${ITEM_ID})"
+    ITEM_ID_MAP+=("${ISSUE_NUM}:${ITEM_ID}")
+
+    # Set Milestone field (TEXT)
+    if [ -n "$MILESTONE_FIELD_ID" ] && [ -n "$ISSUE_MILESTONE_NAME" ]; then
+      gh api graphql -f query='
+        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
+          updateProjectV2ItemFieldValue(input: {
+            projectId: $projectId
+            itemId: $itemId
+            fieldId: $fieldId
+            value: { text: $value }
+          }) { projectV2Item { id } }
+        }
+      ' -f projectId="$BOARD_NODE_ID" -f itemId="$ITEM_ID" \
+        -f fieldId="$MILESTONE_FIELD_ID" -f value="$ISSUE_MILESTONE_NAME" \
+        2>/dev/null || BOARD_SYNC_WARNINGS+=("WARNING: Failed to set Milestone field on board item for #${ISSUE_NUM}")
+    fi
+
+    # Set Phase field (TEXT) — "Phase N: Phase Name"
+    if [ -n "$PHASE_FIELD_ID" ]; then
+      PHASE_DISPLAY="Phase ${ISSUE_PHASE_NUM}: ${ISSUE_PHASE_NAME}"
+      gh api graphql -f query='
+        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: String!) {
+          updateProjectV2ItemFieldValue(input: {
+            projectId: $projectId
+            itemId: $itemId
+            fieldId: $fieldId
+            value: { text: $value }
+          }) { projectV2Item { id } }
+        }
+      ' -f projectId="$BOARD_NODE_ID" -f itemId="$ITEM_ID" \
+        -f fieldId="$PHASE_FIELD_ID" -f value="$PHASE_DISPLAY" \
+        2>/dev/null || BOARD_SYNC_WARNINGS+=("WARNING: Failed to set Phase field on board item for #${ISSUE_NUM}")
+    fi
+
+    # Set GSD Route field (SINGLE_SELECT) — look up option ID from stored map
+    if [ -n "$GSD_ROUTE_FIELD_ID" ]; then
+      # Map template gsd_route to board option key (e.g. "plan-phase" → "gsd:plan-phase")
+      # GSD_ROUTE_OPTIONS stores keys like "gsd:quick", "gsd:plan-phase", etc.
+      ROUTE_OPTION_ID=$(echo "$GSD_ROUTE_OPTIONS" | python3 -c "
+import json,sys
+opts = json.load(sys.stdin)
+# Try exact match on gsd: prefix first, then plain match
+route = '${ISSUE_GSD_ROUTE}'
+for key, val in opts.items():
+    if key == 'gsd:' + route or key == route:
+        print(val)
+        sys.exit(0)
+# Fallback: plain match on the route name without prefix
+for key, val in opts.items():
+    if key.endswith(':' + route) or key == route:
+        print(val)
+        sys.exit(0)
+print('')
+" 2>/dev/null || echo "")
+
+      if [ -n "$ROUTE_OPTION_ID" ]; then
+        gh api graphql -f query='
+          mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+            updateProjectV2ItemFieldValue(input: {
+              projectId: $projectId
+              itemId: $itemId
+              fieldId: $fieldId
+              value: { singleSelectOptionId: $optionId }
+            }) { projectV2Item { id } }
+          }
+        ' -f projectId="$BOARD_NODE_ID" -f itemId="$ITEM_ID" \
+          -f fieldId="$GSD_ROUTE_FIELD_ID" -f optionId="$ROUTE_OPTION_ID" \
+          2>/dev/null || BOARD_SYNC_WARNINGS+=("WARNING: Failed to set GSD Route field on board item for #${ISSUE_NUM}")
+      fi
+    fi
+  done
+
+  if [ ${#BOARD_SYNC_WARNINGS[@]} -gt 0 ]; then
+    echo ""
+    echo "Board sync warnings:"
+    for W in "${BOARD_SYNC_WARNINGS[@]}"; do
+      echo "  $W"
+    done
+  fi
+
+  BOARD_SYNC_COUNT=$((${#ITEM_ID_MAP[@]}))
+  echo "  Board sync complete: ${BOARD_SYNC_COUNT}/${TOTAL_ISSUES_CREATED} issues synced"
+fi
+```
+</step>
+
 <step name="write_project_json">
 **Write .mgw/project.json with project state**
 
@@ -607,6 +829,8 @@ for m_idx, milestone in enumerate(template_data['milestones']):
             # Find github number from SLUG_TO_NUMBER
             slug = slugify(issue['title'])[:40]
             gh_num = SLUG_TO_NUMBER_MAP.get(slug)
+            # Look up board_item_id from ITEM_ID_MAP if available
+            item_id = ITEM_ID_MAP_DICT.get(gh_num, None)
             issues_out.append({
                 "github_number": gh_num,
                 "title": issue['title'],
@@ -615,7 +839,8 @@ for m_idx, milestone in enumerate(template_data['milestones']):
                 "gsd_route": phase.get('gsd_route', 'plan-phase'),
                 "labels": issue.get('labels', []),
                 "depends_on_slugs": issue.get('depends_on', []),
-                "pipeline_stage": "new"
+                "pipeline_stage": "new",
+                "board_item_id": item_id
             })
 
     milestones_out.append({
@@ -658,13 +883,29 @@ import json, sys
 
 # Read template data from the validated generated file
 template_data = json.load(open('/tmp/mgw-template.json'))
-# ... (construct from available bash variables)
+
+# Build ITEM_ID_MAP_DICT from bash ITEM_ID_MAP array ("issue_num:item_id" entries)
+# This dict maps github_number (int) -> board_item_id (str)
+ITEM_ID_MAP_DICT = {}
+for entry in [x for x in '''${ITEM_ID_MAP[*]}'''.split() if ':' in x]:
+    parts = entry.split(':', 1)
+    try:
+        ITEM_ID_MAP_DICT[int(parts[0])] = parts[1]
+    except (ValueError, IndexError):
+        pass
+
+# ... (construct from available bash variables — see pseudocode above)
 PYEOF
 ```
 
 The simplest implementation: build the JSON structure incrementally during the
 issue/milestone creation steps (maintaining bash arrays), then assemble them into
 a python3 dictionary and write with `json.dumps(indent=2)` at this step.
+
+The `ITEM_ID_MAP` bash array (populated in `sync_milestone_to_board`) contains entries
+in `"issue_number:board_item_id"` format. Decode it into `ITEM_ID_MAP_DICT` (as shown
+above) and use it when building each issue record so `board_item_id` is stored.
+If board sync was skipped (ITEM_ID_MAP is empty), `board_item_id` is null for all issues.
 
 Note: use `GENERATED_TYPE` (read from `/tmp/mgw-template.json`) for the `template` field in project.json,
 not a hardcoded template name.
@@ -770,7 +1011,12 @@ Warnings:
 - [ ] Slug-to-number mapping built during Pass 1b
 - [ ] Dependency labels applied (Pass 2) — blocked-by:#N on dependent issues
 - [ ] cross-refs.json updated with dependency entries
-- [ ] .mgw/project.json written with full project state
+- [ ] Board sync: if board configured (PROJECT_NUMBER + BOARD_NODE_ID in project.json), each new issue added as board item
+- [ ] Board sync: Milestone, Phase, and GSD Route fields set on each board item where field IDs are available
+- [ ] Board sync: board_item_id stored per issue in project.json (null if board sync skipped or failed)
+- [ ] Board sync: non-blocking — GraphQL errors logged as warnings, pipeline continues
+- [ ] Board sync: skipped silently if board not configured or custom fields not set up
+- [ ] .mgw/project.json written with full project state (including board_item_id per issue)
 - [ ] Post-init summary displayed
 - [ ] Command does NOT trigger execution (PROJ-05)
 - [ ] Extend mode: all milestones complete detected, new milestones appended, existing data preserved
