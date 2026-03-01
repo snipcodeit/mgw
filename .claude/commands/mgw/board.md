@@ -1,7 +1,7 @@
 ---
 name: mgw:board
 description: Create, show, and configure the GitHub Projects v2 board for this repo
-argument-hint: "<create|show|configure>"
+argument-hint: "<create|show|configure|views>"
 allowed-tools:
   - Bash
   - Read
@@ -10,14 +10,17 @@ allowed-tools:
 ---
 
 <objective>
-Manage the GitHub Projects v2 board for the current MGW project. Three subcommands:
+Manage the GitHub Projects v2 board for the current MGW project. Four subcommands:
 
 - `create` — Idempotent: creates the board and custom fields if not yet in project.json.
   If board already exists in project.json, exits cleanly with the board URL.
 - `show` — Displays current board state: board URL, field IDs, and a summary of items
-  grouped by pipeline_stage.
+  grouped by pipeline_stage. Also shows configured views.
 - `configure` — Updates board field options (add new pipeline stages, GSD routes, etc.)
   based on the current board-schema definitions.
+- `views` — Creates GitHub Projects v2 layout views (Board/Kanban, Table, Roadmap).
+  Subcommands: `views kanban`, `views table`, `views roadmap`. Creates the view and
+  outputs instructions for manual group-by configuration in the GitHub UI.
 
 All board API calls use GitHub GraphQL v4. Board metadata is stored in project.json
 under `project.project_board.fields`. Board item sync (adding issues as board items)
@@ -49,19 +52,20 @@ Board schema: .mgw/board-schema.json (if exists) or embedded defaults from docs/
 SUBCOMMAND=$(echo "$ARGUMENTS" | awk '{print $1}')
 
 if [ -z "$SUBCOMMAND" ]; then
-  echo "Usage: /mgw:board <create|show|configure>"
+  echo "Usage: /mgw:board <create|show|configure|views>"
   echo ""
-  echo "  create     Create board and custom fields (idempotent)"
-  echo "  show       Display board state and item counts"
-  echo "  configure  Update board field options"
+  echo "  create          Create board and custom fields (idempotent)"
+  echo "  show            Display board state and item counts"
+  echo "  configure       Update board field options"
+  echo "  views <layout>  Create layout views (kanban, table, roadmap)"
   exit 1
 fi
 
 case "$SUBCOMMAND" in
-  create|show|configure) ;;
+  create|show|configure|views) ;;
   *)
     echo "Unknown subcommand: ${SUBCOMMAND}"
-    echo "Valid: create, show, configure"
+    echo "Valid: create, show, configure, views"
     exit 1
     ;;
 esac
@@ -738,6 +742,31 @@ for status, items in by_status.items():
 " 2>/dev/null
 
   echo ""
+
+  # Show configured views if any
+  VIEWS_JSON=$(echo "$PROJECT_JSON" | python3 -c "
+import json,sys
+p = json.load(sys.stdin)
+board = p.get('project', {}).get('project_board', {})
+views = board.get('views', {})
+print(json.dumps(views))
+" 2>/dev/null || echo "{}")
+
+  if [ "$VIEWS_JSON" != "{}" ] && [ -n "$VIEWS_JSON" ]; then
+    echo "Configured Views:"
+    echo "$VIEWS_JSON" | python3 -c "
+import json,sys
+views = json.load(sys.stdin)
+for key, v in views.items():
+    print(f'  {v[\"name\"]:<35} {v[\"layout\"]:<16} (ID: {v[\"view_id\"]})')
+" 2>/dev/null
+    echo ""
+  else
+    echo "Views: none configured"
+    echo "  Run /mgw:board views kanban to create the kanban view"
+    echo ""
+  fi
+
   echo "Open board: ${BOARD_URL}"
 
 fi  # end show subcommand
@@ -945,6 +974,193 @@ fi  # end configure subcommand
 ```
 </step>
 
+<step name="subcommand_views">
+**Execute 'views' subcommand:**
+
+Only run if `$SUBCOMMAND = "views"`.
+
+Creates GitHub Projects v2 layout views. Subcommand argument is the view type:
+`kanban`, `table`, or `roadmap`. GitHub's API supports creating views but does NOT
+support programmatic configuration of board grouping — that must be set in the UI.
+
+```bash
+if [ "$SUBCOMMAND" = "views" ]; then
+  if [ "$BOARD_CONFIGURED" = "false" ]; then
+    echo "No board configured. Run /mgw:board create first."
+    exit 1
+  fi
+
+  VIEW_TYPE=$(echo "$ARGUMENTS" | awk '{print $2}')
+
+  if [ -z "$VIEW_TYPE" ]; then
+    echo "Usage: /mgw:board views <kanban|table|roadmap>"
+    echo ""
+    echo "  kanban   Create Board layout view (swimlanes by Status)"
+    echo "  table    Create Table layout view (flat list with all fields)"
+    echo "  roadmap  Create Roadmap layout view (timeline by Milestone)"
+    exit 1
+  fi
+
+  case "$VIEW_TYPE" in
+    kanban|table|roadmap) ;;
+    *)
+      echo "Unknown view type: ${VIEW_TYPE}"
+      echo "Valid: kanban, table, roadmap"
+      exit 1
+      ;;
+  esac
+```
+
+**Map view type to layout and name:**
+
+```bash
+  case "$VIEW_TYPE" in
+    kanban)
+      VIEW_NAME="Kanban — Pipeline Stages"
+      VIEW_LAYOUT="BOARD_LAYOUT"
+      VIEW_KEY="kanban"
+      ;;
+    table)
+      VIEW_NAME="All Issues"
+      VIEW_LAYOUT="TABLE_LAYOUT"
+      VIEW_KEY="table"
+      ;;
+    roadmap)
+      VIEW_NAME="Roadmap"
+      VIEW_LAYOUT="ROADMAP_LAYOUT"
+      VIEW_KEY="roadmap"
+      ;;
+  esac
+
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " MGW ► BOARD VIEWS: ${VIEW_NAME}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "Board: #${BOARD_NUMBER} — ${BOARD_URL}"
+  echo "Creating ${VIEW_LAYOUT} view: '${VIEW_NAME}'..."
+  echo ""
+```
+
+**Create the view via GraphQL:**
+
+```bash
+  CREATE_VIEW_RESULT=$(gh api graphql -f query='
+    mutation($projectId: ID!, $name: String!, $layout: ProjectV2ViewLayout!) {
+      createProjectV2View(input: {
+        projectId: $projectId
+        name: $name
+        layout: $layout
+      }) {
+        projectV2View {
+          id
+          name
+          layout
+        }
+      }
+    }
+  ' -f projectId="$BOARD_NODE_ID" \
+    -f name="$VIEW_NAME" \
+    -f layout="$VIEW_LAYOUT" 2>&1)
+
+  VIEW_ID=$(echo "$CREATE_VIEW_RESULT" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+print(d['data']['createProjectV2View']['projectV2View']['id'])
+" 2>/dev/null)
+
+  VIEW_LAYOUT_RETURNED=$(echo "$CREATE_VIEW_RESULT" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+print(d['data']['createProjectV2View']['projectV2View']['layout'])
+" 2>/dev/null)
+
+  if [ -z "$VIEW_ID" ]; then
+    echo "ERROR: Failed to create view."
+    echo "GraphQL response: ${CREATE_VIEW_RESULT}"
+    exit 1
+  fi
+
+  echo "View created:"
+  echo "  Name:   ${VIEW_NAME}"
+  echo "  Layout: ${VIEW_LAYOUT_RETURNED}"
+  echo "  ID:     ${VIEW_ID}"
+  echo ""
+```
+
+**Store view ID in project.json:**
+
+```bash
+  python3 << PYEOF
+import json
+
+with open('${MGW_DIR}/project.json') as f:
+    project = json.load(f)
+
+# Ensure views dict exists under project_board
+board = project.setdefault('project', {}).setdefault('project_board', {})
+views = board.setdefault('views', {})
+
+views['${VIEW_KEY}'] = {
+    'view_id': '${VIEW_ID}',
+    'name': '${VIEW_NAME}',
+    'layout': '${VIEW_LAYOUT}'
+}
+
+with open('${MGW_DIR}/project.json', 'w') as f:
+    json.dump(project, f, indent=2)
+
+print('project.json updated with view ID')
+PYEOF
+```
+
+**Output instructions and next steps:**
+
+```bash
+  echo "View ID stored in .mgw/project.json under project.project_board.views.${VIEW_KEY}"
+  echo ""
+
+  case "$VIEW_TYPE" in
+    kanban)
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo " NEXT STEP: Configure Group By in GitHub UI"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      echo "GitHub's API does not support setting board grouping programmatically."
+      echo "To create swimlanes by pipeline stage:"
+      echo ""
+      echo "  1. Open the board: ${BOARD_URL}"
+      echo "  2. Click '${VIEW_NAME}' in the view tabs"
+      echo "  3. Click the view settings (down-arrow next to view name)"
+      echo "  4. Select 'Group by' -> 'Status'"
+      echo ""
+      echo "Each pipeline stage will become a swimlane column:"
+      echo "  New / Triaged / Planning / Executing / Verifying / PR Created / Done"
+      echo "  + Needs Info / Needs Security Review / Discussing / Approved / Failed / Blocked"
+      echo ""
+      echo "See docs/BOARD-SCHEMA.md for full view configuration reference."
+      ;;
+    table)
+      echo "Table view created. Recommended configuration in GitHub UI:"
+      echo "  1. Open: ${BOARD_URL}"
+      echo "  2. Select '${VIEW_NAME}' tab"
+      echo "  3. Sort by 'Status' ascending to surface active work at top"
+      echo ""
+      echo "See docs/BOARD-SCHEMA.md for full view configuration reference."
+      ;;
+    roadmap)
+      echo "Roadmap view created. Recommended configuration in GitHub UI:"
+      echo "  1. Open: ${BOARD_URL}"
+      echo "  2. Select '${VIEW_NAME}' tab"
+      echo "  3. Set date fields and group by 'Milestone'"
+      echo ""
+      echo "See docs/BOARD-SCHEMA.md for full view configuration reference."
+      ;;
+  esac
+
+fi  # end views subcommand
+```
+</step>
+
 </process>
 
 <success_criteria>
@@ -969,4 +1185,16 @@ fi  # end configure subcommand
 - [ ] configure: compares against canonical schema, reports missing options
 - [ ] configure: lists all missing Status options, GSD Route options, and text fields
 - [ ] configure: explains GitHub Projects v2 limitation on adding options to existing fields
+- [ ] show: displays configured views (name, layout, ID) if any views exist
+- [ ] show: prompts to run views kanban if no views are configured
+- [ ] views: board not configured → clear error message
+- [ ] views: no view type argument → usage message listing kanban, table, roadmap
+- [ ] views: unknown view type → clear error message
+- [ ] views: createProjectV2View mutation succeeds — view ID captured
+- [ ] views: view ID stored in project.json under project.project_board.views
+- [ ] views kanban: outputs step-by-step instructions for setting Group by Status in GitHub UI
+- [ ] views kanban: lists all 13 pipeline stage columns user will see after configuring
+- [ ] views table: outputs instructions for sorting by Status
+- [ ] views roadmap: outputs instructions for date fields and milestone grouping
+- [ ] views: references docs/BOARD-SCHEMA.md for full view configuration documentation
 </success_criteria>
