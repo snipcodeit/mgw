@@ -39,11 +39,25 @@ MGW orchestrates. MGW never codes. See `workflows/validation.md` for the full ru
 - Make implementation decisions
 - Analyze code for scope or security (spawn an agent for this)
 
+### Vision Collaboration Cycle (Fresh Projects)
+
+When `mgw:project` detects a Fresh state (no existing GSD or GitHub state), it runs a 6-stage vision cycle before creating any GitHub structure:
+
+1. **Intake** — freeform project description from user
+2. **Domain Expansion** — `vision-researcher` Task agent produces `.mgw/vision-research.json`
+3. **Structured Questioning** — 3-8 rounds (soft cap), 15 max (hard cap); decisions appended to `.mgw/vision-draft.md`
+4. **Vision Synthesis** — `vision-synthesizer` Task agent produces `.mgw/vision-brief.json` (schema: `templates/vision-brief-schema.json`)
+5. **Review** — user accepts or requests revisions (loops back to synthesis)
+6. **Condense** — `vision-condenser` Task agent produces `.mgw/vision-handoff.md` for `gsd:new-project` spawn
+
+Context strategy: rolling summary only. Agents receive Vision Brief + latest delta, never full transcript.
+
 ### Key Directories
 
 | Directory | Owner | Purpose |
 |-----------|-------|---------|
 | `.mgw/` | MGW | Pipeline state, cross-refs, project.json |
+| `.mgw/vision-*.json` | Vision Brief artifacts (runtime, gitignored): `vision-research.json`, `vision-brief.json`, `vision-handoff.md`, `vision-draft.md`, `alignment-report.json`, `drift-report.json` |
 | `.planning/` | GSD | ROADMAP.md, STATE.md, config.json, phase plans |
 | `commands/` | MGW | Slash command definitions (mirrored to .claude/commands/mgw/) |
 | `workflows/` | MGW | Shared workflow patterns referenced by commands |
