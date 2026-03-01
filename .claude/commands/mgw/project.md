@@ -17,9 +17,10 @@ issues scaffolded from AI-generated project-specific content, dependencies label
 state persisted. The developer never leaves Claude Code and never does project management
 manually.
 
-MGW does NOT write to .planning/ — that directory is owned by GSD. If a project needs
-a ROADMAP.md or other GSD files, run the appropriate GSD command (e.g., /gsd:new-milestone)
-after project initialization.
+MGW does NOT write to .planning/ directly — that directory is owned by GSD. For Fresh
+projects, MGW spawns a gsd:new-project Task agent (spawn_gsd_new_project step) which creates
+.planning/PROJECT.md and .planning/ROADMAP.md as part of the vision cycle. For non-Fresh
+projects with existing GSD state, .planning/ is already populated before this command runs.
 
 This command creates structure only. It does NOT trigger execution.
 Run /mgw:milestone to begin executing the first milestone.
@@ -729,13 +730,97 @@ After condenser completes:
 1. Verify .mgw/vision-handoff.md exists and has content
 2. Display: "Vision Brief condensed. Ready to initialize project structure."
 3. Update .mgw/vision-draft.md frontmatter: current_stage: spawning
-4. Proceed to spawn_gsd_new_project step (B5 will implement this)
+4. Proceed to spawn_gsd_new_project step.
+</step>
+
+<step name="spawn_gsd_new_project">
+**Spawn gsd:new-project with Vision Brief context (Fresh path only)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Read .mgw/vision-handoff.md:
+```bash
+HANDOFF_CONTENT=$(cat .mgw/vision-handoff.md)
+```
+
+Display: "Spawning gsd:new-project with full vision context..."
+
+Spawn gsd:new-project as a Task agent, passing the handoff document as context prefix:
+
+Task(
+  description="Initialize GSD project from Vision Brief",
+  subagent_type="general-purpose",
+  prompt="
+${HANDOFF_CONTENT}
+
+---
+
+You are now running gsd:new-project. Using the Vision Brief above as your full project context, create:
+
+1. .planning/PROJECT.md — Complete project definition following GSD format:
+   - Project name and one-line description from vision brief
+   - Vision and goals aligned with the value proposition
+   - Target users from the personas
+   - Core requirements mapping to the must-have features
+   - Non-goals matching the wont-have list
+   - Success criteria from success_metrics
+   - Technical constraints listed explicitly
+
+2. .planning/ROADMAP.md — First milestone plan following GSD format:
+   - Use the first milestone from recommended_milestone_structure
+   - Break it into 3-8 phases
+   - Each phase has: number, name, goal, requirements, success criteria
+   - Phase numbering starts at 1
+   - Include a progress table at the top
+
+Write both files. Do not create additional files. Do not deviate from the Vision Brief scope.
+"
+)
+
+After agent completes:
+1. Verify .planning/PROJECT.md exists:
+   ```bash
+   if [ ! -f .planning/PROJECT.md ]; then
+     echo "ERROR: gsd:new-project did not create .planning/PROJECT.md"
+     echo "Check the agent output and retry, or create PROJECT.md manually."
+     exit 1
+   fi
+   ```
+
+2. Verify .planning/ROADMAP.md exists:
+   ```bash
+   if [ ! -f .planning/ROADMAP.md ]; then
+     echo "ERROR: gsd:new-project did not create .planning/ROADMAP.md"
+     echo "Check the agent output and retry, or create ROADMAP.md manually."
+     exit 1
+   fi
+   ```
+
+3. Display success:
+   ```
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    GSD Project Initialized
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   .planning/PROJECT.md  created
+   .planning/ROADMAP.md  created (first milestone phases ready)
+
+   Vision cycle: {rounds_completed} rounds -> Vision Brief -> PROJECT.md
+   ```
+
+4. Update .mgw/vision-draft.md frontmatter: current_stage: complete
+
+5. Proceed to milestone_mapper step:
+   The ROADMAP.md now exists, so PATH A (HAS_ROADMAP=true) logic applies.
+   Call the milestone_mapper step to read ROADMAP.md and create GitHub milestones/issues.
+   (Note: at this point STATE_CLASS was Fresh but now GSD files exist — the milestone_mapper
+   step was designed for the GSD-Only path but works identically here. Proceed to it directly.)
 </step>
 
 <step name="gather_inputs">
 **Gather project inputs conversationally:**
 
-If STATE_CLASS = Fresh: skip this step (handled by vision_intake and vision_research above).
+If STATE_CLASS = Fresh: skip this step (handled by vision_intake through spawn_gsd_new_project above — proceed directly to milestone_mapper).
 
 Ask the following questions in sequence:
 
