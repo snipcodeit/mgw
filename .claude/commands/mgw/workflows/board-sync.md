@@ -1,10 +1,12 @@
 <purpose>
-Shared board sync utilities for MGW pipeline commands. Two functions are exported:
+Shared board sync utilities for MGW pipeline commands. Three functions are exported:
 
 - update_board_status — Called after any pipeline_stage transition to update the board
   item's Status (single-select) field.
 - update_board_agent_state — Called around GSD agent spawns to surface the active agent
   in the board item's "AI Agent State" (text) field. Cleared after PR creation.
+- sync_pr_to_board — Called after PR creation to add the PR as a board item (PR-type
+  item linked to the issue's board item).
 
 All board updates are non-blocking: if the board is not configured, if the issue has no
 board_item_id, or if the API call fails, the function returns silently. A board sync
@@ -295,6 +297,100 @@ update_board_agent_state $ISSUE_NUMBER "Verifying phase ${PHASE_NUM}"
 update_board_agent_state $ISSUE_NUMBER ""
 ```
 
+### sync_pr_to_board — in run.md and pr.md (after PR creation)
+
+Called immediately after `gh pr create` succeeds in both run.md and pr.md (linked mode):
+```bash
+# After PR created
+sync_pr_to_board $ISSUE_NUMBER $PR_NUMBER  # non-blocking board PR link
+```
+
+## sync_pr_to_board
+
+Call this function after PR creation to add the PR as a board item. In GitHub Projects v2,
+`addProjectV2ItemById` with a PR's node ID creates a PR-type item that GitHub Projects
+tracks separately from the issue item.
+
+```bash
+# sync_pr_to_board — Add PR as a board item, linked to the issue's board item
+# Args: ISSUE_NUMBER, PR_NUMBER
+# Non-blocking: all failures are silent no-ops
+sync_pr_to_board() {
+  local ISSUE_NUMBER="$1"
+  local PR_NUMBER="$2"
+
+  if [ -z "$ISSUE_NUMBER" ] || [ -z "$PR_NUMBER" ]; then return 0; fi
+
+  # Read board project node ID from project.json (non-blocking — if not configured, skip)
+  BOARD_NODE_ID=$(python3 -c "
+import json, sys
+try:
+    p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+    print(p.get('project', {}).get('project_board', {}).get('node_id', ''))
+except:
+    print('')
+" 2>/dev/null || echo "")
+  if [ -z "$BOARD_NODE_ID" ]; then return 0; fi
+
+  # Get PR node ID from GitHub (non-blocking)
+  PR_NODE_ID=$(gh pr view "$PR_NUMBER" --json id -q .id 2>/dev/null || echo "")
+  if [ -z "$PR_NODE_ID" ]; then return 0; fi
+
+  # Add PR to board as a PR-type item (creates a separate board entry linked to the PR)
+  ITEM_ID=$(gh api graphql -f query='
+    mutation($projectId: ID!, $contentId: ID!) {
+      addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+        item { id }
+      }
+    }
+  ' -f projectId="$BOARD_NODE_ID" -f contentId="$PR_NODE_ID" \
+    --jq '.data.addProjectV2ItemById.item.id' 2>/dev/null || echo "")
+
+  if [ -n "$ITEM_ID" ]; then
+    echo "MGW: PR #${PR_NUMBER} added to board (item: ${ITEM_ID})"
+  fi
+}
+```
+
+## sync_pr_to_board — Board Reconciliation in sync.md
+
+During `mgw:sync`, after cross-refs are loaded, check for any `implements` links
+(issue → PR) that don't yet have a board item for the PR. For each such link, call
+`sync_pr_to_board` to ensure the board reflects all linked PRs.
+
+```bash
+# Board reconciliation — ensure all PR cross-refs have board items (non-blocking)
+if [ -f "${REPO_ROOT}/.mgw/project.json" ] && [ -f "${REPO_ROOT}/.mgw/cross-refs.json" ]; then
+  BOARD_NODE_ID=$(python3 -c "
+import json, sys
+try:
+    p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+    print(p.get('project', {}).get('project_board', {}).get('node_id', ''))
+except:
+    print('')
+" 2>/dev/null || echo "")
+
+  if [ -n "$BOARD_NODE_ID" ]; then
+    # Find all issue→PR implements links in cross-refs
+    PR_LINKS=$(python3 -c "
+import json
+refs = json.load(open('${REPO_ROOT}/.mgw/cross-refs.json'))
+for link in refs.get('links', []):
+    if link.get('type') == 'implements' and link['a'].startswith('issue:') and link['b'].startswith('pr:'):
+        issue_num = link['a'].split(':')[1]
+        pr_num = link['b'].split(':')[1]
+        print(f'{issue_num} {pr_num}')
+" 2>/dev/null || echo "")
+
+    # For each issue→PR link, ensure the PR is on the board (sync_pr_to_board is idempotent)
+    while IFS=' ' read -r LINKED_ISSUE LINKED_PR; do
+      [ -z "$LINKED_PR" ] && continue
+      sync_pr_to_board "$LINKED_ISSUE" "$LINKED_PR"  # non-blocking
+    done <<< "$PR_LINKS"
+  fi
+fi
+```
+
 ## Consumers
 
 | Command | Function | When Called |
@@ -302,3 +398,6 @@ update_board_agent_state $ISSUE_NUMBER ""
 | issue.md | update_board_status | After writing pipeline_stage in write_state step |
 | run.md | update_board_status | After each pipeline_stage checkpoint write |
 | run.md | update_board_agent_state | Before each GSD agent spawn, and after PR creation |
+| run.md | sync_pr_to_board | After PR creation (before cross-ref is recorded) |
+| pr.md | sync_pr_to_board | After PR creation in create_pr step (linked mode only) |
+| sync.md | sync_pr_to_board | Board reconciliation — for each PR link in cross-refs |

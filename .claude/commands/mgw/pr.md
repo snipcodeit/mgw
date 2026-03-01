@@ -29,6 +29,7 @@ Works in two modes:
 @~/.claude/commands/mgw/workflows/github.md
 @~/.claude/commands/mgw/workflows/gsd.md
 @~/.claude/commands/mgw/workflows/validation.md
+@~/.claude/commands/mgw/workflows/board-sync.md
 </execution_context>
 
 <context>
@@ -247,6 +248,11 @@ Update state file:
 - Set pipeline_stage to "pr-created"
 
 Add cross-ref: issue → PR link in cross-refs.json.
+
+Sync PR to board (non-blocking):
+```bash
+sync_pr_to_board $ISSUE_NUMBER $PR_NUMBER  # non-blocking — add PR as board item
+```
 </step>
 
 <step name="report">
@@ -274,4 +280,5 @@ Testing procedures posted as PR comment.
 - [ ] Testing procedures posted as separate PR comment
 - [ ] State file updated with PR number (linked mode)
 - [ ] Cross-ref added (linked mode)
+- [ ] PR added to board as board item after creation (non-blocking, linked mode only)
 </success_criteria>

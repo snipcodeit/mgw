@@ -1132,6 +1132,7 @@ Update state (at `${REPO_ROOT}/.mgw/active/`):
 ```bash
 update_board_status $ISSUE_NUMBER "pr-created"  # non-blocking board sync
 update_board_agent_state $ISSUE_NUMBER ""  # clear agent state after PR creation (non-blocking)
+sync_pr_to_board $ISSUE_NUMBER $PR_NUMBER  # non-blocking — add PR as board item
 ```
 
 Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → PR.
@@ -1240,6 +1241,7 @@ Next:
 - [ ] Board Status field synced at each pipeline_stage transition (non-blocking)
 - [ ] AI Agent State field set before each GSD agent spawn (non-blocking)
 - [ ] AI Agent State field cleared after PR creation (non-blocking)
+- [ ] PR added to board as board item after creation (non-blocking)
 - [ ] Board sync failures never block pipeline execution
 - [ ] User prompted to run /mgw:sync after merge
 </success_criteria>
