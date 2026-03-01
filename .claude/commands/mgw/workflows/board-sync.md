@@ -401,3 +401,4 @@ fi
 | run.md | sync_pr_to_board | After PR creation (before cross-ref is recorded) |
 | pr.md | sync_pr_to_board | After PR creation in create_pr step (linked mode only) |
 | sync.md | sync_pr_to_board | Board reconciliation — for each PR link in cross-refs |
+| board.md (sync) | bulk reconciliation | Iterates all .mgw/active/*.json, fetches board items via node ID query, applies updateProjectV2ItemFieldValue for Status/AI Agent State/Phase/Milestone fields. Uses same GraphQL mutations as the three utility functions above, but in a single bulk loop with diff tracking. |
