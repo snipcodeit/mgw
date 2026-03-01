@@ -44,46 +44,6 @@ REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 If not a git repo → error: "Not a git repository. Run from a repo root."
 If no GitHub remote → error: "No GitHub remote found. MGW requires a GitHub repo."
 
-**Check for existing project initialization:**
-
-```bash
-if [ -f "${REPO_ROOT}/.mgw/project.json" ]; then
-  # Check if all milestones are complete
-  ALL_COMPLETE=$(python3 -c "
-import json
-p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
-milestones = p.get('milestones', [])
-current = p.get('current_milestone', 1)
-# All complete when current_milestone exceeds array length
-# (milestone.md increments current_milestone after completing each)
-all_done = current > len(milestones) and len(milestones) > 0
-print('true' if all_done else 'false')
-")
-
-  if [ "$ALL_COMPLETE" = "true" ]; then
-    EXTEND_MODE=true
-    EXISTING_MILESTONE_COUNT=$(python3 -c "import json; print(len(json.load(open('${REPO_ROOT}/.mgw/project.json'))['milestones']))")
-    EXISTING_PHASE_COUNT=$(python3 -c "import json; print(max((int(k) for k in json.load(open('${REPO_ROOT}/.mgw/project.json')).get('phase_map',{}).keys()), default=0))")
-    echo "All ${EXISTING_MILESTONE_COUNT} milestones complete. Entering extend mode."
-    echo "Phase numbering will continue from phase ${EXISTING_PHASE_COUNT}."
-  else
-    echo "Project already initialized. Run /mgw:milestone to continue."
-    exit 0
-  fi
-fi
-```
-
-**Check for GSD ROADMAP.md:**
-
-```bash
-# Check for GSD ROADMAP.md
-HAS_ROADMAP=false
-if [ -f "${REPO_ROOT}/.planning/ROADMAP.md" ]; then
-  HAS_ROADMAP=true
-  echo "Found .planning/ROADMAP.md — will generate project from GSD roadmap."
-fi
-```
-
 **Initialize .mgw/ state (from state.md validate_and_load):**
 
 ```bash
@@ -100,6 +60,224 @@ if [ ! -f "${MGW_DIR}/cross-refs.json" ]; then
   echo '{"links":[]}' > "${MGW_DIR}/cross-refs.json"
 fi
 ```
+</step>
+
+<step name="detect_state">
+**Detect existing project state from five signal sources:**
+
+Check five signals to determine what already exists for this project:
+
+```bash
+# Signal checks
+P=false  # .planning/PROJECT.md exists
+R=false  # .planning/ROADMAP.md exists
+S=false  # .planning/STATE.md exists
+M=false  # .mgw/project.json exists
+G=0      # GitHub milestone count
+
+[ -f "${REPO_ROOT}/.planning/PROJECT.md" ] && P=true
+[ -f "${REPO_ROOT}/.planning/ROADMAP.md" ] && R=true
+[ -f "${REPO_ROOT}/.planning/STATE.md" ] && S=true
+[ -f "${REPO_ROOT}/.mgw/project.json" ] && M=true
+
+G=$(gh api "repos/${REPO}/milestones" --jq 'length' 2>/dev/null || echo 0)
+```
+
+**Classify into STATE_CLASS:**
+
+| State | P | R | S | M | G | Meaning |
+|---|---|---|---|---|---|---|
+| Fresh | false | false | false | false | 0 | Clean slate — no GSD, no MGW |
+| GSD-Only | true | false | false | false | 0 | PROJECT.md present but no roadmap yet |
+| GSD-Mid-Exec | true | true | true | false | 0 | GSD in progress, MGW not yet linked |
+| Aligned | true | — | — | true | >0 | Both MGW + GitHub consistent with each other |
+| Diverged | — | — | — | true | >0 | MGW + GitHub present but inconsistent |
+| Extend | true | — | — | true | >0 | All milestones in project.json are done |
+
+```bash
+# Classification logic
+STATE_CLASS="Fresh"
+EXTEND_MODE=false
+
+if [ "$M" = "true" ] && [ "$G" -gt 0 ]; then
+  # Check if all milestones are complete (Extend detection)
+  ALL_COMPLETE=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+milestones = p.get('milestones', [])
+current = p.get('current_milestone', 1)
+# All complete when current_milestone exceeds array length
+# (milestone.md increments current_milestone after completing each)
+all_done = current > len(milestones) and len(milestones) > 0
+print('true' if all_done else 'false')
+")
+
+  if [ "$ALL_COMPLETE" = "true" ]; then
+    STATE_CLASS="Extend"
+    EXTEND_MODE=true
+    EXISTING_MILESTONE_COUNT=$(python3 -c "import json; print(len(json.load(open('${REPO_ROOT}/.mgw/project.json'))['milestones']))")
+    EXISTING_PHASE_COUNT=$(python3 -c "import json; print(max((int(k) for k in json.load(open('${REPO_ROOT}/.mgw/project.json')).get('phase_map',{}).keys()), default=0))")
+  else
+    # M=true, G>0, not all done — check consistency (Aligned vs Diverged)
+    GH_MILESTONE_COUNT=$G
+    LOCAL_MILESTONE_COUNT=$(python3 -c "import json; print(len(json.load(open('${REPO_ROOT}/.mgw/project.json')).get('milestones', [])))")
+
+    # Consistency: milestone counts match and names overlap
+    CONSISTENCY_OK=$(python3 -c "
+import json, subprocess, sys
+local = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+local_names = set(m['name'] for m in local.get('milestones', []))
+local_count = len(local_names)
+gh_count = ${GH_MILESTONE_COUNT}
+
+# Count mismatch is a drift signal (allow off-by-one for in-flight)
+if abs(local_count - gh_count) > 1:
+    print('false')
+    sys.exit(0)
+
+# Name overlap check: at least 50% of local milestone names found on GitHub
+result = subprocess.run(
+    ['gh', 'api', 'repos/${REPO}/milestones', '--jq', '[.[].title]'],
+    capture_output=True, text=True
+)
+try:
+    gh_names = set(json.loads(result.stdout))
+    overlap = len(local_names & gh_names)
+    print('true' if overlap >= max(1, local_count // 2) else 'false')
+except Exception:
+    print('false')
+")
+
+    if [ "$CONSISTENCY_OK" = "true" ]; then
+      STATE_CLASS="Aligned"
+    else
+      STATE_CLASS="Diverged"
+    fi
+  fi
+elif [ "$M" = "false" ] && [ "$G" -eq 0 ]; then
+  # No MGW state, no GitHub milestones — GSD signals determine class
+  if [ "$P" = "true" ] && [ "$R" = "true" ] && [ "$S" = "true" ]; then
+    STATE_CLASS="GSD-Mid-Exec"
+  elif [ "$P" = "true" ] && [ "$R" = "true" ]; then
+    STATE_CLASS="GSD-Mid-Exec"
+  elif [ "$P" = "true" ]; then
+    STATE_CLASS="GSD-Only"
+  else
+    STATE_CLASS="Fresh"
+  fi
+fi
+
+echo "State detected: ${STATE_CLASS} (P=${P} R=${R} S=${S} M=${M} G=${G})"
+```
+
+**Route by STATE_CLASS:**
+
+```bash
+case "$STATE_CLASS" in
+  "Fresh")
+    # Proceed to gather_inputs (standard flow)
+    ;;
+
+  "GSD-Only"|"GSD-Mid-Exec")
+    # GSD artifacts exist but MGW not initialized — delegate to align_from_gsd
+    # (proceed to align_from_gsd step)
+    ;;
+
+  "Aligned")
+    # MGW + GitHub consistent — display status and offer extend mode
+    TOTAL_ISSUES=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+print(sum(len(m.get('issues', [])) for m in p.get('milestones', [])))
+")
+    echo ""
+    echo "Project already initialized and aligned with GitHub."
+    echo "  Milestones: ${LOCAL_MILESTONE_COUNT} local / ${GH_MILESTONE_COUNT} on GitHub"
+    echo "  Issues: ${TOTAL_ISSUES} tracked in project.json"
+    echo ""
+    echo "Options:"
+    echo "  /mgw:milestone       Execute the next milestone"
+    echo "  /mgw:status          View project status dashboard"
+    echo "  /mgw:project         Re-run with description to extend (adds new milestones)"
+    echo ""
+    echo "To add new milestones to this project, describe the new work you want to add."
+    echo "Otherwise, run /mgw:milestone to continue executing existing work."
+    exit 0
+    ;;
+
+  "Diverged")
+    # MGW + GitHub inconsistent — delegate to reconcile_drift
+    # (proceed to reconcile_drift step)
+    ;;
+
+  "Extend")
+    # All milestones done — entering extend mode
+    echo "All ${EXISTING_MILESTONE_COUNT} milestones complete. Entering extend mode."
+    echo "Phase numbering will continue from phase ${EXISTING_PHASE_COUNT}."
+    # Proceed to gather_inputs in extend mode (EXTEND_MODE=true already set)
+    ;;
+esac
+```
+</step>
+
+<step name="align_from_gsd">
+**Align MGW state from existing GSD artifacts (STATE_CLASS = GSD-Only or GSD-Mid-Exec):**
+
+TODO: A2 will implement this step.
+
+This step will:
+1. Spawn an alignment-analyzer Task agent that reads `.planning/PROJECT.md`, `.planning/ROADMAP.md`, `.planning/MILESTONES.md`, and `.planning/STATE.md`
+2. Produce a structured alignment report at `.mgw/alignment-report.json`
+3. Present the report to the user and ask whether to import GSD state into MGW
+4. If yes, create GitHub milestones and project.json from GSD artifacts
+5. If no, exit with instructions
+
+For now, when STATE_CLASS is GSD-Only or GSD-Mid-Exec, display:
+
+```
+GSD project detected (STATE_CLASS: ${STATE_CLASS}).
+  .planning/PROJECT.md  found: ${P}
+  .planning/ROADMAP.md  found: ${R}
+  .planning/STATE.md    found: ${S}
+
+Alignment from GSD artifacts is not yet implemented (coming in A2).
+
+To initialize MGW for this project:
+  1. Run /mgw:project with a description to create GitHub milestones from scratch.
+     (Your GSD ROADMAP.md and execution history will remain untouched.)
+  2. Or wait for A2 which will auto-import your GSD roadmap into MGW.
+```
+
+Then exit 0.
+</step>
+
+<step name="reconcile_drift">
+**Reconcile drift between .mgw/project.json and GitHub state (STATE_CLASS = Diverged):**
+
+TODO: A5 will implement this step.
+
+This step will:
+1. Spawn a drift-analyzer Task agent that compares `.mgw/project.json` milestones vs live GitHub milestones
+2. Classify each milestone as: matched, renamed, missing-local, missing-github
+3. Produce a reconciliation plan
+4. Present diff to user with options: auto-reconcile, manual review, or reset
+
+For now, when STATE_CLASS is Diverged, display:
+
+```
+Drift detected between .mgw/project.json and GitHub milestones (STATE_CLASS: Diverged).
+  Local milestone count:  ${LOCAL_MILESTONE_COUNT}
+  GitHub milestone count: ${GH_MILESTONE_COUNT}
+
+Drift reconciliation is not yet implemented (coming in A5).
+
+To resolve manually:
+  1. Run /mgw:sync to attempt automatic reconciliation.
+  2. Or delete .mgw/project.json and re-run /mgw:project to reinitialize from scratch.
+     WARNING: This will lose pipeline stage tracking for existing issues.
+```
+
+Then exit 0.
 </step>
 
 <step name="gather_inputs">
