@@ -1021,7 +1021,7 @@ if [ "$SUBCOMMAND" = "views" ]; then
       VIEW_KEY="kanban"
       ;;
     table)
-      VIEW_NAME="All Issues"
+      VIEW_NAME="Triage Table — Team Planning"
       VIEW_LAYOUT="TABLE_LAYOUT"
       VIEW_KEY="table"
       ;;
@@ -1140,12 +1140,31 @@ PYEOF
       echo "See docs/BOARD-SCHEMA.md for full view configuration reference."
       ;;
     table)
-      echo "Table view created. Recommended configuration in GitHub UI:"
-      echo "  1. Open: ${BOARD_URL}"
-      echo "  2. Select '${VIEW_NAME}' tab"
-      echo "  3. Sort by 'Status' ascending to surface active work at top"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo " NEXT STEP: Configure Columns in GitHub UI"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo ""
-      echo "See docs/BOARD-SCHEMA.md for full view configuration reference."
+      echo "Triage Table view created for team planning visibility."
+      echo "GitHub's API does not support setting table columns or sort order"
+      echo "programmatically — configure in the GitHub UI:"
+      echo ""
+      echo "  1. Open the board: ${BOARD_URL}"
+      echo "  2. Click '${VIEW_NAME}' in the view tabs"
+      echo "  3. Click the view settings (down-arrow next to view name)"
+      echo "  4. Add these columns in order:"
+      echo "       Status      (sort ascending — pipeline order)"
+      echo "       Milestone"
+      echo "       Phase"
+      echo "       GSD Route"
+      echo "       AI Agent State"
+      echo "  5. Set 'Sort by' -> 'Status' ascending"
+      echo ""
+      echo "This column order surfaces triage planning context:"
+      echo "  Status first shows pipeline position at a glance."
+      echo "  Milestone + Phase + GSD Route give scope and routing context."
+      echo "  AI Agent State shows live execution activity."
+      echo ""
+      echo "See docs/BOARD-SCHEMA.md for full column and sort configuration reference."
       ;;
     roadmap)
       echo "Roadmap view created. Recommended configuration in GitHub UI:"
@@ -1194,7 +1213,10 @@ fi  # end views subcommand
 - [ ] views: view ID stored in project.json under project.project_board.views
 - [ ] views kanban: outputs step-by-step instructions for setting Group by Status in GitHub UI
 - [ ] views kanban: lists all 13 pipeline stage columns user will see after configuring
-- [ ] views table: outputs instructions for sorting by Status
+- [ ] views table: view name is "Triage Table — Team Planning" (not generic "All Issues")
+- [ ] views table: outputs step-by-step instructions for adding triage planning columns in GitHub UI
+- [ ] views table: column order is Status, Milestone, Phase, GSD Route, AI Agent State
+- [ ] views table: outputs instructions for sorting by Status ascending
 - [ ] views roadmap: outputs instructions for date fields and milestone grouping
 - [ ] views: references docs/BOARD-SCHEMA.md for full view configuration documentation
 </success_criteria>

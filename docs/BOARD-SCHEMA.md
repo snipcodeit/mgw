@@ -68,7 +68,7 @@ MGW creates and configures these views using `/mgw:board views`.
 | View Name | Layout | Group By | Sort By | Purpose |
 |-----------|--------|----------|---------|---------|
 | Kanban — Pipeline Stages | BOARD_LAYOUT | Status | — | Swimlane view per pipeline stage |
-| All Issues | TABLE_LAYOUT | — | Status (asc) | Flat list of all items with all fields visible |
+| Triage Table — Team Planning | TABLE_LAYOUT | — | Status (asc) | Triage planning surface sorted by pipeline status |
 | Roadmap | ROADMAP_LAYOUT | — | Milestone | Timeline view for milestone planning |
 
 ### View Configuration Notes
@@ -81,11 +81,24 @@ MGW creates and configures these views using `/mgw:board views`.
 - GitHub's API does not support programmatic configuration of board grouping —
   use the view's settings menu in the GitHub UI after the view is created
 
-**All Issues (Table Layout)**
+**Triage Table — Team Planning (Table Layout)**
 
 - Created by `/mgw:board views table`
-- Shows all custom fields as columns
-- Sort by Status ascending to see active work at top
+- Primary planning surface for team triage and routing visibility
+- Column order for triage planning (configure in GitHub Projects UI):
+
+  | Order | Column | Purpose |
+  |-------|--------|---------|
+  | 1 | Status | Pipeline position — sort ascending for pipeline order |
+  | 2 | Milestone | Which milestone the issue belongs to |
+  | 3 | Phase | Phase number and name within the milestone |
+  | 4 | GSD Route | Execution route (quick, plan-phase, new-milestone) |
+  | 5 | AI Agent State | Live agent activity or last action |
+
+- Sort By: **Status ascending** — surfaces active work (Executing, Planning, Verifying)
+  at top, done work (Done, PR Created) at bottom
+- GitHub's API does not support setting column order or sort programmatically —
+  configure via the view settings menu in the GitHub UI after creation
 
 **Roadmap**
 
@@ -155,6 +168,11 @@ Board metadata is stored in `.mgw/project.json` under `project.project_board`:
           "view_id": "PVTV_...",
           "name": "Kanban — Pipeline Stages",
           "layout": "BOARD_LAYOUT"
+        },
+        "table": {
+          "view_id": "PVTV_...",
+          "name": "Triage Table — Team Planning",
+          "layout": "TABLE_LAYOUT"
         }
       }
     }
