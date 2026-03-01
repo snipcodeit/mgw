@@ -356,6 +356,53 @@ for ISSUE_DATA in $(echo "$UNFINISHED" | python3 -c "
   ISSUE_NUMBER=$(echo "$ISSUE_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['github_number'])")
   ISSUE_TITLE=$(echo "$ISSUE_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin)['title'])")
   GSD_ROUTE=$(echo "$ISSUE_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin).get('gsd_route','plan-phase'))")
+  CURRENT_STAGE=$(echo "$ISSUE_DATA" | python3 -c "import json,sys; print(json.load(sys.stdin).get('pipeline_stage','new'))")
+
+  # 0. Handle previously failed issues — offer recovery
+  if [ "$CURRENT_STAGE" = "failed" ]; then
+    echo "Issue #${ISSUE_NUMBER} previously failed."
+
+    AskUserQuestion(
+      header: "Failed Issue Recovery",
+      question: "Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) is in failed state. What do you want to do?",
+      options: [
+        { label: "Retry", description: "Reset to triaged and re-run this issue" },
+        { label: "Skip", description: "Move to next issue (this issue stays failed)" },
+        { label: "Abort", description: "Stop milestone execution here and report progress" }
+      ]
+    )
+
+    # Handle recovery response:
+    if "Retry":
+      # Reset pipeline_stage to "new" in project.json
+      python3 -c "
+import json
+with open('${MGW_DIR}/project.json') as f:
+    project = json.load(f)
+milestone = project['milestones'][project['current_milestone'] - 1]
+for issue in milestone['issues']:
+    if issue['github_number'] == ${ISSUE_NUMBER}:
+        issue['pipeline_stage'] = 'new'
+        break
+with open('${MGW_DIR}/project.json', 'w') as f:
+    json.dump(project, f, indent=2)
+"
+      echo "  Retry: #${ISSUE_NUMBER} reset to new — running pipeline"
+      # Continue to normal execution below (CURRENT_STAGE is now reset)
+      CURRENT_STAGE="new"
+
+    elif "Skip":
+      SKIPPED_ISSUES+=("$ISSUE_NUMBER")
+      echo "  Skip: #${ISSUE_NUMBER} — skipped (still failed)"
+      continue
+
+    elif "Abort":
+      echo ""
+      echo "Milestone execution aborted by user."
+      # Fall through to post_loop reporting
+      break
+    fi
+  fi
 
   # 1. Check if blocked by a failed issue
   IS_BLOCKED=false
@@ -634,6 +681,36 @@ TOTAL_FAILED=${#FAILED_ISSUES[@]}
 TOTAL_BLOCKED=${#BLOCKED_ISSUES[@]}
 TOTAL_SKIPPED=${#SKIPPED_ISSUES[@]}
 ```
+
+Display execution summary report:
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MGW >> MILESTONE EXECUTION REPORT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${MILESTONE_NAME}
+
+| Issue | Title | Status |
+|-------|-------|--------|
+${results_table_rows}
+
+Completed: ${TOTAL_DONE}/${TOTAL_ISSUES} issues
+Failed: ${TOTAL_FAILED}
+Blocked: ${TOTAL_BLOCKED}
+Skipped: ${TOTAL_SKIPPED}
+
+${if TOTAL_FAILED > 0 or TOTAL_SKIPPED > 0:
+  "Use /mgw:run <number> to retry individual failed issues."
+}
+```
+
+Build results_table_rows from SORTED_ISSUES:
+- For each issue in SORTED_ISSUES:
+  - In COMPLETED_ISSUES → Status: "Done"
+  - In FAILED_ISSUES → Status: "Failed"
+  - In BLOCKED_ISSUES → Status: "Blocked (dependency failed)"
+  - In SKIPPED_ISSUES → Status: "Skipped (failed)"
+  - Otherwise (DONE_COUNT from before loop) → Status: "Done (prior run)"
 
 **If ALL issues completed (pipeline_stage == 'done' for all):**
 

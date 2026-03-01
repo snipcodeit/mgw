@@ -180,7 +180,7 @@ If no state file exists → issue not triaged yet. Run triage inline:
 
 If state file exists → load it. Check pipeline_stage:
   - "triaged" → proceed to GSD execution
-  - "planning" / "executing" → resume from where we left off
+  - "planning" / "diagnosing" / "executing" → resume from where we left off
   - "blocked" → "Pipeline for #${ISSUE_NUMBER} is blocked by a stakeholder comment. Review the issue comments, resolve the blocker, then re-run."
   - "pr-created" / "done" → "Pipeline already completed for #${ISSUE_NUMBER}. Run /mgw:sync to reconcile."
   - "needs-info" → Check for --force flag in $ARGUMENTS:
@@ -211,6 +211,52 @@ If state file exists → load it. Check pipeline_stage:
       Log warning: "MGW: WARNING — Acknowledging security risk for #${ISSUE_NUMBER}. Proceeding with --security-ack."
       Update state: pipeline_stage = "triaged", add override_log entry.
       Continue pipeline.
+
+**Phase mapping lookup (supplemental — for display and non-milestone-route issues):**
+
+After loading the state file, look up the phase mapping for this issue from project.json:
+
+```bash
+# Look up phase mapping for this issue
+PHASE_NUMBER=""
+PHASE_NAME=""
+GSD_ROUTE_FROM_PROJECT=""
+
+if [ -f "${MGW_DIR}/project.json" ]; then
+  PHASE_INFO=$(python3 -c "
+import json, sys
+try:
+    p = json.load(open('${MGW_DIR}/project.json'))
+    for m in p.get('milestones', []):
+        for i in m.get('issues', []):
+            if i.get('github_number') == ${ISSUE_NUMBER}:
+                print(json.dumps({
+                    'phase_number': i.get('phase_number'),
+                    'phase_name': i.get('phase_name', ''),
+                    'gsd_route': i.get('gsd_route', '')
+                }))
+                sys.exit(0)
+    print('{}')
+except:
+    print('{}')
+  ")
+
+  PHASE_NUMBER=$(echo "$PHASE_INFO" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase_number',''))" 2>/dev/null || echo "")
+  PHASE_NAME=$(echo "$PHASE_INFO" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase_name',''))" 2>/dev/null || echo "")
+  GSD_ROUTE_FROM_PROJECT=$(echo "$PHASE_INFO" | python3 -c "import json,sys; print(json.load(sys.stdin).get('gsd_route',''))" 2>/dev/null || echo "")
+fi
+
+# Conflict detection: if triage route and project.json route disagree, prefer triage (more recent)
+if [ -n "$GSD_ROUTE_FROM_PROJECT" ] && [ "$GSD_ROUTE_FROM_PROJECT" != "$gsd_route" ]; then
+  echo "MGW: gsd_route mismatch — triage says '${gsd_route}', project.json says '${GSD_ROUTE_FROM_PROJECT}'. Using triage route."
+fi
+
+# PHASE_NUMBER from project.json is supplemental — milestone route will override with ROADMAP analysis
+# (which is more authoritative). This value is used for:
+#   1. PHASE_NAME display in PR body and comments
+#   2. Phase context for non-milestone-route issues (quick route)
+#   3. init plan-phase calls for quick-route issues mapped to a specific phase
+```
 </step>
 
 <step name="create_worktree">
@@ -661,6 +707,105 @@ update_board_status $ISSUE_NUMBER "verifying"  # non-blocking board sync
 ```
 </step>
 
+<step name="execute_gsd_debug">
+Only run this step if gsd_route is 'gsd:diagnose-issues' or 'gsd:debug'.
+
+# === DEBUG/DIAGNOSIS ROUTE ===
+
+  # Update pipeline stage
+  pipeline_stage = "diagnosing"
+  # Update state file and board status
+  update_board_status $ISSUE_NUMBER "diagnosing"  # non-blocking board sync
+
+  # Step 1: Generate slug for debug session
+  SLUG=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs generate-slug "${issue_title}" --raw)
+  SLUG="${SLUG:0:40}"
+
+  # Step 2: Create debug directory in worktree
+  mkdir -p .planning/debug
+
+  # Step 3: Spawn diagnosis agent
+  # The diagnosis agent reads the issue body for symptoms and investigates the codebase
+  update_board_agent_state $ISSUE_NUMBER "Diagnosing"  # non-blocking agent state
+  Task(
+    prompt="
+      <files_to_read>
+      - ./CLAUDE.md (Project instructions — if exists, follow all guidelines)
+      - .agents/skills/ (Project skills — if dir exists, list skills, read SKILL.md for each, follow relevant rules)
+      - .planning/STATE.md (if exists)
+      </files_to_read>
+
+      You are a debug agent investigating a bug reported in GitHub issue #${ISSUE_NUMBER}.
+
+      <issue>
+      Title: ${issue_title}
+      Body: ${issue_body}
+      Labels: ${issue_labels}
+      </issue>
+
+      <instructions>
+      1. Create a debug session file at .planning/debug/${SLUG}.md
+      2. Start with the symptoms described in the issue
+      3. Search the codebase for relevant files
+      4. Form hypotheses about the root cause
+      5. Test each hypothesis by reading code and tracing logic
+      6. When you find the root cause, document it with evidence
+
+      Return format:
+      ## ROOT CAUSE FOUND
+
+      **Root Cause:** [specific cause with evidence]
+      **Evidence:**
+      - [key finding 1]
+      - [key finding 2]
+      **Files Involved:**
+      - [file1]: [what's wrong]
+      **Suggested Fix Direction:** [brief hint for the fix plan]
+      **Debug Session:** .planning/debug/${SLUG}.md
+
+      OR if you cannot determine the root cause:
+
+      ## INVESTIGATION INCONCLUSIVE
+
+      **Attempted:** [what you checked]
+      **Remaining Possibilities:**
+      - [possibility 1]
+      - [possibility 2]
+      **Recommended Next Steps:** [what a human should check]
+      </instructions>
+    ",
+    subagent_type="general-purpose",
+    description="Diagnose: #${ISSUE_NUMBER} ${issue_title}"
+  )
+
+  # Step 4: Parse diagnosis result
+  # If ROOT CAUSE FOUND:
+  #   - Read .planning/debug/${SLUG}.md for root cause details
+  #   - Extract root_cause, files_involved, suggested_fix from agent return
+  #   - Set DESCRIPTION to a fix-oriented description including the root cause
+  #   - Continue to the gsd:quick pipeline with the root cause as context
+  #   - The quick planner will create a targeted fix plan
+  #   - Post a comment on the issue with the root cause
+
+  # If INVESTIGATION INCONCLUSIVE:
+  #   - Post a comment on the issue with what was tried
+  #   - Set pipeline_stage = "blocked"
+  #   - Report to user with remaining possibilities
+  #   - Offer: retry with more context, or manual investigation
+
+  # Step 5 (on ROOT CAUSE FOUND): Transition to quick fix
+  # Reuse the existing quick pipeline pattern from gsd.md but with enhanced context:
+  #   - The DESCRIPTION now includes the diagnosed root cause
+  #   - The files involved are known, so the scope is narrower
+  #   - Update pipeline_stage to "planning" as we enter the quick flow
+
+  # Step 5 (on INCONCLUSIVE): Stop and report
+  # Update pipeline_stage to "blocked"
+  # Update state file
+  # Post GitHub comment with investigation summary
+  # AskUserQuestion: "Investigation was inconclusive. Retry with more context or investigate manually?"
+</step>
+
 <step name="execute_gsd_milestone">
 **Execute GSD pipeline (new-milestone route):**
 
@@ -714,41 +859,33 @@ AskUserQuestion(
 If wait: stop here. User will re-run /mgw:run after scope is approved.
 If proceed: apply "mgw:approved" label and continue.
 
-2. **Create milestone:** Use `gsd-tools init new-milestone` to gather context, then attempt autonomous roadmap creation from issue data:
+2. **ROADMAP.md existence gate:**
 
    ```bash
-   MILESTONE_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init new-milestone 2>/dev/null)
+   # ROADMAP.md is required — created by /gsd:new-project or /gsd:new-milestone
+   if [ ! -f ".planning/ROADMAP.md" ]; then
+     echo ""
+     echo "The milestone route requires a GSD roadmap. No .planning/ROADMAP.md found."
+     echo ""
+     echo "Create one first:"
+     echo "  /gsd:new-project      — New projects (creates ROADMAP.md with deep planning)"
+     echo "  /gsd:new-milestone    — Existing projects (creates next milestone ROADMAP.md)"
+     echo ""
+     echo "After creating the roadmap, re-run /mgw:run ${ISSUE_NUMBER}"
+
+     pipeline_stage = "blocked"
+     # Update state file with blocked reason: "No ROADMAP.md — run gsd:new-project or gsd:new-milestone first"
+     # Exit gracefully (do not run the per-phase loop)
+   else
+     # ROADMAP.md exists — proceed with phase discovery (per-phase lifecycle loop follows)
+     Update pipeline_stage to "planning" (at `${REPO_ROOT}/.mgw/active/`).
+     ```bash
+     update_board_status $ISSUE_NUMBER "planning"  # non-blocking board sync
+     ```
+   fi
    ```
 
-   Extract requirements from structured issue template fields (BLUF, What's Needed, What's Involved) if present.
-
-   If issue body contains sufficient detail (has clear requirements/scope):
-   - Spawn roadmapper agent with issue-derived requirements
-   - After roadmap generation, present to user for confirmation checkpoint:
-     ```
-     AskUserQuestion(
-       header: "Milestone Roadmap Generated",
-       question: "Review the generated ROADMAP.md. Proceed with execution, revise, or switch to interactive mode?",
-       followUp: "Enter: proceed, revise, or interactive"
-     )
-     ```
-
-   If issue body lacks sufficient detail (no clear structure or too vague):
-   - Fall back to interactive mode:
-     ```
-     The new-milestone route requires more detail than the issue provides.
-     Please run: /gsd:new-milestone
-
-     After the milestone is created, run /mgw:run ${ISSUE_NUMBER} again to
-     continue the pipeline through execution.
-     ```
-
-   Update pipeline_stage to "planning" (at `${REPO_ROOT}/.mgw/active/`).
-   ```bash
-   update_board_status $ISSUE_NUMBER "planning"  # non-blocking board sync
-   ```
-
-2. **If resuming with pipeline_stage = "planning" and ROADMAP.md exists:**
+2. **If ROADMAP.md exists (pipeline_stage = "planning"):**
    Discover phases from ROADMAP and run the full per-phase GSD lifecycle:
 
    ```bash
@@ -975,6 +1112,10 @@ SUMMARY_DATA=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs summary-extract "$
 # Also keep raw summary for full context
 SUMMARY=$(cat ${gsd_artifacts_path}/*SUMMARY* 2>/dev/null)
 VERIFICATION=$(cat ${gsd_artifacts_path}/*VERIFICATION* 2>/dev/null)
+# Read PLAN.md content for Phase Context section (collapsed in details tag)
+PLAN_CONTENT=$(cat ${gsd_artifacts_path}/*PLAN* 2>/dev/null)
+PLAN_PATH=$(ls ${gsd_artifacts_path}/*PLAN* 2>/dev/null | head -1 || echo "")
+SUMMARY_PATH=$(ls ${gsd_artifacts_path}/*SUMMARY* 2>/dev/null | head -1 || echo "")
 COMMITS=$(git log ${DEFAULT_BRANCH}..HEAD --oneline)
 CROSS_REFS=$(cat ${REPO_ROOT}/.mgw/cross-refs.json 2>/dev/null)
 # Progress table for PR details section
@@ -1051,6 +1192,8 @@ Body: ${issue_body}
 <milestone_context>
 Milestone: ${MILESTONE_TITLE}
 Phase: ${PHASE_INFO}
+Phase Name: ${PHASE_NAME}
+Phase Number: ${PHASE_NUMBER}
 Dependencies: ${DEPENDENCY_CHAIN}
 Board: ${PROJECT_BOARD_URL}
 </milestone_context>
@@ -1062,6 +1205,12 @@ ${SUMMARY_DATA}
 <summary_raw>
 ${SUMMARY}
 </summary_raw>
+
+<plan_content>
+${PLAN_CONTENT}
+Plan path: ${PLAN_PATH}
+Summary path: ${SUMMARY_PATH}
+</plan_content>
 
 <verification>
 ${VERIFICATION}
@@ -1090,6 +1239,14 @@ ${CROSS_REFS}
 
 Closes #${ISSUE_NUMBER}
 
+## Phase Context
+- **Issue:** #${ISSUE_NUMBER} — ${issue_title}
+- **Phase:** ${PHASE_NUMBER}: ${PHASE_NAME} (omit if no phase mapping)
+- **GSD Route:** ${gsd_route}
+- **PLAN.md:** ${PLAN_PATH} (omit if empty)
+- **SUMMARY.md:** ${SUMMARY_PATH} (omit if empty)
+(Omit this section entirely if no phase context exists and this is a standalone quick task)
+
 ## Milestone Context
 - **Milestone:** ${MILESTONE_TITLE}
 - **Phase:** ${PHASE_INFO}
@@ -1099,19 +1256,33 @@ Closes #${ISSUE_NUMBER}
 ## Changes
 - File-level changes grouped by module (use key_files from summary_structured)
 
-## Test Plan
-- Verification checklist from VERIFICATION artifact
-
 ## Cross-References
 - ${CROSS_REFS entries as bullet points}
 (Skip if no cross-refs)
 
+${if PLAN_CONTENT non-empty:
+## Plan
+<details>
+<summary>Expand to see the execution plan</summary>
+
+${PLAN_CONTENT}
+
+</details>
+}
+
+${if VERIFICATION non-empty:
+## Verification
+${VERIFICATION}
+}
+
+${if PROGRESS_TABLE non-empty:
 <details>
 <summary>GSD Progress</summary>
 
 ${PROGRESS_TABLE}
+
 </details>
-(Skip if PROGRESS_TABLE is empty)
+}
 
 3. Create PR: gh pr create --title '<title>' --base '${DEFAULT_BRANCH}' --head '${BRANCH_NAME}' --body '<body>'
 4. Post testing procedures as separate PR comment: gh pr comment <pr_number> --body '<testing>'
@@ -1231,6 +1402,7 @@ Next:
 - [ ] mgw:blocked label applied when blocking comments detected
 - [ ] Work-starting comment posted on issue (route, scope, branch)
 - [ ] GSD pipeline executed in worktree (quick or milestone route)
+- [ ] Debug route (gsd:diagnose-issues / gsd:debug) triggers diagnosis agent and transitions to planning on root cause found
 - [ ] New-milestone route triggers discussion phase with mgw:discussing label
 - [ ] Execution-complete comment posted on issue (commits, changes, test status)
 - [ ] PR created with summary, milestone context, testing procedures, cross-refs

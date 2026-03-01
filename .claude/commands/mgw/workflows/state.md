@@ -216,7 +216,7 @@ File: `.mgw/active/<number>-<slug>.json`
   },
   "gsd_route": null,
   "gsd_artifacts": { "type": null, "path": null },
-  "pipeline_stage": "new|triaged|needs-info|needs-security-review|discussing|approved|planning|executing|verifying|pr-created|done|failed|blocked",
+  "pipeline_stage": "new|triaged|needs-info|needs-security-review|discussing|approved|planning|diagnosing|executing|verifying|pr-created|done|failed|blocked",
   "comments_posted": [],
   "linked_pr": null,
   "linked_issues": [],
@@ -237,11 +237,14 @@ needs-security-review --> triaged  (re-triage after security ack)
 triaged --> discussing  (new-milestone route, large scope)
 triaged --> approved    (discussion complete, ready for execution)
 triaged --> planning    (direct route, skip discussion)
+triaged --> diagnosing  (gsd:diagnose-issues route)
 
 discussing --> approved (stakeholder approval)
 approved --> planning
 
 planning --> executing
+diagnosing --> planning  (root cause found, proceeding to fix)
+diagnosing --> blocked   (investigation inconclusive)
 executing --> verifying
 verifying --> pr-created
 pr-created --> done
@@ -331,7 +334,7 @@ with open('${MGW_DIR}/project.json', 'w') as f:
 "
 ```
 
-Valid stages: `new`, `triaged`, `planning`, `executing`, `verifying`, `pr-created`, `done`, `failed`, `blocked`.
+Valid stages: `new`, `triaged`, `planning`, `diagnosing`, `executing`, `verifying`, `pr-created`, `done`, `failed`, `blocked`.
 
 ### Advance Current Milestone
 Used after milestone completion to move pointer to next milestone.
@@ -347,6 +350,28 @@ with open('${MGW_DIR}/project.json', 'w') as f:
 ```
 
 Only advance if ALL issues in current milestone completed successfully.
+
+### Phase Map Usage
+
+The `phase_map` in project.json maps GSD phase numbers to their metadata. This is the
+bridge between MGW's issue tracking and GSD's phase-based execution:
+
+```json
+{
+  "phase_map": {
+    "1": {"milestone_index": 0, "gsd_route": "plan-phase", "name": "Core Data Models"},
+    "2": {"milestone_index": 0, "gsd_route": "plan-phase", "name": "API Endpoints"},
+    "3": {"milestone_index": 1, "gsd_route": "plan-phase", "name": "Frontend Components"}
+  }
+}
+```
+
+Each issue in project.json has a `phase_number` field that indexes into this map.
+When `/mgw:run` picks up an issue, it reads the `phase_number` to determine which
+GSD phase directory (`.planning/phases/{NN}-{slug}/`) to operate in.
+
+Issues created outside of `/mgw:project` (e.g., manually filed bugs) will not have
+a `phase_number`. In this case, `/mgw:run` falls back to the quick pipeline.
 
 ## Consumers
 

@@ -311,6 +311,30 @@ Also unblocked:
   #${alt1_number} — ${alt1_title} (${alt1_gsd_route})
   #${alt2_number} — ${alt2_title} (${alt2_gsd_route})
 ```
+
+**Append failed issue advisory (informational — does not block the primary recommendation):**
+
+```bash
+FAILED_LIST=$(echo "$DEPENDENCY_RESULT" | python3 -c "
+import json,sys
+r = json.load(sys.stdin)
+for f in r.get('failed', []):
+    print(f\"  #{f['number']}: {f['title']}\")
+")
+FAILED_COUNT=$(echo "$DEPENDENCY_RESULT" | python3 -c "
+import json,sys
+r = json.load(sys.stdin)
+print(len(r.get('failed', [])))
+")
+```
+
+If FAILED_COUNT > 0:
+```
+Note: ${FAILED_COUNT} issue(s) previously failed:
+${FAILED_LIST}
+
+Use /mgw:run <number> to retry.
+```
 </step>
 
 <step name="offer_run">
