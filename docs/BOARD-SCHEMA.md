@@ -1,394 +1,226 @@
-# MGW GitHub Projects v2 Board Schema
+# MGW Board Schema
 
-This document defines the GitHub Projects v2 board schema used by MGW to surface pipeline
-state, AI agent activity, and milestone context to teams.
+This document describes the GitHub Projects v2 board structure used by MGW, including
+custom fields, option values, and layout views.
 
-## Board Overview
+---
 
-MGW manages a GitHub Projects v2 board for each project. The board is created and
-configured by the `mgw:board` command and stored in `.mgw/project.json` under the `board`
-key. Board items are synced from project.json milestones and issues.
+## Overview
 
-**Purpose:** Give teams real-time visibility into the AI-driven pipeline — which issues
-are being worked on, what GSD route is executing, which milestone phase is active, and
-whether the pipeline is healthy.
+The MGW pipeline board is a GitHub Projects v2 project created by `/mgw:board create`.
+It tracks all issues managed by the MGW pipeline, with custom fields reflecting the
+pipeline state stored in `.mgw/active/` and `.mgw/project.json`.
 
-**Board URL format:** `https://github.com/users/<owner>/projects/<number>`
+---
 
-## Custom Field Schema
+## Custom Fields
 
-### 1. Status (Single Select)
+| Field Name | Type | Description |
+|------------|------|-------------|
+| Status | SINGLE_SELECT | Maps to `pipeline_stage` in issue state |
+| AI Agent State | TEXT | Current GSD agent activity or last action |
+| Milestone | TEXT | Milestone title (e.g. "v2 — GitHub Projects Board Management") |
+| Phase | TEXT | Phase number and name (e.g. "15 — Multi-Layout Views") |
+| GSD Route | SINGLE_SELECT | GSD execution route for the issue |
 
-**Type:** `SINGLE_SELECT`
-**Description:** Mirrors the `pipeline_stage` value in `.mgw/active/<n>-<slug>.json`. Updated automatically by `mgw:run` on each stage transition.
+---
 
-**Options (maps 1:1 to pipeline_stage values):**
+## Status Field Options
 
-| Option | Color | Description |
-|--------|-------|-------------|
-| `New` | `GRAY` | Issue created, not yet triaged |
-| `Triaged` | `BLUE` | Triage complete, ready for execution |
-| `Needs Info` | `YELLOW` | Blocked at triage gate — insufficient detail |
-| `Needs Security Review` | `RED` | Blocked — high security risk flagged |
-| `Discussing` | `PURPLE` | Scope proposal posted, awaiting stakeholder input |
-| `Approved` | `GREEN` | Discussion complete, cleared for execution |
-| `Planning` | `BLUE` | GSD planner agent active |
-| `Executing` | `ORANGE` | GSD executor agent active |
-| `Verifying` | `BLUE` | GSD verifier agent active |
-| `PR Created` | `GREEN` | Pull request open and ready for review |
-| `Done` | `GREEN` | PR merged, issue closed |
-| `Failed` | `RED` | Unrecoverable pipeline error |
-| `Blocked` | `RED` | Blocking comment detected — pipeline paused |
+The Status field maps directly to MGW `pipeline_stage` values. The 13 options are:
 
-**pipeline_stage → Status mapping:**
+| Option Name | Color | pipeline_stage | Description |
+|-------------|-------|---------------|-------------|
+| New | GRAY | `new` | Issue created, not yet triaged |
+| Triaged | BLUE | `triaged` | Triage complete, ready for execution |
+| Needs Info | YELLOW | `needs-info` | Blocked at triage gate — needs more detail |
+| Needs Security Review | RED | `needs-security-review` | High security risk flagged |
+| Discussing | PURPLE | `discussing` | Awaiting stakeholder scope approval |
+| Approved | GREEN | `approved` | Discussion complete, cleared for execution |
+| Planning | BLUE | `planning` | GSD planner agent active |
+| Executing | ORANGE | `executing` | GSD executor agent active |
+| Verifying | BLUE | `verifying` | GSD verifier agent active |
+| PR Created | GREEN | `pr-created` | PR open, awaiting review |
+| Done | GREEN | `done` | PR merged, issue closed |
+| Failed | RED | `failed` | Unrecoverable pipeline error |
+| Blocked | RED | `blocked` | Blocking comment detected |
+
+---
+
+## GSD Route Field Options
+
+| Option Name | Route | Description |
+|-------------|-------|-------------|
+| quick | `gsd:quick` | Small/atomic task, direct execution |
+| quick --full | `gsd:quick --full` | Small task with plan-checker and verifier |
+| plan-phase | `gsd:plan-phase` | Medium task with phase planning |
+| new-milestone | `gsd:new-milestone` | Large task with full milestone lifecycle |
+
+---
+
+## Views
+
+GitHub Projects v2 supports multiple layout views: Board (kanban), Table, and Roadmap.
+MGW creates and configures these views using `/mgw:board views`.
+
+### Intended Views
+
+| View Name | Layout | Group By | Sort By | Purpose |
+|-----------|--------|----------|---------|---------|
+| Kanban — Pipeline Stages | BOARD_LAYOUT | Status | — | Swimlane view per pipeline stage |
+| Triage Table — Team Planning | TABLE_LAYOUT | — | Status (asc) | Triage planning surface sorted by pipeline status |
+| Roadmap — Milestone Timeline | ROADMAP_LAYOUT | Milestone | — | Timeline visualization grouped by milestone |
+
+### View Configuration Notes
+
+**Kanban — Pipeline Stages (Board Layout)**
+
+- Created by `/mgw:board views kanban`
+- Group By must be set to "Status" in the GitHub Projects UI after creation
+- Each pipeline stage becomes a swimlane column
+- GitHub's API does not support programmatic configuration of board grouping —
+  use the view's settings menu in the GitHub UI after the view is created
+
+**Triage Table — Team Planning (Table Layout)**
+
+- Created by `/mgw:board views table`
+- Primary planning surface for team triage and routing visibility
+- Column order for triage planning (configure in GitHub Projects UI):
+
+  | Order | Column | Purpose |
+  |-------|--------|---------|
+  | 1 | Status | Pipeline position — sort ascending for pipeline order |
+  | 2 | Milestone | Which milestone the issue belongs to |
+  | 3 | Phase | Phase number and name within the milestone |
+  | 4 | GSD Route | Execution route (quick, plan-phase, new-milestone) |
+  | 5 | AI Agent State | Live agent activity or last action |
+
+- Sort By: **Status ascending** — surfaces active work (Executing, Planning, Verifying)
+  at top, done work (Done, PR Created) at bottom
+- GitHub's API does not support setting column order or sort programmatically —
+  configure via the view settings menu in the GitHub UI after creation
+
+**Roadmap — Milestone Timeline (Roadmap Layout)**
+
+- Created by `/mgw:board views roadmap`
+- View name: "Roadmap — Milestone Timeline"
+- Purpose: leadership and planning overview of the full project lifecycle by milestone
+
+**Roadmap grouping (configure in GitHub Projects UI after creation):**
+
+1. Open the board and click the "Roadmap — Milestone Timeline" view tab
+2. Click the view settings (down-arrow next to the view name)
+3. Set "Group by" -> "Milestone"
+
+Items will be grouped by the Milestone field value, showing all issues belonging to
+each milestone as a row group in the roadmap.
+
+**Timeline date field limitation:**
+
+GitHub Roadmap layout requires date fields (start date + target date) assigned to
+each item to render timeline bars. MGW uses iteration-based milestone tracking and
+does not define explicit start/end date fields on board items by default.
+
+As a result:
+- Items appear in the roadmap grouped by Milestone (grouping works correctly)
+- Timeline bars are not displayed without date fields configured
+
+**Workaround — milestone due dates as timeline anchor:**
+
+GitHub Projects v2 can read GitHub milestone due dates as a date source. To enable
+timeline bar rendering, set due dates on milestones via the API:
+
+```bash
+gh api repos/{owner}/{repo}/milestones/{number} \
+  --method PATCH \
+  -f due_on='YYYY-MM-DDT00:00:00Z'
 ```
-new                   → New
-triaged               → Triaged
-needs-info            → Needs Info
-needs-security-review → Needs Security Review
-discussing            → Discussing
-approved              → Approved
-planning              → Planning
-executing             → Executing
-verifying             → Verifying
-pr-created            → PR Created
-done                  → Done
-failed                → Failed
-blocked               → Blocked
-```
 
-**GraphQL mutation to create:**
+Once milestone due dates are set, configure the roadmap's date fields in the GitHub UI:
+- Date field: "Target Date" -> milestone due date
+
+This gives the roadmap a target anchor per milestone without requiring issue-level
+date fields in the MGW schema.
+
+---
+
+## API Reference
+
+### Creating Views
+
 ```graphql
 mutation {
-  createProjectV2Field(input: {
-    projectId: "<PROJECT_ID>"
-    dataType: SINGLE_SELECT
-    name: "Status"
-    singleSelectOptions: [
-      { name: "New", color: GRAY, description: "Issue created, not yet triaged" }
-      { name: "Triaged", color: BLUE, description: "Triage complete, ready for execution" }
-      { name: "Needs Info", color: YELLOW, description: "Blocked at triage gate" }
-      { name: "Needs Security Review", color: RED, description: "High security risk flagged" }
-      { name: "Discussing", color: PURPLE, description: "Awaiting stakeholder scope approval" }
-      { name: "Approved", color: GREEN, description: "Cleared for execution" }
-      { name: "Planning", color: BLUE, description: "GSD planner agent active" }
-      { name: "Executing", color: ORANGE, description: "GSD executor agent active" }
-      { name: "Verifying", color: BLUE, description: "GSD verifier agent active" }
-      { name: "PR Created", color: GREEN, description: "PR open, awaiting review" }
-      { name: "Done", color: GREEN, description: "PR merged, issue closed" }
-      { name: "Failed", color: RED, description: "Unrecoverable pipeline error" }
-      { name: "Blocked", color: RED, description: "Blocking comment detected" }
-    ]
+  createProjectV2View(input: {
+    projectId: $projectId
+    name: "Roadmap — Milestone Timeline"
+    layout: ROADMAP_LAYOUT
   }) {
-    projectV2Field {
-      ... on ProjectV2SingleSelectField {
-        id
-        name
-        options { id name }
-      }
-    }
+    projectV2View { id name layout }
   }
 }
 ```
 
----
+Valid layout values: `BOARD_LAYOUT`, `TABLE_LAYOUT`, `ROADMAP_LAYOUT`
 
-### 2. AI Agent State (Text)
+### Limitation: Board Grouping and Date Fields
 
-**Type:** `TEXT`
-**Description:** Shows the current GSD agent activity during pipeline execution. Updated at each agent spawn. Cleared when pipeline reaches `pr-created`.
+GitHub's Projects v2 GraphQL API does not expose mutations for:
+- Setting the "Group by" field on any view layout
+- Configuring date fields for roadmap timeline bars
 
-**Values (written programmatically):**
-- `planner:running` — GSD planner agent spawned
-- `executor:running` — GSD executor agent spawned
-- `verifier:running` — GSD verifier agent active
-- `plan-checker:running` — GSD plan-checker agent active
-- `idle` — No agent active (between stages)
-- `blocked` — Pipeline blocked (see Status field)
+Both must be configured manually in the GitHub UI:
 
-**GraphQL mutation to create:**
-```graphql
-mutation {
-  createProjectV2Field(input: {
-    projectId: "<PROJECT_ID>"
-    dataType: TEXT
-    name: "AI Agent State"
-  }) {
-    projectV2Field {
-      ... on ProjectV2Field {
-        id
-        name
-      }
-    }
-  }
-}
-```
+1. Open the board at the project URL
+2. Click the view name to open view settings
+3. For kanban: set "Group by: Status"
+4. For roadmap: set "Group by: Milestone"
+5. For roadmap: configure date fields under "Date fields" settings
+
+This limitation is documented in the GitHub Projects v2 API changelog.
+The `/mgw:board views` command creates the view and outputs these instructions.
 
 ---
 
-### 3. Milestone (Text)
+## Storage
 
-**Type:** `TEXT`
-**Description:** The milestone name from `project.json`. Set when an issue is added to a milestone via `mgw:project` or `mgw:milestone`. Not auto-updated — reflects the milestone at issue creation time.
-
-**Value format:** Milestone title string (e.g., `v2 — GitHub Projects Board Management`)
-
-**GraphQL mutation to create:**
-```graphql
-mutation {
-  createProjectV2Field(input: {
-    projectId: "<PROJECT_ID>"
-    dataType: TEXT
-    name: "Milestone"
-  }) {
-    projectV2Field {
-      ... on ProjectV2Field {
-        id
-        name
-      }
-    }
-  }
-}
-```
-
----
-
-### 4. Phase (Text)
-
-**Type:** `TEXT`
-**Description:** The phase name and number from `project.json`. Format: `<number> — <name>`. Set when the issue enters the pipeline. Not auto-updated.
-
-**Value format:** `13 — Board Foundation & Field Schema`
-
-**GraphQL mutation to create:**
-```graphql
-mutation {
-  createProjectV2Field(input: {
-    projectId: "<PROJECT_ID>"
-    dataType: TEXT
-    name: "Phase"
-  }) {
-    projectV2Field {
-      ... on ProjectV2Field {
-        id
-        name
-      }
-    }
-  }
-}
-```
-
----
-
-### 5. GSD Route (Single Select)
-
-**Type:** `SINGLE_SELECT`
-**Description:** The GSD execution route assigned during triage. Determines how the pipeline executes the issue. Set during triage, does not change.
-
-**Options:**
-
-| Option | Color | Description |
-|--------|-------|-------------|
-| `quick` | `BLUE` | Small/atomic tasks — no plan file, direct execution |
-| `quick --full` | `BLUE` | Small tasks with plan-checker and verifier |
-| `plan-phase` | `PURPLE` | Medium tasks — structured phase planning |
-| `new-milestone` | `ORANGE` | Large tasks — full milestone lifecycle |
-
-**GSD route name → option mapping:**
-```
-gsd:quick           → quick
-gsd:quick --full    → quick --full
-gsd:plan-phase      → plan-phase
-gsd:new-milestone   → new-milestone
-```
-
-**GraphQL mutation to create:**
-```graphql
-mutation {
-  createProjectV2Field(input: {
-    projectId: "<PROJECT_ID>"
-    dataType: SINGLE_SELECT
-    name: "GSD Route"
-    singleSelectOptions: [
-      { name: "quick", color: BLUE, description: "Small/atomic task, direct execution" }
-      { name: "quick --full", color: BLUE, description: "Small task with plan-checker and verifier" }
-      { name: "plan-phase", color: PURPLE, description: "Medium task with phase planning" }
-      { name: "new-milestone", color: ORANGE, description: "Large task with full milestone lifecycle" }
-    ]
-  }) {
-    projectV2Field {
-      ... on ProjectV2SingleSelectField {
-        id
-        name
-        options { id name }
-      }
-    }
-  }
-}
-```
-
----
-
-## project.json Board Key Schema
-
-The `mgw:board` command (#72) writes board metadata to `.mgw/project.json` under the `project.board` key. This schema defines what that key should contain:
+Board metadata is stored in `.mgw/project.json` under `project.project_board`:
 
 ```json
 {
   "project": {
-    "name": "my-project",
-    "repo": "owner/repo",
     "project_board": {
-      "number": 9,
-      "url": "https://github.com/users/owner/projects/9",
-      "node_id": "PVT_kwDOABC123",
+      "number": 1,
+      "url": "https://github.com/orgs/owner/projects/1",
+      "node_id": "PVT_...",
       "fields": {
         "status": {
           "field_id": "PVTSSF_...",
           "field_name": "Status",
           "type": "SINGLE_SELECT",
           "options": {
-            "new": "option_id_1",
-            "triaged": "option_id_2",
-            "needs-info": "option_id_3",
-            "needs-security-review": "option_id_4",
-            "discussing": "option_id_5",
-            "approved": "option_id_6",
-            "planning": "option_id_7",
-            "executing": "option_id_8",
-            "verifying": "option_id_9",
-            "pr-created": "option_id_10",
-            "done": "option_id_11",
-            "failed": "option_id_12",
-            "blocked": "option_id_13"
+            "new": "option-id-1",
+            "triaged": "option-id-2"
           }
+        }
+      },
+      "views": {
+        "kanban": {
+          "view_id": "PVTV_...",
+          "name": "Kanban — Pipeline Stages",
+          "layout": "BOARD_LAYOUT"
         },
-        "ai_agent_state": {
-          "field_id": "PVTF_...",
-          "field_name": "AI Agent State",
-          "type": "TEXT"
+        "table": {
+          "view_id": "PVTV_...",
+          "name": "Triage Table — Team Planning",
+          "layout": "TABLE_LAYOUT"
         },
-        "milestone": {
-          "field_id": "PVTF_...",
-          "field_name": "Milestone",
-          "type": "TEXT"
-        },
-        "phase": {
-          "field_id": "PVTF_...",
-          "field_name": "Phase",
-          "type": "TEXT"
-        },
-        "gsd_route": {
-          "field_id": "PVTSSF_...",
-          "field_name": "GSD Route",
-          "type": "SINGLE_SELECT",
-          "options": {
-            "gsd:quick": "option_id_a",
-            "gsd:quick --full": "option_id_b",
-            "gsd:plan-phase": "option_id_c",
-            "gsd:new-milestone": "option_id_d"
-          }
+        "roadmap": {
+          "view_id": "PVTV_...",
+          "name": "Roadmap — Milestone Timeline",
+          "layout": "ROADMAP_LAYOUT"
         }
       }
     }
   }
 }
 ```
-
-## Board Creation Workflow (for mgw:board — #72)
-
-The `mgw:board` command will use this schema to:
-
-1. **Fetch or create the board** via GraphQL `createProjectV2`
-2. **Create each custom field** using the mutations above
-3. **Store field IDs** in `project.json` under `project.project_board.fields`
-4. **Add existing milestone issues** as board items
-5. **Set initial field values** from `project.json` milestone data
-
-### GraphQL: Create Project Board
-```graphql
-mutation {
-  createProjectV2(input: {
-    ownerId: "<OWNER_ID>"
-    title: "<PROJECT_NAME> — MGW Pipeline Board"
-    repositoryId: "<REPO_ID>"
-  }) {
-    projectV2 {
-      id
-      number
-      url
-    }
-  }
-}
-```
-
-### GraphQL: Add Issue to Board
-```graphql
-mutation {
-  addProjectV2ItemById(input: {
-    projectId: "<PROJECT_ID>"
-    contentId: "<ISSUE_NODE_ID>"
-  }) {
-    item {
-      id
-    }
-  }
-}
-```
-
-### GraphQL: Update Field Value (Single Select)
-```graphql
-mutation {
-  updateProjectV2ItemFieldValue(input: {
-    projectId: "<PROJECT_ID>"
-    itemId: "<ITEM_ID>"
-    fieldId: "<FIELD_ID>"
-    value: {
-      singleSelectOptionId: "<OPTION_ID>"
-    }
-  }) {
-    projectV2Item {
-      id
-    }
-  }
-}
-```
-
-### GraphQL: Update Field Value (Text)
-```graphql
-mutation {
-  updateProjectV2ItemFieldValue(input: {
-    projectId: "<PROJECT_ID>"
-    itemId: "<ITEM_ID>"
-    fieldId: "<FIELD_ID>"
-    value: {
-      text: "<TEXT_VALUE>"
-    }
-  }) {
-    projectV2Item {
-      id
-    }
-  }
-}
-```
-
-## Board Views (Planned — #77, #78, #79)
-
-Three views will be configured after fields are created:
-
-| View | Type | Primary Group | Purpose |
-|------|------|---------------|---------|
-| **Pipeline** | Board (kanban) | Status field | See issues flowing through pipeline stages |
-| **Team Planning** | Table | Milestone + Phase | Sort/filter by milestone, route, assignee |
-| **Roadmap** | Roadmap | GitHub Milestone dates | Timeline view of milestone delivery |
-
-## Dependencies
-
-| Issue | Title | Depends On |
-|-------|-------|------------|
-| #72 | Add mgw:board command | This schema (#71) |
-| #73 | Sync project.json milestones into board | This schema (#71) |
-| #74 | Auto-update board Status on pipeline_stage | This schema (#71) |
-| #77 | Configure Board layout (kanban) | Board creation (#72) |
-| #78 | Configure Table layout | Board creation (#72) |
-| #79 | Configure Roadmap layout | Board creation (#72) |
