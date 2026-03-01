@@ -155,10 +155,74 @@ case "$CROSS_MILESTONE_WARN" in
   isolation:*)
     MILESTONE_NAME=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f2)
     GSD_ID=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f3)
-    echo ""
-    echo "NOTE: Issue #${ISSUE_NUMBER} belongs to milestone '${MILESTONE_NAME}' (GSD: ${GSD_ID})"
-    echo "      This is a gsd:quick issue — running in isolation (no ROADMAP.md context needed)."
-    echo ""
+
+    # Re-validate route against live GitHub labels (project.json may be stale from triage time)
+    LIVE_LABELS=$(gh issue view ${ISSUE_NUMBER} --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+    QUICK_CONFIRMED=false
+    if echo "$LIVE_LABELS" | grep -qiE "gsd-route:quick|gsd:quick|quick"; then
+      QUICK_CONFIRMED=true
+    fi
+
+    if [ "$QUICK_CONFIRMED" = "true" ]; then
+      echo ""
+      echo "NOTE: Issue #${ISSUE_NUMBER} belongs to milestone '${MILESTONE_NAME}' (GSD: ${GSD_ID})"
+      echo "      Confirmed gsd:quick via live labels — running in isolation."
+      echo ""
+    else
+      # Route mismatch: project.json says quick but labels don't confirm it
+      echo ""
+      echo "⚠️  Route mismatch for cross-milestone issue #${ISSUE_NUMBER}:"
+      echo "   project.json route: quick (set at triage time)"
+      echo "   Live GitHub labels: ${LIVE_LABELS:-none}"
+      echo "   Labels do not confirm gsd:quick — treating as plan-phase (requires milestone context)."
+      echo ""
+      echo "Options:"
+      echo "  1) Switch active milestone to '${GSD_ID}' and continue"
+      echo "  2) Re-triage this issue (/mgw:issue ${ISSUE_NUMBER}) to update its route"
+      echo "  3) Abort"
+      echo ""
+      read -p "Choice [1/2/3]: " ROUTE_MISMATCH_CHOICE
+      case "$ROUTE_MISMATCH_CHOICE" in
+        1)
+          node -e "
+const { loadProjectState, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+state.active_gsd_milestone = '${GSD_ID}';
+writeProjectState(state);
+console.log('Switched active_gsd_milestone to: ${GSD_ID}');
+"
+          # Validate ROADMAP.md matches (same check as option 1 in warn case)
+          ROADMAP_VALID=$(python3 -c "
+import os
+if not os.path.exists('.planning/ROADMAP.md'):
+    print('missing')
+else:
+    with open('.planning/ROADMAP.md') as f:
+        content = f.read()
+    print('match' if '${GSD_ID}' in content else 'mismatch')
+" 2>/dev/null || echo "missing")
+          if [ "$ROADMAP_VALID" != "match" ]; then
+            node -e "
+const { loadProjectState, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+state.active_gsd_milestone = '$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f4)';
+writeProjectState(state);
+" 2>/dev/null || true
+            echo "Switch rolled back — ROADMAP.md does not match '${GSD_ID}'."
+            echo "Run /gsd:new-milestone to update ROADMAP.md first."
+            exit 0
+          fi
+          ;;
+        2)
+          echo "Re-triage with: /mgw:issue ${ISSUE_NUMBER}"
+          exit 0
+          ;;
+        *)
+          echo "Aborted."
+          exit 0
+          ;;
+      esac
+    fi
     ;;
   warn:*)
     ISSUE_MILESTONE=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f2)
@@ -187,7 +251,30 @@ state.active_gsd_milestone = '${ISSUE_GSD}';
 writeProjectState(state);
 console.log('Switched active_gsd_milestone to: ${ISSUE_GSD}');
 "
-        echo "Active milestone updated. Note: ROADMAP.md must match — verify .planning/ROADMAP.md."
+        # Validate ROADMAP.md matches the new active milestone
+        ROADMAP_VALID=$(python3 -c "
+import os
+if not os.path.exists('.planning/ROADMAP.md'):
+    print('missing')
+else:
+    with open('.planning/ROADMAP.md') as f:
+        content = f.read()
+    print('match' if '${ISSUE_GSD}' in content else 'mismatch')
+" 2>/dev/null || echo "missing")
+        if [ "$ROADMAP_VALID" = "match" ]; then
+          echo "Active milestone updated. ROADMAP.md confirmed for '${ISSUE_GSD}'."
+        else
+          # Roll back — ROADMAP.md doesn't match
+          node -e "
+const { loadProjectState, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+state.active_gsd_milestone = '${ACTIVE_GSD}';
+writeProjectState(state);
+" 2>/dev/null || true
+          echo "Switch rolled back — ROADMAP.md does not match '${ISSUE_GSD}'."
+          echo "Run /gsd:new-milestone to update ROADMAP.md first."
+          exit 0
+        fi
         ;;
       2)
         echo "Proceeding with cross-milestone issue (may affect plan quality)."
