@@ -106,6 +106,46 @@ fi
 # Prefix: default v1
 PREFIX="v1"
 ```
+
+**In extend mode, load existing metadata and ask for new milestones:**
+
+When `EXTEND_MODE=true`, skip the questions above and instead:
+
+```bash
+if [ "$EXTEND_MODE" = true ]; then
+  # Load existing project metadata — name, repo, stack, prefix are already known
+  PROJECT_NAME=$(python3 -c "import json; print(json.load(open('${REPO_ROOT}/.mgw/project.json'))['project']['name'])")
+  STACK=$(python3 -c "import json; print(json.load(open('${REPO_ROOT}/.mgw/project.json'))['project'].get('stack','unknown'))")
+  PREFIX=$(python3 -c "import json; print(json.load(open('${REPO_ROOT}/.mgw/project.json'))['project'].get('prefix','v1'))")
+  EXISTING_MILESTONE_NAMES=$(python3 -c "import json; p=json.load(open('${REPO_ROOT}/.mgw/project.json')); print(', '.join(m['name'] for m in p['milestones']))")
+
+  # Assemble project history context for the template generator
+  MILESTONE_HISTORY=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+lines = []
+for m in p['milestones']:
+    lines.append(f\"Milestone: {m['name']}\")
+    for i in m.get('issues', []):
+        lines.append(f\"  - {i['title']} ({i.get('pipeline_stage','unknown')})\")
+print('\n'.join(lines))
+")
+
+  GSD_DIGEST=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs history-digest 2>/dev/null || echo "")
+
+  HISTORY_CONTEXT="Previous milestones and issues built so far:
+${MILESTONE_HISTORY}
+
+GSD build history (phases and decisions already made):
+${GSD_DIGEST:-No GSD history available.}"
+
+  # Ask only for the new work — different question for extend mode
+  # Ask: "What new milestones should we add to ${PROJECT_NAME}?"
+  # Capture as EXTENSION_DESCRIPTION
+
+  DESCRIPTION="Extension of existing project. Existing milestones: ${EXISTING_MILESTONE_NAMES}. New work: ${EXTENSION_DESCRIPTION}"
+fi
+```
 </step>
 
 <step name="generate_template">
@@ -143,6 +183,13 @@ The project details for generation:
 - **Stack:** `$STACK`
 - **Repo:** `$REPO`
 - **Prefix:** `$PREFIX`
+
+<project_history>
+${HISTORY_CONTEXT:-No prior history available.}
+</project_history>
+
+When in extend mode (HISTORY_CONTEXT is populated): do NOT suggest features or systems that already
+appear in the project history above. Build new milestones that complement and extend what exists.
 
 After generating the JSON, extract it and write to a temp file:
 
