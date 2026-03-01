@@ -403,17 +403,119 @@ After agent completes:
 5. After applying fixes: write updated project.json and display summary.
 </step>
 
+<step name="vision_intake">
+**Intake: capture the raw project idea (Fresh path only)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Display to user:
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MGW ► VISION CYCLE — Let's Build Your Project
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Tell me about the project you want to build. Don't worry
+about being complete or precise — just describe the idea,
+the problem you're solving, and who it's for.
+```
+
+Capture freeform user input as RAW_IDEA.
+
+```bash
+TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+```
+
+Save to `.mgw/vision-draft.md`:
+```markdown
+---
+current_stage: intake
+rounds_completed: 0
+soft_cap_reached: false
+---
+
+# Vision Draft
+
+## Intake
+**Raw Idea:** {RAW_IDEA}
+**Captured:** {TIMESTAMP}
+```
+
+Proceed to vision_research step.
+</step>
+
+<step name="vision_research">
+**Domain Expansion: spawn vision-researcher agent (silent)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Spawn vision-researcher Task agent:
+
+Task(
+  description="Research project domain and platform requirements",
+  subagent_type="general-purpose",
+  prompt="
+You are a domain research agent for a new software project.
+
+Raw idea from user:
+{RAW_IDEA}
+
+Research this project idea and produce a domain analysis. Write your output to .mgw/vision-research.json.
+
+Your analysis must include:
+
+1. **domain_analysis**: What does this domain actually require to succeed?
+   - Core capabilities users expect
+   - Table stakes vs differentiators
+   - Common failure modes in this domain
+
+2. **platform_requirements**: Specific technical/integration needs
+   - APIs, third-party services the domain typically needs
+   - Compliance or regulatory considerations
+   - Platform targets (mobile, web, desktop, API-only)
+
+3. **competitive_landscape**: What similar solutions exist?
+   - 2-3 examples with their key approaches
+   - Gaps in existing solutions that this could fill
+
+4. **risk_factors**: Common failure modes for this type of project
+   - Technical risks
+   - Business/adoption risks
+   - Scope creep patterns in this domain
+
+5. **suggested_questions**: 6-10 targeted questions to ask the user
+   - Prioritized by most impactful for scoping
+   - Each question should clarify a decision that affects architecture or milestone structure
+   - Format: [{\"question\": \"...\", \"why_it_matters\": \"...\"}, ...]
+
+Output format — write to .mgw/vision-research.json:
+{
+  \"domain_analysis\": {\"core_capabilities\": [...], \"differentiators\": [...], \"failure_modes\": [...]},
+  \"platform_requirements\": [...],
+  \"competitive_landscape\": [{\"name\": \"...\", \"approach\": \"...\"}],
+  \"risk_factors\": [...],
+  \"suggested_questions\": [{\"question\": \"...\", \"why_it_matters\": \"...\"}]
+}
+"
+)
+
+After agent completes:
+- Read .mgw/vision-research.json
+- Append research summary to .mgw/vision-draft.md:
+  ```markdown
+  ## Domain Research (silent)
+  - Domain: {domain from analysis}
+  - Key platform requirements: {top 3}
+  - Risks identified: {count}
+  - Questions generated: {count}
+  ```
+- Update vision-draft.md frontmatter: current_stage: questioning
+- Proceed to vision_questioning step (B3 will implement this)
+</step>
+
 <step name="gather_inputs">
-**Gather project inputs:**
+**Gather project inputs conversationally:**
 
-If HAS_ROADMAP is true:
-- Read `.planning/PROJECT.md` if it exists (for project name and description)
-- Read `.planning/REQUIREMENTS.md` if it exists (for requirement details)
-- Extract PROJECT_NAME, DESCRIPTION, and STACK from PROJECT.md (or fall back to repo name and stack detection)
-- Skip all user questions — GSD already gathered this via `gsd:new-project` or `gsd:new-milestone`
-- Do NOT continue to extend mode or standalone mode questions
-
-If HAS_ROADMAP is false:
+If STATE_CLASS = Fresh: skip this step (handled by vision_intake and vision_research above).
 
 Ask the following questions in sequence:
 
@@ -490,33 +592,13 @@ fi
 </step>
 
 <step name="generate_template">
-**Generate the project template:**
+**Generate a project-specific template using AI:**
 
 First, read the schema to understand the required output structure:
 
 ```bash
 SCHEMA=$(node "${REPO_ROOT}/lib/template-loader.cjs" schema)
 ```
-
-If HAS_ROADMAP is true (Path A — ROADMAP.md-first flow):
-
-```bash
-# Parse the roadmap
-PARSED=$(node "${REPO_ROOT}/lib/template-loader.cjs" parse-roadmap < "${REPO_ROOT}/.planning/ROADMAP.md")
-```
-
-Build the template JSON from the parsed roadmap data:
-- One milestone per logical grouping (or one milestone containing all phases if <= 5 phases; split at natural boundaries otherwise)
-- Each phase in PARSED.phases becomes a set of GitHub issues:
-  - `title`: "Phase {N}: {name}" (or a descriptive title derived from the goal)
-  - `description`: the phase goal + requirements + success criteria
-  - `gsd_route`: "plan-phase" (default for roadmap-sourced phases, since GSD handles detailed planning)
-  - `labels`: ["phase:{N}-{slug}"]
-- Populate PHASE_MAP_JSON (the existing variable) from PARSED.phases — do NOT create a new variable
-- Validate via `node "${REPO_ROOT}/lib/template-loader.cjs" validate`
-- Continue to create_milestones
-
-If HAS_ROADMAP is false (Path B — standalone AI generation flow):
 
 Now, as the AI executing this command, generate a complete project template JSON for this specific project. The JSON must:
 
@@ -1321,13 +1403,9 @@ State:
   .mgw/project.json         written
   .mgw/cross-refs.json      {updated with N entries|unchanged}
 
-Next (when HAS_ROADMAP is true):
-  /mgw:milestone        Execute first milestone
-  /mgw:board create     Set up project board (optional)
-
-Next (when HAS_ROADMAP is false):
-  /gsd:new-project      Create GSD ROADMAP.md for deeper planning
-  /mgw:milestone        Execute first milestone (after ROADMAP.md exists)
+Next:
+  /gsd:new-milestone         Create GSD ROADMAP.md (if needed)
+  /mgw:milestone start       Execute first milestone
 ```
 
 If any milestones or issues failed to create, include:

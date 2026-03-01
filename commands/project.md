@@ -403,8 +403,119 @@ After agent completes:
 5. After applying fixes: write updated project.json and display summary.
 </step>
 
+<step name="vision_intake">
+**Intake: capture the raw project idea (Fresh path only)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Display to user:
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MGW ► VISION CYCLE — Let's Build Your Project
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Tell me about the project you want to build. Don't worry
+about being complete or precise — just describe the idea,
+the problem you're solving, and who it's for.
+```
+
+Capture freeform user input as RAW_IDEA.
+
+```bash
+TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+```
+
+Save to `.mgw/vision-draft.md`:
+```markdown
+---
+current_stage: intake
+rounds_completed: 0
+soft_cap_reached: false
+---
+
+# Vision Draft
+
+## Intake
+**Raw Idea:** {RAW_IDEA}
+**Captured:** {TIMESTAMP}
+```
+
+Proceed to vision_research step.
+</step>
+
+<step name="vision_research">
+**Domain Expansion: spawn vision-researcher agent (silent)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Spawn vision-researcher Task agent:
+
+Task(
+  description="Research project domain and platform requirements",
+  subagent_type="general-purpose",
+  prompt="
+You are a domain research agent for a new software project.
+
+Raw idea from user:
+{RAW_IDEA}
+
+Research this project idea and produce a domain analysis. Write your output to .mgw/vision-research.json.
+
+Your analysis must include:
+
+1. **domain_analysis**: What does this domain actually require to succeed?
+   - Core capabilities users expect
+   - Table stakes vs differentiators
+   - Common failure modes in this domain
+
+2. **platform_requirements**: Specific technical/integration needs
+   - APIs, third-party services the domain typically needs
+   - Compliance or regulatory considerations
+   - Platform targets (mobile, web, desktop, API-only)
+
+3. **competitive_landscape**: What similar solutions exist?
+   - 2-3 examples with their key approaches
+   - Gaps in existing solutions that this could fill
+
+4. **risk_factors**: Common failure modes for this type of project
+   - Technical risks
+   - Business/adoption risks
+   - Scope creep patterns in this domain
+
+5. **suggested_questions**: 6-10 targeted questions to ask the user
+   - Prioritized by most impactful for scoping
+   - Each question should clarify a decision that affects architecture or milestone structure
+   - Format: [{\"question\": \"...\", \"why_it_matters\": \"...\"}, ...]
+
+Output format — write to .mgw/vision-research.json:
+{
+  \"domain_analysis\": {\"core_capabilities\": [...], \"differentiators\": [...], \"failure_modes\": [...]},
+  \"platform_requirements\": [...],
+  \"competitive_landscape\": [{\"name\": \"...\", \"approach\": \"...\"}],
+  \"risk_factors\": [...],
+  \"suggested_questions\": [{\"question\": \"...\", \"why_it_matters\": \"...\"}]
+}
+"
+)
+
+After agent completes:
+- Read .mgw/vision-research.json
+- Append research summary to .mgw/vision-draft.md:
+  ```markdown
+  ## Domain Research (silent)
+  - Domain: {domain from analysis}
+  - Key platform requirements: {top 3}
+  - Risks identified: {count}
+  - Questions generated: {count}
+  ```
+- Update vision-draft.md frontmatter: current_stage: questioning
+- Proceed to vision_questioning step (B3 will implement this)
+</step>
+
 <step name="gather_inputs">
 **Gather project inputs conversationally:**
+
+If STATE_CLASS = Fresh: skip this step (handled by vision_intake and vision_research above).
 
 Ask the following questions in sequence:
 
