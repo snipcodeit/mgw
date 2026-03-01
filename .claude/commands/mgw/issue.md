@@ -191,8 +191,14 @@ Return a structured report:
 - Active overlaps: [list or 'none']
 
 ### Recommended GSD Route
-- Route: gsd:quick | gsd:quick --full | gsd:new-milestone
+- Route: gsd:quick | gsd:quick --full | gsd:new-milestone | gsd:diagnose-issues
 - Reasoning: [why this route]
+
+Route selection guide:
+- gsd:quick -- Small, well-defined task (1-3 files, clear fix)
+- gsd:quick --full -- Medium task needing plan verification (3-8 files, some complexity)
+- gsd:new-milestone -- Large feature or multi-system change (9+ files or new system)
+- gsd:diagnose-issues -- Bug report where root cause is unclear; symptoms are known but the fix is not obvious; needs investigation before planning
 </output_format>
 ",
   subagent_type="general-purpose",
