@@ -596,7 +596,140 @@ Each round:
 After loop exits:
 - Update vision-draft.md frontmatter: current_stage: synthesizing
 - Display: "Questioning complete ({ROUND} rounds). Generating Vision Brief..."
-- Proceed to vision_synthesis step (B4 will implement this)
+- Proceed to vision_synthesis step.
+</step>
+
+<step name="vision_synthesis">
+**Vision Synthesis: spawn vision-synthesizer agent and review loop (Fresh path only)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Display: "Generating Vision Brief from {rounds_completed} rounds of input..."
+
+**Synthesizer spawn:**
+
+Task(
+  description="Synthesize Vision Brief from research and questioning",
+  subagent_type="general-purpose",
+  prompt="
+You are the vision-synthesizer agent for a software project planning cycle.
+
+Read these files:
+- .mgw/vision-draft.md — all rounds of user questions and answers, raw idea
+- .mgw/vision-research.json — domain research, platform requirements, risks
+
+Synthesize a comprehensive Vision Brief. Write it to .mgw/vision-brief.json using this schema (templates/vision-brief-schema.json):
+
+{
+  \"project_identity\": { \"name\": \"...\", \"tagline\": \"...\", \"domain\": \"...\" },
+  \"target_users\": [{ \"persona\": \"...\", \"needs\": [...], \"pain_points\": [...] }],
+  \"core_value_proposition\": \"1-2 sentences: who, what, why different\",
+  \"feature_categories\": {
+    \"must_have\": [{ \"name\": \"...\", \"description\": \"...\", \"rationale\": \"why non-negotiable\" }],
+    \"should_have\": [{ \"name\": \"...\", \"description\": \"...\" }],
+    \"could_have\": [{ \"name\": \"...\", \"description\": \"...\" }],
+    \"wont_have\": [{ \"name\": \"...\", \"reason\": \"explicit out-of-scope reasoning\" }]
+  },
+  \"technical_constraints\": [...],
+  \"success_metrics\": [...],
+  \"estimated_scope\": { \"milestones\": N, \"phases\": N, \"complexity\": \"small|medium|large|enterprise\" },
+  \"recommended_milestone_structure\": [{ \"name\": \"...\", \"focus\": \"...\", \"deliverables\": [...] }]
+}
+
+Be specific and concrete. Use the user's actual answers from vision-draft.md. Do NOT pad with generic content.
+"
+)
+
+After synthesizer completes:
+1. Read .mgw/vision-brief.json
+2. Display the Vision Brief to user in structured format:
+   ```
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Vision Brief: {project_identity.name}
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   Tagline: {tagline}
+   Domain: {domain}
+
+   Target Users:
+     • {persona_1}: {needs summary}
+     • {persona_2}: ...
+
+   Core Value: {core_value_proposition}
+
+   Must-Have Features ({count}):
+     • {feature_1}: {rationale}
+     • ...
+
+   Won't Have ({count}): {list}
+
+   Estimated Scope: {complexity} — {milestones} milestones, ~{phases} phases
+
+   Recommended Milestones:
+     1. {name}: {focus}
+     2. ...
+   ```
+
+3. Present review options:
+   ```
+   ─────────────────────────────────────────
+   Review Options:
+     A) Accept — proceed to condensing and project creation
+     R) Revise — tell me what to change, regenerate
+     D) Dig deeper on: [specify area]
+   ─────────────────────────────────────────
+   ```
+
+4. If Accept: proceed to vision_condense step
+5. If Revise: capture correction, spawn vision-synthesizer again with correction appended to vision-draft.md, loop back to step 2
+6. If Dig deeper: append "Deeper exploration of {area}" to vision-draft.md, spawn vision-synthesizer again
+</step>
+
+<step name="vision_condense">
+**Vision Condense: produce gsd:new-project handoff document (Fresh path only)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Display: "Condensing Vision Brief into project handoff..."
+
+Task(
+  description="Condense Vision Brief into gsd:new-project handoff",
+  subagent_type="general-purpose",
+  prompt="
+You are the vision-condenser agent. Your job is to produce a handoff document
+that will be passed as context to a gsd:new-project spawn.
+
+Read .mgw/vision-brief.json.
+
+Produce a structured handoff document at .mgw/vision-handoff.md that:
+
+1. Opens with a context block that gsd:new-project can use directly to produce PROJECT.md:
+   - Project name, tagline, domain
+   - Target users and their core needs
+   - Core value proposition
+   - Must-have feature list with rationale
+   - Won't-have list (explicit out-of-scope)
+   - Technical constraints
+   - Success metrics
+
+2. Includes recommended milestone structure as a numbered list:
+   - Each milestone: name, focus area, key deliverables
+
+3. Closes with an instruction for gsd:new-project:
+   'Use the above as the full project context when creating PROJECT.md.
+   The project name, scope, users, and milestones above reflect decisions
+   made through {rounds_completed} rounds of collaborative planning.
+   Do not hallucinate scope beyond what is specified.'
+
+Format as clean markdown. This document becomes the prompt prefix for gsd:new-project.
+"
+)
+
+After condenser completes:
+1. Verify .mgw/vision-handoff.md exists and has content
+2. Display: "Vision Brief condensed. Ready to initialize project structure."
+3. Update .mgw/vision-draft.md frontmatter: current_stage: spawning
+4. Proceed to spawn_gsd_new_project step (B5 will implement this)
 </step>
 
 <step name="gather_inputs">
