@@ -58,7 +58,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 DEFAULT=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
 ```
 
-Define the board sync utility (non-blocking — see board-sync.md for full reference):
+Define the board sync utilities (non-blocking — see board-sync.md for full reference):
 ```bash
 update_board_status() {
   local ISSUE_NUMBER="$1"
@@ -115,6 +115,50 @@ except: print('')
     }
   ' -f projectId="$BOARD_NODE_ID" -f itemId="$ITEM_ID" \
     -f fieldId="$FIELD_ID" -f optionId="$OPTION_ID" 2>/dev/null || true
+}
+
+update_board_agent_state() {
+  local ISSUE_NUMBER="$1"
+  local STATE_TEXT="$2"
+  if [ -z "$ISSUE_NUMBER" ]; then return 0; fi
+  BOARD_NODE_ID=$(python3 -c "
+import json,sys,os
+try:
+    p=json.load(open('${REPO_ROOT}/.mgw/project.json'))
+    print(p.get('project',{}).get('project_board',{}).get('node_id',''))
+except: print('')
+" 2>/dev/null || echo "")
+  if [ -z "$BOARD_NODE_ID" ]; then return 0; fi
+  ITEM_ID=$(python3 -c "
+import json,sys
+try:
+    p=json.load(open('${REPO_ROOT}/.mgw/project.json'))
+    for m in p.get('milestones',[]):
+        for i in m.get('issues',[]):
+            if i.get('github_number')==${ISSUE_NUMBER}:
+                print(i.get('board_item_id','')); sys.exit(0)
+    print('')
+except: print('')
+" 2>/dev/null || echo "")
+  if [ -z "$ITEM_ID" ]; then return 0; fi
+  FIELD_ID=$(python3 -c "
+import json,sys,os
+try:
+    s='${REPO_ROOT}/.mgw/board-schema.json'
+    if os.path.exists(s):
+        print(json.load(open(s)).get('fields',{}).get('ai_agent_state',{}).get('field_id',''))
+    else:
+        p=json.load(open('${REPO_ROOT}/.mgw/project.json'))
+        print(p.get('project',{}).get('project_board',{}).get('fields',{}).get('ai_agent_state',{}).get('field_id',''))
+except: print('')
+" 2>/dev/null || echo "")
+  if [ -z "$FIELD_ID" ]; then return 0; fi
+  gh api graphql -f query='
+    mutation($projectId:ID!,$itemId:ID!,$fieldId:ID!,$text:String!){
+      updateProjectV2ItemFieldValue(input:{projectId:$projectId,itemId:$itemId,fieldId:$fieldId,value:{text:$text}}){projectV2Item{id}}
+    }
+  ' -f projectId="$BOARD_NODE_ID" -f itemId="$ITEM_ID" \
+    -f fieldId="$FIELD_ID" -f text="$STATE_TEXT" 2>/dev/null || true
 }
 ```
 
@@ -437,6 +481,9 @@ mkdir -p "$QUICK_DIR"
 ```
 
 3. **Spawn planner (task agent):**
+```bash
+update_board_agent_state $ISSUE_NUMBER "Planning"  # non-blocking agent state
+```
 ```
 Task(
   prompt="
@@ -539,6 +586,9 @@ If issues found and iteration < 2: spawn planner revision, then re-check.
 If iteration >= 2: offer force proceed or abort.
 
 7. **Spawn executor (task agent):**
+```bash
+update_board_agent_state $ISSUE_NUMBER "Executing"  # non-blocking agent state
+```
 ```
 Task(
   prompt="
@@ -570,6 +620,9 @@ VERIFY_RESULT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify-summary "$
 Parse JSON result. Use `passed` field for go/no-go. Checks summary existence, files created, and commits.
 
 9. **(If --full) Spawn verifier:**
+```bash
+update_board_agent_state $ISSUE_NUMBER "Verifying"  # non-blocking agent state
+```
 ```
 Task(
   prompt="
@@ -732,6 +785,9 @@ If proceed: apply "mgw:approved" label and continue.
    ```
 
    **b. Spawn planner agent (gsd:plan-phase):**
+   ```bash
+   update_board_agent_state $ISSUE_NUMBER "Planning phase ${PHASE_NUMBER}"  # non-blocking agent state
+   ```
    ```
    Task(
      prompt="
@@ -778,6 +834,7 @@ If proceed: apply "mgw:approved" label and continue.
    ```bash
    EXEC_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init execute-phase "${PHASE_NUMBER}")
    # Parse EXEC_INIT JSON for: executor_model, verifier_model, phase_dir, plans, incomplete_plans, plan_count
+   update_board_agent_state $ISSUE_NUMBER "Executing phase ${PHASE_NUMBER}"  # non-blocking agent state
    ```
    ```
    Task(
@@ -810,6 +867,9 @@ If proceed: apply "mgw:approved" label and continue.
    ```
 
    **e. Spawn verifier agent (gsd:verify-phase):**
+   ```bash
+   update_board_agent_state $ISSUE_NUMBER "Verifying phase ${PHASE_NUMBER}"  # non-blocking agent state
+   ```
    ```
    Task(
      prompt="
@@ -1071,6 +1131,7 @@ Update state (at `${REPO_ROOT}/.mgw/active/`):
 
 ```bash
 update_board_status $ISSUE_NUMBER "pr-created"  # non-blocking board sync
+update_board_agent_state $ISSUE_NUMBER ""  # clear agent state after PR creation (non-blocking)
 ```
 
 Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → PR.
@@ -1177,6 +1238,8 @@ Next:
 - [ ] mgw:in-progress label removed at completion
 - [ ] State file updated through all pipeline stages
 - [ ] Board Status field synced at each pipeline_stage transition (non-blocking)
+- [ ] AI Agent State field set before each GSD agent spawn (non-blocking)
+- [ ] AI Agent State field cleared after PR creation (non-blocking)
 - [ ] Board sync failures never block pipeline execution
 - [ ] User prompted to run /mgw:sync after merge
 </success_criteria>
