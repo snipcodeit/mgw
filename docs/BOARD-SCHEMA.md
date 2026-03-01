@@ -69,7 +69,7 @@ MGW creates and configures these views using `/mgw:board views`.
 |-----------|--------|----------|---------|---------|
 | Kanban — Pipeline Stages | BOARD_LAYOUT | Status | — | Swimlane view per pipeline stage |
 | Triage Table — Team Planning | TABLE_LAYOUT | — | Status (asc) | Triage planning surface sorted by pipeline status |
-| Roadmap | ROADMAP_LAYOUT | — | Milestone | Timeline view for milestone planning |
+| Roadmap — Milestone Timeline | ROADMAP_LAYOUT | Milestone | — | Timeline visualization grouped by milestone |
 
 ### View Configuration Notes
 
@@ -100,11 +100,47 @@ MGW creates and configures these views using `/mgw:board views`.
 - GitHub's API does not support setting column order or sort programmatically —
   configure via the view settings menu in the GitHub UI after creation
 
-**Roadmap**
+**Roadmap — Milestone Timeline (Roadmap Layout)**
 
 - Created by `/mgw:board views roadmap`
-- Requires start date and target date fields on items for full timeline view
-- Group by Milestone to see milestone-level progress
+- View name: "Roadmap — Milestone Timeline"
+- Purpose: leadership and planning overview of the full project lifecycle by milestone
+
+**Roadmap grouping (configure in GitHub Projects UI after creation):**
+
+1. Open the board and click the "Roadmap — Milestone Timeline" view tab
+2. Click the view settings (down-arrow next to the view name)
+3. Set "Group by" -> "Milestone"
+
+Items will be grouped by the Milestone field value, showing all issues belonging to
+each milestone as a row group in the roadmap.
+
+**Timeline date field limitation:**
+
+GitHub Roadmap layout requires date fields (start date + target date) assigned to
+each item to render timeline bars. MGW uses iteration-based milestone tracking and
+does not define explicit start/end date fields on board items by default.
+
+As a result:
+- Items appear in the roadmap grouped by Milestone (grouping works correctly)
+- Timeline bars are not displayed without date fields configured
+
+**Workaround — milestone due dates as timeline anchor:**
+
+GitHub Projects v2 can read GitHub milestone due dates as a date source. To enable
+timeline bar rendering, set due dates on milestones via the API:
+
+```bash
+gh api repos/{owner}/{repo}/milestones/{number} \
+  --method PATCH \
+  -f due_on='YYYY-MM-DDT00:00:00Z'
+```
+
+Once milestone due dates are set, configure the roadmap's date fields in the GitHub UI:
+- Date field: "Target Date" -> milestone due date
+
+This gives the roadmap a target anchor per milestone without requiring issue-level
+date fields in the MGW schema.
 
 ---
 
@@ -116,8 +152,8 @@ MGW creates and configures these views using `/mgw:board views`.
 mutation {
   createProjectV2View(input: {
     projectId: $projectId
-    name: "Kanban — Pipeline Stages"
-    layout: BOARD_LAYOUT
+    name: "Roadmap — Milestone Timeline"
+    layout: ROADMAP_LAYOUT
   }) {
     projectV2View { id name layout }
   }
@@ -126,15 +162,19 @@ mutation {
 
 Valid layout values: `BOARD_LAYOUT`, `TABLE_LAYOUT`, `ROADMAP_LAYOUT`
 
-### Limitation: Board Grouping
+### Limitation: Board Grouping and Date Fields
 
-GitHub's Projects v2 GraphQL API does not expose a mutation for setting the
-"Group by" field on a board view. The grouping (which field creates swimlanes)
-must be configured manually in the GitHub UI:
+GitHub's Projects v2 GraphQL API does not expose mutations for:
+- Setting the "Group by" field on any view layout
+- Configuring date fields for roadmap timeline bars
+
+Both must be configured manually in the GitHub UI:
 
 1. Open the board at the project URL
 2. Click the view name to open view settings
-3. Set "Group by: Status"
+3. For kanban: set "Group by: Status"
+4. For roadmap: set "Group by: Milestone"
+5. For roadmap: configure date fields under "Date fields" settings
 
 This limitation is documented in the GitHub Projects v2 API changelog.
 The `/mgw:board views` command creates the view and outputs these instructions.
@@ -173,6 +213,11 @@ Board metadata is stored in `.mgw/project.json` under `project.project_board`:
           "view_id": "PVTV_...",
           "name": "Triage Table — Team Planning",
           "layout": "TABLE_LAYOUT"
+        },
+        "roadmap": {
+          "view_id": "PVTV_...",
+          "name": "Roadmap — Milestone Timeline",
+          "layout": "ROADMAP_LAYOUT"
         }
       }
     }

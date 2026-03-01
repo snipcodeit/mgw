@@ -758,7 +758,7 @@ print(json.dumps(views))
 import json,sys
 views = json.load(sys.stdin)
 for key, v in views.items():
-    print(f'  {v[\"name\"]:<35} {v[\"layout\"]:<16} (ID: {v[\"view_id\"]})')
+    print(f'  {v[\"name\"]:<40} {v[\"layout\"]:<16} (ID: {v[\"view_id\"]})')
 " 2>/dev/null
     echo ""
   else
@@ -997,7 +997,7 @@ if [ "$SUBCOMMAND" = "views" ]; then
     echo ""
     echo "  kanban   Create Board layout view (swimlanes by Status)"
     echo "  table    Create Table layout view (flat list with all fields)"
-    echo "  roadmap  Create Roadmap layout view (timeline by Milestone)"
+    echo "  roadmap  Create Roadmap layout view (timeline grouped by Milestone)"
     exit 1
   fi
 
@@ -1026,7 +1026,7 @@ if [ "$SUBCOMMAND" = "views" ]; then
       VIEW_KEY="table"
       ;;
     roadmap)
-      VIEW_NAME="Roadmap"
+      VIEW_NAME="Roadmap — Milestone Timeline"
       VIEW_LAYOUT="ROADMAP_LAYOUT"
       VIEW_KEY="roadmap"
       ;;
@@ -1167,12 +1167,32 @@ PYEOF
       echo "See docs/BOARD-SCHEMA.md for full column and sort configuration reference."
       ;;
     roadmap)
-      echo "Roadmap view created. Recommended configuration in GitHub UI:"
-      echo "  1. Open: ${BOARD_URL}"
-      echo "  2. Select '${VIEW_NAME}' tab"
-      echo "  3. Set date fields and group by 'Milestone'"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo " NEXT STEP: Configure Roadmap in GitHub UI"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       echo ""
-      echo "See docs/BOARD-SCHEMA.md for full view configuration reference."
+      echo "Roadmap view created for milestone-based timeline visualization."
+      echo "GitHub's API does not support setting roadmap grouping or date fields"
+      echo "programmatically — configure in the GitHub UI:"
+      echo ""
+      echo "  1. Open the board: ${BOARD_URL}"
+      echo "  2. Click '${VIEW_NAME}' in the view tabs"
+      echo "  3. Click the view settings (down-arrow next to view name)"
+      echo "  4. Set 'Group by' -> 'Milestone'"
+      echo "     Items will be grouped by the Milestone field value."
+      echo ""
+      echo "Timeline date field limitation:"
+      echo "  GitHub Roadmap requires date fields (start date + end date) to render"
+      echo "  items on the timeline. MGW uses iteration-based tracking without"
+      echo "  explicit date fields — items will appear in the roadmap grouped by"
+      echo "  Milestone but without timeline bars unless date fields are added."
+      echo ""
+      echo "  To enable timeline bars, set milestone due dates via:"
+      echo "    gh api repos/{owner}/{repo}/milestones/{number} --method PATCH \\"
+      echo "      -f due_on='YYYY-MM-DDT00:00:00Z'"
+      echo "  GitHub Projects v2 can read milestone due dates as a date source."
+      echo ""
+      echo "See docs/BOARD-SCHEMA.md for full roadmap configuration reference."
       ;;
   esac
 
@@ -1213,10 +1233,13 @@ fi  # end views subcommand
 - [ ] views: view ID stored in project.json under project.project_board.views
 - [ ] views kanban: outputs step-by-step instructions for setting Group by Status in GitHub UI
 - [ ] views kanban: lists all 13 pipeline stage columns user will see after configuring
-- [ ] views table: view name is "Triage Table — Team Planning" (not generic "All Issues")
+- [ ] views table: view name is "Triage Table — Team Planning"
 - [ ] views table: outputs step-by-step instructions for adding triage planning columns in GitHub UI
 - [ ] views table: column order is Status, Milestone, Phase, GSD Route, AI Agent State
 - [ ] views table: outputs instructions for sorting by Status ascending
-- [ ] views roadmap: outputs instructions for date fields and milestone grouping
+- [ ] views roadmap: view name is "Roadmap — Milestone Timeline"
+- [ ] views roadmap: outputs step-by-step instructions for setting Group by Milestone in GitHub UI
+- [ ] views roadmap: explains date field limitation — MGW uses iteration-based tracking without explicit dates
+- [ ] views roadmap: documents milestone due date workaround via gh api PATCH
 - [ ] views: references docs/BOARD-SCHEMA.md for full view configuration documentation
 </success_criteria>
