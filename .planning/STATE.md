@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-03-01)
 Phase: 32 of 36 (Test Coverage)
 Plan: 0 of TBD in current phase
 Status: Ready to plan
-Last activity: 2026-03-02 — quick-4 complete: enriched issue scaffolding (context/what_exists/technical_approach/done_when), comment-history triage, discussion bypass
+Last activity: 2026-03-02 — quick-6 complete: patched issues #133-141 with 8-section execution briefs, real file paths, and 5 Done When checkboxes each
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -27,3 +27,10 @@ Progress: [░░░░░░░░░░] 0%
 ## Known Issues / Blockers
 
 - No blockers currently identified
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 4 | Enrich MGW issue scaffolding and triage comment leverage | 2026-03-02 | fb290e4 | [4-enrich-mgw-issue-scaffolding-and-triage-](./quick/4-enrich-mgw-issue-scaffolding-and-triage-/) |
+| 6 | Patch v3.5 GitHub issues #133-141 with rich execution briefs | 2026-03-02 | — | [6-patch-v3-5-github-issues-133-141-with-ri](./quick/6-patch-v3-5-github-issues-133-141-with-ri/) |
