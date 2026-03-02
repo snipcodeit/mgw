@@ -159,15 +159,49 @@ The full rule with a review checklist is defined in `workflows/validation.md`. E
 
 ## How an Issue Becomes a PR
 
-### ROADMAP.md Integration
+### mgw:project State-Aware Routing
 
-`/mgw:project` now reads `.planning/ROADMAP.md` when it exists. The recommended setup flow is:
+`/mgw:project` reads five signals before deciding what to do:
 
-1. `gsd:new-project` or `gsd:new-milestone` -- creates `.planning/ROADMAP.md` with structured phases
-2. `/mgw:project` -- reads the ROADMAP.md and creates GitHub milestones and issues from it
-3. `/mgw:milestone` -- executes the first milestone
+| Signal | Meaning |
+|--------|---------|
+| P | `.mgw/project.json` exists |
+| R | `.planning/ROADMAP.md` exists |
+| S | GitHub milestones exist |
+| M | `maps-to` cross-refs exist |
+| G | GSD phase state exists |
 
-When no ROADMAP.md exists, `/mgw:project` falls back to AI-driven generation from a project description.
+These signals map to routing states and execution paths:
+
+| State | Signals | Path |
+|-------|---------|------|
+| Fresh | none | 6-stage Vision Collaboration Cycle |
+| GSD-Only | R+G, no P/S | `alignment-analyzer` agent → milestone_mapper |
+| GSD-Mid-Exec | R+G+partial S | alignment with partial execution state |
+| Aligned | P+R+S+M | Status report + interactive extend option |
+| Diverged | P+S, R mismatch | `drift-analyzer` agent → reconciliation table |
+| Extend | explicit | Add new milestones to existing project |
+
+**Fresh path (Vision Collaboration Cycle):**
+
+1. **Intake** -- freeform project description from user
+2. **Domain Expansion** -- `vision-researcher` Task agent produces `.mgw/vision-research.json`
+3. **Structured Questioning** -- 3-8 rounds (soft cap), 15 max (hard cap); decisions → `.mgw/vision-draft.md`
+4. **Vision Synthesis** -- `vision-synthesizer` produces `.mgw/vision-brief.json` (schema: `templates/vision-brief-schema.json`)
+5. **Review** -- user accepts or requests revisions
+6. **Condense** -- `vision-condenser` produces `.mgw/vision-handoff.md` → `gsd:new-project` spawn → `milestone_mapper`
+
+**GSD-Only path:**
+
+1. `alignment-analyzer` reads `.planning/*` → `.mgw/alignment-report.json`
+2. `milestone_mapper` creates GitHub milestones/issues from the report
+3. `maps-to` cross-refs written linking `milestone:N` ↔ `gsd-milestone:id`
+
+**Aligned path:**
+
+When all signals are consistent, shows status and offers three choices: proceed with `/mgw:milestone`, add new milestones (Extend mode), or view full status.
+
+After any path, `milestone_mapper` creates GitHub structure and verifies GSD linkage. If the next milestone lacks a GSD link, the user is prompted to run `gsd:new-milestone` before executing.
 
 This is the end-to-end data flow for a single issue processed through `/mgw:run`:
 
@@ -212,12 +246,13 @@ GitHub Issue #42
     +------------------------------------------+
     |
     +--[diagnose-issues route]-----------------+
-    |  a. Create .planning/debug/ directory    |
-    |  b. Spawn diagnosis agent (general-purpose)|
+    |  a. pipeline_stage → "diagnosing"        |
+    |  b. Create .planning/debug/ directory    |
+    |  c. Spawn diagnosis agent (general-purpose)|
     |     - Reads codebase, finds root cause   |
     |     - Creates .planning/debug/{slug}.md  |
-    |  c. If root cause found: route to quick  |
-    |  d. If inconclusive: report to user      |
+    |  d. If root cause found: route to quick  |
+    |  e. If inconclusive: report to user      |
     +------------------------------------------+
     |
     +--[milestone route]-----------------------+
@@ -295,7 +330,7 @@ MGW provides composable commands. The full pipeline is `/mgw:run`, but each stag
 `/mgw:milestone` is the highest-level orchestrator. It runs issues sequentially in dependency order:
 
 ```
-Load project.json
+Load project.json (resolveActiveMilestoneIndex)
     |
     v
 Topological sort (Kahn's algorithm)
@@ -313,11 +348,17 @@ For each issue in sorted order:
     +-- Post work-started comment (with milestone progress table)
     +-- Spawn /mgw:run via Task()
     +-- Detect result (PR created or failed)
+    +-- If failed: Retry/Skip/Abort prompt (failed-issue recovery)
     +-- Post pr-ready or pipeline-failed comment
     +-- Checkpoint to project.json
     |
     v
-All done? --> Close milestone, create draft release, advance pointer
+All done?
+    --> End-of-milestone execution report
+    --> Close milestone, create draft release
+    --> Advance active_gsd_milestone pointer
+    --> Verify next milestone's GSD linkage
+        (if unlinked: prompt to run gsd:new-milestone before continuing)
 Some failed? --> Report, do not close milestone
 ```
 
@@ -357,6 +398,7 @@ new --> triaged --> planning --> executing --> verifying --> pr-created --> done
 | `new` | `/mgw:project` or manual | Issue exists but has not been analyzed |
 | `triaged` | `/mgw:issue` | Triage complete: scope, route, and security assessed |
 | `planning` | `/mgw:run` | GSD planner agent is creating PLAN.md |
+| `diagnosing` | `/mgw:run` | Diagnosis agent investigating root cause (gsd:diagnose-issues route) |
 | `executing` | `/mgw:run` | GSD executor agent is writing code |
 | `verifying` | `/mgw:run` | GSD verifier agent is checking results |
 | `pr-created` | `/mgw:run` | PR has been opened on GitHub |
@@ -409,7 +451,9 @@ Each active issue has a JSON state file at `.mgw/active/<number>-<slug>.json`:
 }
 ```
 
-Link types: `related` (issue-to-issue), `implements` (issue-to-PR), `tracks` (issue/PR-to-branch).
+Link types: `related` (issue-to-issue), `implements` (issue-to-PR), `tracks` (issue/PR-to-branch), `maps-to` (GitHub milestone ↔ GSD milestone).
+
+The `maps-to` link format: `{ "a": "milestone:3", "b": "gsd-milestone:v1.0", "type": "maps-to" }`. These links are written by `milestone_mapper` during `mgw:project` and verified by `mgw:sync` (checks that the GSD milestone ID exists in `.planning/ROADMAP.md` or `.planning/MILESTONES.md`).
 
 ### Project State
 
@@ -418,7 +462,20 @@ Link types: `related` (issue-to-issue), `implements` (issue-to-PR), `tracks` (is
 - Milestone definitions with GitHub milestone numbers
 - Phase structure within each milestone
 - Issue list with GitHub issue numbers, dependency slugs, and pipeline stages
-- A `current_milestone` pointer that advances as milestones complete
+- Active milestone pointer (dual-schema: legacy integer + new string ID)
+
+**Schema changes introduced in v3:**
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `current_milestone` | integer (1-indexed) | Legacy — kept for backward compat |
+| `active_gsd_milestone` | string \| null | Canonical active pointer (e.g. `"v1.1"`) |
+| `milestones[].gsd_milestone_id` | string \| null | Links to GSD milestone (e.g. `"v1.0"`) |
+| `milestones[].gsd_state` | `"active"\|"completed"\|"planned"\|null` | GSD execution state |
+| `milestones[].roadmap_archived_at` | ISO timestamp \| null | Set on milestone completion |
+| `milestones[].issues[].board_item_id` | string \| null | GitHub Projects v2 item ID |
+
+`migrateProjectState()` in `lib/state.cjs` upgrades older `project.json` files to include these fields idempotently — it runs automatically at `validate_and_load` startup. Always use `resolveActiveMilestoneIndex(state)` to read the active milestone; never read `current_milestone` directly.
 
 ### Staleness Detection
 
@@ -447,7 +504,12 @@ MGW delegates all code-touching work to Claude Code `Task()` agents. Each agent 
 
 | Agent Type | Purpose | Spawned By |
 |-----------|---------|------------|
-| `general-purpose` | Triage, comment classification, PR body, question routing | `/mgw:issue`, `/mgw:run`, `/mgw:pr`, `/mgw:ask`, `/mgw:review` |
+| `general-purpose` | Triage, comment classification, PR body, question routing, debug diagnosis | `/mgw:issue`, `/mgw:run`, `/mgw:pr`, `/mgw:ask`, `/mgw:review` |
+| `general-purpose` (vision-researcher) | Domain analysis for Fresh projects | `/mgw:project` |
+| `general-purpose` (vision-synthesizer) | Produces structured Vision Brief JSON | `/mgw:project` |
+| `general-purpose` (vision-condenser) | Condenses Vision Brief into handoff for gsd:new-project | `/mgw:project` |
+| `general-purpose` (alignment-analyzer) | Reads `.planning/*`, produces alignment-report.json | `/mgw:project` (GSD-Only path) |
+| `general-purpose` (drift-analyzer) | Compares project.json vs GitHub, produces drift-report.json | `/mgw:project` (Diverged path) |
 | `gsd-planner` | Create PLAN.md from issue description and triage context | `/mgw:run` |
 | `gsd-executor` | Execute plan tasks: read code, write code, commit | `/mgw:run` |
 | `gsd-verifier` | Verify execution against plan goals | `/mgw:run` |
@@ -688,6 +750,7 @@ mgw/
           validation.md       Delegation boundary rule and review checklist
   templates/
     schema.json               JSON Schema for /mgw:project output validation
+    vision-brief-schema.json  JSON Schema for vision-synthesizer Vision Brief output
   docs/
     ARCHITECTURE.md           This file
   .github/
@@ -806,4 +869,4 @@ MGW may reference `.planning/debug/{slug}.md` when building context for the subs
 
 ---
 
-*This document describes MGW v0.1.0. For usage instructions, see the [README](../README.md). For contribution guidelines, see [CONTRIBUTING.md](../CONTRIBUTING.md).*
+*This document describes MGW v3 architecture. For usage instructions, see the [README](../README.md). For contribution guidelines, see [CONTRIBUTING.md](../CONTRIBUTING.md).*

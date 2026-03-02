@@ -54,25 +54,44 @@ Bootstrap a repository for MGW. One-time setup, safe to re-run.
 
 ### `/mgw:project`
 
-Scaffold an entire project from a description. Creates milestones, issues, dependency labels, and project state.
+State-aware project initializer. Detects what state your repo is in and routes to the appropriate flow — Vision Collaboration Cycle for new projects, GSD alignment for existing GSD repos, drift reconciliation for diverged state, or extend for adding new milestones.
 
 **Usage:**
 ```
 /mgw:project
+/mgw:project extend    # explicitly add milestones to existing project
 ```
 
-**What it does:**
-1. Asks "What are you building?"
-2. Generates project-specific milestones, phases, and issues using AI
-3. Creates GitHub milestones with descriptions
-4. Creates issues assigned to milestones with phase labels
-5. Adds `blocked-by:#N` labels for dependency tracking
-6. Writes `.mgw/project.json` with full project state
+**State detection (5-signal matrix):**
+
+| State | What MGW sees | What it does |
+|-------|--------------|--------------|
+| Fresh | nothing | 6-stage Vision Collaboration Cycle → gsd:new-project → GitHub scaffold |
+| GSD-Only | ROADMAP.md + GSD state, no GitHub | Alignment agent backfills GitHub milestones/issues |
+| Aligned | project.json + ROADMAP.md + milestones + maps-to links | Status report + extend offer |
+| Diverged | project.json + milestones, ROADMAP.md mismatch | Drift agent produces reconciliation table |
+| Extend | explicit or Aligned choice | Add new milestones to existing project structure |
+
+**Fresh path — Vision Collaboration Cycle:**
+1. **Intake** — describe your idea in plain language
+2. **Domain Expansion** — vision-researcher agent analyzes domain → `.mgw/vision-research.json`
+3. **Structured Questioning** — 3–8 rounds (soft cap), 15 max; decisions → `.mgw/vision-draft.md`
+4. **Vision Synthesis** — vision-synthesizer → `.mgw/vision-brief.json` (MoSCoW, personas, metrics)
+5. **Review** — accept or revise (loops back to step 4)
+6. **Condense + Spawn** — vision-condenser → `.mgw/vision-handoff.md` → gsd:new-project → milestone_mapper
+
+**After any path, milestone_mapper:**
+- Creates GitHub milestones with descriptions
+- Creates issues assigned to milestones with phase labels
+- Adds `blocked-by:#N` dependency labels
+- Writes `.mgw/project.json` with full project state
+- Writes `maps-to` links in `cross-refs.json` (milestone:N ↔ gsd-milestone:id)
+- Verifies next milestone's GSD linkage (prompts gsd:new-milestone if unlinked)
 
 **Important:**
 - Creates structure only -- does **not** trigger execution
 - Run `/mgw:milestone` to begin working through issues
-- Does not ask you to pick a template type -- the AI infers project structure from your description
+- Safe to run on any repo state -- it detects and routes automatically
 
 ---
 

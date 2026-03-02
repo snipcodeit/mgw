@@ -17,19 +17,22 @@ That's it. One command takes an issue from open to PR-ready.
 ## How It Works
 
 ```
+/mgw:project               ← State-aware init (Vision Cycle / GSD alignment / extend)
+    |
+    v
 GitHub Issue #42
     |
     v
 MGW triages (scope, validity, security, conflicts)
     |
     v
-MGW creates isolated worktree
+MGW creates isolated worktree (cross-milestone check enforced)
     |
     v
 GSD plans and executes code changes
     |
     v
-MGW creates PR with structured description
+MGW creates PR with structured description (phase context + plan traceability)
     |
     v
 PR #85 ready for review -- issue auto-closes on merge
@@ -93,6 +96,7 @@ MGW selects a GSD route based on issue scope:
 | Small | 1-2 | `quick` | Single-pass plan + execute |
 | Medium | 3-8 | `quick --full` | Plan with verification loop |
 | Large | 9+ | `new-milestone` | Full milestone with phased execution |
+| Bug (unclear root cause) | any | `diagnose-issues` | Debug agent finds root cause, then routes to quick fix |
 
 ---
 

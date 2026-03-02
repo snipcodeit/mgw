@@ -116,6 +116,34 @@ The delegation boundary is the architectural rule that keeps MGW and GSD separat
 
 ## Pipeline Data Flow
 
+### mgw:project State-Aware Routing
+
+`/mgw:project` reads five signals before deciding what to do:
+
+| Signal | Meaning |
+|--------|---------|
+| P | `.mgw/project.json` exists |
+| R | `.planning/ROADMAP.md` exists |
+| S | GitHub milestones exist |
+| M | `maps-to` cross-refs exist |
+| G | GSD phase state exists |
+
+| State | Signals | Path |
+|-------|---------|------|
+| Fresh | none | 6-stage Vision Collaboration Cycle → gsd:new-project → milestone_mapper |
+| GSD-Only | R+G, no P/S | `alignment-analyzer` agent → milestone_mapper (backfill GitHub structure) |
+| Aligned | P+R+S+M | Status report + interactive extend option |
+| Diverged | P+S, R mismatch | `drift-analyzer` agent → reconciliation table |
+| Extend | explicit | Add new milestones to existing project |
+
+**Fresh path (Vision Collaboration Cycle):**
+1. Intake -- freeform project description
+2. Domain Expansion -- `vision-researcher` agent → `.mgw/vision-research.json`
+3. Structured Questioning -- 8 rounds (soft cap), 15 max → `.mgw/vision-draft.md`
+4. Vision Synthesis -- `vision-synthesizer` → `.mgw/vision-brief.json`
+5. Review -- accept or revise loop
+6. Condense -- `vision-condenser` → `.mgw/vision-handoff.md` → `gsd:new-project` Task spawn → `milestone_mapper`
+
 ### How an Issue Becomes a PR
 
 End-to-end data flow for `/mgw:run`:
@@ -126,6 +154,8 @@ GitHub Issue #42
     v
 [1] VALIDATE & LOAD
     Parse issue number, check .mgw/active/ for existing state
+    Cross-milestone check: if issue belongs to non-active milestone,
+      gsd:quick → note + proceed, gsd:plan-phase → warn + switch/continue/abort
     |
     v
 [2] CREATE WORKTREE
@@ -144,7 +174,9 @@ GitHub Issue #42
     v
 [5] EXECUTE GSD
     Quick route: init -> plan -> execute -> verify
-    Milestone route: init -> roadmap -> (plan -> execute -> verify) per phase
+    Diagnose-issues route: pipeline_stage → "diagnosing"
+      -> diagnosis agent -> root cause -> quick fix
+    Milestone route: init -> roadmap gate -> (plan -> execute -> verify) per phase
     |
     v
 [6] POST EXECUTION COMMENT
@@ -153,6 +185,7 @@ GitHub Issue #42
     v
 [7] CREATE PR
     Push branch, read GSD artifacts, generate PR body
+    PR includes: phase context, collapsed PLAN.md, verification
     |
     v
 [8] CLEANUP
@@ -185,6 +218,8 @@ See [[Configuration]] for full details on each file.
 
 ```
 new --> triaged --> planning --> executing --> verifying --> pr-created --> done
+                     ^
+                     |-- diagnosing (gsd:diagnose-issues route)
                                                                     \
                                                                      --> failed
                                                                      --> blocked
@@ -195,6 +230,7 @@ new --> triaged --> planning --> executing --> verifying --> pr-created --> done
 | `new` | `/mgw:project` or manual | Issue exists but has not been analyzed |
 | `triaged` | `/mgw:issue` | Triage complete: scope, route, security assessed |
 | `planning` | `/mgw:run` | GSD planner agent is creating PLAN.md |
+| `diagnosing` | `/mgw:run` | Diagnosis agent investigating root cause (gsd:diagnose-issues route) |
 | `executing` | `/mgw:run` | GSD executor agent is writing code |
 | `verifying` | `/mgw:run` | GSD verifier agent is checking results |
 | `pr-created` | `/mgw:run` | PR has been opened on GitHub |
@@ -219,7 +255,12 @@ MGW delegates all code-touching work to Claude Code `Task()` agents:
 
 | Agent Type | Purpose | Spawned By |
 |-----------|---------|------------|
-| `general-purpose` | Triage, comment classification, PR body, question routing | `/mgw:issue`, `/mgw:run`, `/mgw:pr`, `/mgw:ask`, `/mgw:review` |
+| `general-purpose` | Triage, comment classification, PR body, question routing, debug diagnosis | `/mgw:issue`, `/mgw:run`, `/mgw:pr`, `/mgw:ask`, `/mgw:review` |
+| `general-purpose` (vision-researcher) | Domain analysis for Fresh projects | `/mgw:project` |
+| `general-purpose` (vision-synthesizer) | Produces structured Vision Brief JSON | `/mgw:project` |
+| `general-purpose` (vision-condenser) | Condenses Vision Brief for gsd:new-project spawn | `/mgw:project` |
+| `general-purpose` (alignment-analyzer) | Reads `.planning/*`, produces alignment-report.json | `/mgw:project` (GSD-Only) |
+| `general-purpose` (drift-analyzer) | Compares project.json vs GitHub, produces drift-report.json | `/mgw:project` (Diverged) |
 | `gsd-planner` | Create PLAN.md from issue description and triage context | `/mgw:run` |
 | `gsd-executor` | Execute plan tasks: read code, write code, commit | `/mgw:run` |
 | `gsd-verifier` | Verify execution against plan goals | `/mgw:run` |

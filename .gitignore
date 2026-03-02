@@ -5,3 +5,6 @@
 .DS_Store
 .worktrees/
 .test/
+.playwright-mcp/
+dist/
+node_modules/

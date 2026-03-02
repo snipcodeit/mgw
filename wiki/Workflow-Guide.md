@@ -12,10 +12,37 @@ Starting a brand new project from scratch:
 # Step 1: Initialize the repo for MGW
 /mgw:init
 
-# Step 2: Scaffold milestones and issues from your description
+# Step 2: Run the state-aware project initializer
 /mgw:project
-# MGW asks: "What are you building?"
-# You describe your project. MGW generates milestones, phases, and issues.
+# MGW detects that this is a fresh repo and launches the Vision Collaboration Cycle:
+#
+#   Stage 1 — Intake
+#     You describe your project idea in plain language.
+#
+#   Stage 2 — Domain Expansion
+#     A vision-researcher agent analyzes your idea, identifies similar products,
+#     relevant technologies, and domain patterns. Produces .mgw/vision-research.json.
+#
+#   Stage 3 — Structured Questioning (3–8 rounds, 15 max)
+#     MGW asks targeted questions informed by the domain research.
+#     Your answers are captured as key decisions in .mgw/vision-draft.md.
+#     Type 'done' at any point to move on.
+#
+#   Stage 4 — Vision Synthesis
+#     A vision-synthesizer agent produces a structured Vision Brief:
+#     MoSCoW feature categories, target personas, success metrics, scope.
+#     Saved to .mgw/vision-brief.json.
+#
+#   Stage 5 — Review
+#     You can accept the brief, request revisions, or ask to dig deeper.
+#     Revision loops back to Stage 4.
+#
+#   Stage 6 — Condense + Spawn
+#     A vision-condenser agent produces .mgw/vision-handoff.md.
+#     MGW spawns gsd:new-project with the Vision Brief as context.
+#     GSD creates .planning/ROADMAP.md and .planning/PROJECT.md.
+#     milestone_mapper reads the ROADMAP and creates GitHub milestones and issues.
+#     maps-to cross-refs link each GitHub milestone to its GSD milestone ID.
 
 # Step 3: See the execution plan
 /mgw:milestone --dry-run
@@ -37,6 +64,24 @@ Starting a brand new project from scratch:
 
 # Step 6: After merging, sync state
 /mgw:sync
+# When the milestone completes, MGW checks if the next milestone has a GSD link.
+# If not, it prompts you to run /gsd:new-milestone before continuing.
+```
+
+## Existing GSD Project (no GitHub structure yet)
+
+If you already have a GSD project (`.planning/ROADMAP.md` exists) but haven't created GitHub issues yet:
+
+```
+# Run mgw:project — it detects the GSD-Only state
+/mgw:project
+# MGW spawns alignment-analyzer to read .planning/*
+# Produces .mgw/alignment-report.json with structured GSD state
+# milestone_mapper creates GitHub milestones and issues from the report
+# maps-to links are written to cross-refs.json
+
+# Then proceed as normal
+/mgw:milestone
 ```
 
 ---
@@ -159,9 +204,16 @@ Depending on the triage-determined route:
 5. (if --full) Spawn verifier agent
 6. Verify artifacts
 
+**Diagnose-issues route:**
+1. pipeline_stage → "diagnosing"
+2. Create .planning/debug/ directory
+3. Spawn diagnosis agent --> investigates codebase → root cause in .planning/debug/{slug}.md
+4. If root cause found: enrich context and route to quick fix
+5. If inconclusive: report to user, suggest manual investigation
+
 **Milestone route:**
 1. Initialize GSD new-milestone
-2. Spawn roadmapper agent
+2. Gate: check ROADMAP.md exists (hard block if missing)
 3. For each phase: plan, execute, verify, post phase-complete comment
 
 ### Stage 6: Post Execution Comment
@@ -335,7 +387,8 @@ MGW selects a GSD route based on issue scope during triage:
 |-----------|-------|-------|--------------|
 | Small | 1-2 | `quick` | Single-pass plan + execute. Fast, minimal overhead. |
 | Medium | 3-8 | `quick --full` | Plan with verification loop. Includes plan checking and post-execution verification. |
-| Large | 9+ | `new-milestone` | Full milestone with phased execution. Roadmap creation, multi-phase planning, per-phase verification. |
+| Large | 9+ | `new-milestone` | Full milestone with phased execution. ROADMAP.md gate, multi-phase planning, per-phase verification. |
+| Bug | any | `diagnose-issues` | Debug agent investigates root cause in isolation, then routes to quick fix. Sets `diagnosing` stage. |
 
 ### All Available GSD Routes
 

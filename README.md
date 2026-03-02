@@ -24,7 +24,7 @@ That's it. One command takes an issue from open to PR-ready.
 MGW is a [Claude Code slash command](https://docs.anthropic.com/en/docs/claude-code/slash-commands) suite and standalone Node.js CLI that automates the lifecycle of a GitHub issue:
 
 ```
-  /mgw:project               Scaffold milestones + issues from a description
+  /mgw:project               State-aware init: Vision Cycle → GSD alignment → milestone scaffold
        |
   /mgw:issue 42              Triage: scope, validity, security, conflicts
        |
@@ -82,20 +82,20 @@ If you're already using Claude Code and GSD for development, MGW is the missing 
 
 | Command | What it does |
 |---------|-------------|
-| `/mgw:project` | Scaffold a new project — generate milestones, issues, and persist project state |
+| `/mgw:project` | State-aware project init — detects Fresh/Aligned/Diverged/GSD-Only state and routes to the right flow (Vision Cycle, alignment backfill, drift reconciliation, or extend) |
 | `/mgw:init` | Bootstrap repo for MGW — creates .mgw/ state, GitHub templates, gitignore entries |
 | `/mgw:issues` | Browse and filter your GitHub issues |
 | `/mgw:issue <n>` | Deep triage — scope analysis, security review, GSD route recommendation |
 | `/mgw:next` | Show next unblocked issue based on dependency order |
-| `/mgw:run <n>` | Full autonomous pipeline: triage through PR creation |
-| `/mgw:milestone [n]` | Execute a milestone's issues in dependency order with checkpointing |
+| `/mgw:run <n>` | Full autonomous pipeline: triage through PR creation; enforces cross-milestone consistency |
+| `/mgw:milestone [n]` | Execute a milestone's issues in dependency order with checkpointing and failed-issue recovery |
 | `/mgw:update <n>` | Post structured status comments on issues |
-| `/mgw:pr [n]` | Create PR from GSD artifacts with testing procedures |
+| `/mgw:pr [n]` | Create PR from GSD artifacts with phase context and plan traceability |
 | `/mgw:ask <question>` | Route a question or observation — classify as in-scope, adjacent, separate, duplicate, or out-of-scope |
 | `/mgw:review <n>` | Review and classify new comments on an issue since last triage |
-| `/mgw:link <ref> <ref>` | Cross-reference issues, PRs, and branches |
+| `/mgw:link <ref> <ref>` | Cross-reference issues, PRs, and branches (including milestone ↔ GSD milestone maps-to links) |
 | `/mgw:status [n]` | Project dashboard — milestone progress, issue stages, open PRs |
-| `/mgw:sync` | Reconcile local state with GitHub |
+| `/mgw:sync` | Reconcile local state with GitHub; verifies GSD milestone consistency |
 | `/mgw:help` | Command reference |
 
 For detailed usage of every command including flags, examples, and edge cases, see the [User Guide](docs/USER-GUIDE.md#command-reference).
@@ -117,6 +117,7 @@ Based on scope, MGW recommends a GSD route:
 | Small (1-2 files) | `gsd:quick` | Single-pass plan + execute |
 | Medium (3-8 files) | `gsd:quick --full` | Plan with verification loop |
 | Large (9+ files) | `gsd:new-milestone` | Full milestone with phased execution |
+| Bug (unclear root cause) | `gsd:diagnose-issues` | Debug agent investigates root cause first, then routes to quick fix |
 
 For a deeper explanation of how GSD routes work, including dependency ordering and how MGW selects the right route, see the [User Guide](docs/USER-GUIDE.md#gsd-routes-explained).
 
@@ -177,15 +178,18 @@ MGW tracks pipeline state in a local `.mgw/` directory (gitignored, per-develope
 
 ```
 .mgw/
-  project.json         Milestones, issues, phases, and pipeline stages
+  project.json         Milestones, issues, phases, pipeline stages, GSD milestone links
   config.json          User prefs (GitHub username, default filters)
   active/              In-progress issue pipelines
     42-fix-auth.json   Issue state: triage results, pipeline stage, artifacts
   completed/           Archived after PR merge
-  cross-refs.json      Bidirectional issue/PR/branch links
+  cross-refs.json      Bidirectional issue/PR/branch/milestone links
+  vision-draft.md      (Fresh projects) Rolling decisions from questioning loop
+  vision-brief.json    (Fresh projects) Structured Vision Brief (MoSCoW, personas, scope)
+  alignment-report.json  (GSD-Only projects) GSD state mapped for milestone backfill
 ```
 
-Pipeline stages flow: `new` → `triaged` → `planning` → `executing` → `verifying` → `pr-created` → `done` (or `failed`)
+Pipeline stages flow: `new` → `triaged` → `planning` → `executing` → `verifying` → `pr-created` → `done` (or `failed`/`blocked`). Bugs routed to `gsd:diagnose-issues` pass through `diagnosing` before `planning`.
 
 The `/mgw:sync` command reconciles local state with GitHub reality — archiving completed work, flagging stale branches, and catching drift. For the complete state schema and configuration reference, see the [User Guide](docs/USER-GUIDE.md#the-mgw-directory). For how state flows through the system, see the [Architecture Guide](docs/ARCHITECTURE.md#state-management).
 
@@ -277,8 +281,21 @@ AI-powered commands call `claude -p` under the hood and require the [Claude Code
 ### New project (from scratch)
 
 ```bash
-# 1. Scaffold milestones and issues from a project description
+# 1. Run the project initializer (state-aware — safe to run on any repo)
 /mgw:project
+# On a fresh repo: launches a 6-stage Vision Collaboration Cycle
+#   → Intake (describe your idea)
+#   → Domain research (AI expands your concept)
+#   → Structured questioning (8–15 rounds)
+#   → Vision synthesis (structured brief: MoSCoW features, personas, scope)
+#   → Review + condense
+#   → Spawns gsd:new-project → creates GitHub milestones/issues automatically
+#
+# On a repo with GSD state but no GitHub structure:
+#   → Backfills GitHub milestones/issues from existing ROADMAP.md
+#
+# On an already-configured repo (Aligned state):
+#   → Shows status + offers to add new milestones
 
 # 2. Execute the first milestone (issues run in dependency order)
 /mgw:milestone
@@ -325,28 +342,29 @@ lib/
   claude.cjs              Claude Code invocation helpers
   github.cjs              GitHub CLI wrappers (issues, PRs, milestones, Projects v2)
   gsd.cjs                 GSD integration
-  state.cjs               .mgw/ state management
+  state.cjs               .mgw/ state management (migrateProjectState, resolveActiveMilestoneIndex)
   output.cjs              Logging and formatting
   templates.cjs           Template system
-  template-loader.cjs     Output validation (JSON Schema)
+  template-loader.cjs     Output validation (JSON Schema) + parseRoadmap()
 commands/                  Slash command source files (deployed to ~/.claude/commands/mgw/)
   ask.md                  Contextual question routing during milestone execution
   help.md                 Command reference display
   init.md                 One-time repo bootstrap (state, templates, labels)
-  project.md              AI-driven project scaffolding (milestones, issues, dependencies)
+  project.md              State-aware project init (Vision Cycle, alignment, drift, extend)
   issues.md               Issue browser with filters
   issue.md                Deep triage with agent analysis
-  next.md                 Next unblocked issue picker
+  next.md                 Next unblocked issue picker (surfaces failed issues as advisory)
   review.md               Comment review and classification since last triage
-  run.md                  Autonomous pipeline orchestrator
-  milestone.md            Milestone execution with dependency ordering and status comments
+  run.md                  Autonomous pipeline orchestrator (cross-milestone enforcement)
+  milestone.md            Milestone execution with dependency ordering and failed-issue recovery
   update.md               Structured GitHub comment templates
-  pr.md                   PR creation from GSD artifacts with milestone context
-  link.md                 Cross-referencing system
+  pr.md                   PR creation from GSD artifacts with phase context + plan traceability
+  link.md                 Cross-referencing system (incl. maps-to milestone links)
   status.md               Project status dashboard and milestone progress query
-  sync.md                 State reconciliation
+  sync.md                 State reconciliation (GSD milestone consistency check)
 templates/
   schema.json             JSON Schema for project output validation
+  vision-brief-schema.json  JSON Schema for Vision Brief output from vision-synthesizer
 .claude/
   commands/
     mgw/                   Deployed slash commands (symlinked or copied)
@@ -355,6 +373,7 @@ templates/
         github.md          Shared GitHub CLI patterns
         gsd.md             GSD agent spawn templates
         validation.md      Delegation boundary rules
+        board-sync.md      Board sync utilities (update_board_status, sync_pr_to_board)
 ```
 
 For a detailed walkthrough of the directory structure, slash command anatomy, and CLI architecture, see the [Architecture Guide](docs/ARCHITECTURE.md#directory-structure).
@@ -493,7 +512,6 @@ rm -rf .mgw/
 
 MGW is young and there's plenty of room to make it better:
 
-- **GitHub Projects v2 board integration** — currently scaffolds issues but needs `project` OAuth scope for board creation
 - **Multi-repo support** — monorepo and cross-repo issue tracking
 - **GitHub Actions integration** — trigger MGW from CI events
 - **Review cycle automation** — handle PR review comments → fix → re-request
