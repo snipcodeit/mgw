@@ -32,6 +32,8 @@ Question text: $ARGUMENTS
 
 Active issues context: .mgw/active/ (current work state)
 Project context: .mgw/project.json (milestone + all issues)
+Capability context: commands/*.md front matter (name + description per command)
+Live state: open PRs via gh pr list, milestones via gh api
 </context>
 
 <process>
@@ -107,6 +109,38 @@ for issue in m.get('issues', []):
 else
   MILESTONE_CONTEXT="No project initialized"
   ALL_ISSUES_CONTEXT=""
+fi
+```
+</step>
+
+<step name="load_capability_context">
+**Load MGW command surface, open PRs, and live milestones:**
+
+```bash
+# Extract name + description from each command's front matter
+COMMAND_SURFACE=""
+COMMANDS_DIR="${REPO_ROOT}/commands"
+for f in "${COMMANDS_DIR}"/*.md; do
+  CMD_NAME=$(grep -m1 "^name:" "$f" 2>/dev/null | sed 's/^name:[[:space:]]*//')
+  CMD_DESC=$(grep -m1 "^description:" "$f" 2>/dev/null | sed 's/^description:[[:space:]]*//')
+  if [ -n "$CMD_NAME" ]; then
+    COMMAND_SURFACE="${COMMAND_SURFACE}${CMD_NAME}: ${CMD_DESC}\n"
+  fi
+done
+
+# Fetch open PRs
+PR_CONTEXT=$(gh pr list --state open --json number,title,headRefName \
+  --jq '.[] | "#\(.number) [\(.headRefName)] \(.title)"' 2>/dev/null || echo "No open PRs")
+
+# Fetch live milestones from GitHub API
+REPO_SLUG=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+MILESTONE_LIST=""
+if [ -n "$REPO_SLUG" ]; then
+  MILESTONE_LIST=$(gh api "repos/${REPO_SLUG}/milestones" \
+    --jq '.[] | "[\(.state)] \(.title)"' 2>/dev/null || echo "")
+fi
+if [ -z "$MILESTONE_LIST" ]; then
+  MILESTONE_LIST="No milestones found (or GitHub API unavailable)"
 fi
 ```
 </step>
@@ -215,6 +249,17 @@ ${ACTIVE_STATE}
 <recent_changes>
 ${RECENT_DIFF}
 </recent_changes>
+
+<mgw_capabilities>
+## MGW Command Surface
+${COMMAND_SURFACE}
+
+## Open Pull Requests
+${PR_CONTEXT}
+
+## GitHub Milestones
+${MILESTONE_LIST}
+</mgw_capabilities>
 
 <classification_rules>
 
@@ -364,5 +409,8 @@ Consider adding it to a future milestone or filing it for backlog:
 - [ ] Actionable recommendation provided
 - [ ] Follow-up action offered (file issue, post comment, etc.)
 - [ ] Delegation boundary respected: agent reads code/state, MGW presents results
+- [ ] Command surface index built from commands/*.md front matter
+- [ ] Open PRs fetched and injected into agent context
+- [ ] Live GitHub milestones fetched as fallback when project.json is absent
 </success_criteria>
 </output>
