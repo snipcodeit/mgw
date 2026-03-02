@@ -46,6 +46,7 @@ COMMANDS
   Query
   ─────
   /mgw:status [milestone] [--json]  Project dashboard — milestone progress + issue stages
+  /mgw:roadmap [--set-dates] [--post-discussion]  Roadmap table — milestone completion, due dates, Discussion post
 
   GitHub Operations
   ─────────────────
