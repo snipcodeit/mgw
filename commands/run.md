@@ -418,9 +418,7 @@ Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → branch.
 
 **Apply in-progress label:**
 ```bash
-# Use remove_mgw_labels_and_apply pattern from github.md
-gh issue edit ${ISSUE_NUMBER} --remove-label "mgw:triaged" 2>/dev/null
-gh issue edit ${ISSUE_NUMBER} --add-label "mgw:in-progress" 2>/dev/null
+remove_mgw_labels_and_apply ${ISSUE_NUMBER} "mgw:in-progress"
 ```
 
 **PATH CONVENTION for remaining steps:**
@@ -531,8 +529,7 @@ fi
 
 **When blocking comment detected — apply label:**
 ```bash
-gh issue edit ${ISSUE_NUMBER} --remove-label "mgw:in-progress" 2>/dev/null
-gh issue edit ${ISSUE_NUMBER} --add-label "mgw:blocked" 2>/dev/null
+remove_mgw_labels_and_apply ${ISSUE_NUMBER} "mgw:blocked"
 ```
 
 If no new comments detected, continue normally.
@@ -949,8 +946,7 @@ PHASE_COUNT="TBD (determined by roadmapper)"
 
 Set pipeline_stage to "discussing" and apply "mgw:discussing" label:
 ```bash
-gh issue edit ${ISSUE_NUMBER} --remove-label "mgw:in-progress" 2>/dev/null
-gh issue edit ${ISSUE_NUMBER} --add-label "mgw:discussing" 2>/dev/null
+remove_mgw_labels_and_apply ${ISSUE_NUMBER} "mgw:discussing"
 ```
 
 Present to user:
@@ -1461,9 +1457,38 @@ rmdir "${REPO_ROOT}/.worktrees/issue" 2>/dev/null
 rmdir "${REPO_ROOT}/.worktrees" 2>/dev/null
 ```
 
-Remove in-progress label at completion:
+Clear MGW labels at completion:
 ```bash
-gh issue edit ${ISSUE_NUMBER} --remove-label "mgw:in-progress" 2>/dev/null
+# Pass empty string — removes all mgw: labels without applying a new one
+remove_mgw_labels_and_apply ${ISSUE_NUMBER} ""
+```
+
+Post-completion label reconciliation:
+```bash
+# Post-completion label reconciliation — verify no stray MGW labels remain
+LIVE_LABELS=$(gh issue view ${ISSUE_NUMBER} --json labels --jq '[.labels[].name]' 2>/dev/null || echo "[]")
+STRAY_MGW=$(echo "$LIVE_LABELS" | python3 -c "
+import json, sys
+labels = json.load(sys.stdin)
+stray = [l for l in labels if l.startswith('mgw:')]
+print('\n'.join(stray))
+" 2>/dev/null || echo "")
+
+if [ -n "$STRAY_MGW" ]; then
+  echo "MGW WARNING: unexpected MGW labels still on issue after completion: $STRAY_MGW" >&2
+fi
+
+# Sync live labels back to .mgw/active state file
+LIVE_LABELS_LIST=$(gh issue view ${ISSUE_NUMBER} --json labels --jq '[.labels[].name]' 2>/dev/null || echo "[]")
+# Update labels field in ${REPO_ROOT}/.mgw/active/${STATE_FILE} using python3 json patch:
+python3 -c "
+import json, sys
+path = sys.argv[1]
+live = json.loads(sys.argv[2])
+with open(path) as f: state = json.load(f)
+state['labels'] = live
+with open(path, 'w') as f: json.dump(state, f, indent=2)
+" "${REPO_ROOT}/.mgw/active/${STATE_FILE}" "$LIVE_LABELS_LIST" 2>/dev/null || true
 ```
 
 Extract one-liner summary for concise comment:

@@ -95,12 +95,15 @@ Seven labels for pipeline stage tracking. Created by init.md, managed by issue.m
 | `mgw:blocked` | `b60205` | Pipeline blocked by stakeholder comment |
 
 ### Remove MGW Labels and Apply New
-Used when transitioning pipeline stages. Removes all `mgw:*` pipeline labels, then applies the target label.
+Used when transitioning pipeline stages. Removes all `mgw:*` pipeline labels, then applies the target label. Returns non-zero if any gh operation failed.
 ```bash
-# Remove all mgw: pipeline labels from issue, then apply new one
+# Remove all mgw: pipeline labels from issue, then apply new one.
+# Pass empty string as NEW_LABEL to remove all MGW labels without applying a new one.
+# Returns non-zero if any label operation failed.
 remove_mgw_labels_and_apply() {
   local ISSUE_NUMBER="$1"
   local NEW_LABEL="$2"
+  local LABEL_FAILED=0
 
   # Get current labels
   CURRENT_LABELS=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '.labels[].name' 2>/dev/null)
@@ -109,15 +112,27 @@ remove_mgw_labels_and_apply() {
   for LABEL in $CURRENT_LABELS; do
     case "$LABEL" in
       mgw:triaged|mgw:needs-info|mgw:needs-security-review|mgw:discussing|mgw:approved|mgw:in-progress|mgw:blocked)
-        gh issue edit "$ISSUE_NUMBER" --remove-label "$LABEL" 2>/dev/null
+        gh issue edit "$ISSUE_NUMBER" --remove-label "$LABEL"
+        RC=$?
+        if [ $RC -ne 0 ]; then
+          echo "MGW WARNING: failed to remove label $LABEL from issue $ISSUE_NUMBER (exit $RC)" >&2
+          LABEL_FAILED=1
+        fi
         ;;
     esac
   done
 
   # Apply new label
   if [ -n "$NEW_LABEL" ]; then
-    gh issue edit "$ISSUE_NUMBER" --add-label "$NEW_LABEL" 2>/dev/null
+    gh issue edit "$ISSUE_NUMBER" --add-label "$NEW_LABEL"
+    RC=$?
+    if [ $RC -ne 0 ]; then
+      echo "MGW WARNING: failed to add label $NEW_LABEL to issue $ISSUE_NUMBER (exit $RC)" >&2
+      LABEL_FAILED=1
+    fi
   fi
+
+  return $LABEL_FAILED
 }
 ```
 
