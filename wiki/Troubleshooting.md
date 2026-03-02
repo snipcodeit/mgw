@@ -388,7 +388,7 @@ rm -rf .mgw/
 
 ```bash
 # Remove CLI
-npm unlink mgw
+npm uninstall -g @snipcodeit/mgw
 
 # Remove slash commands
 rm -rf ~/.claude/commands/mgw/

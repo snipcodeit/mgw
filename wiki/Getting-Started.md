@@ -56,19 +56,19 @@ Try MGW without installing anything:
 
 ```bash
 # See available commands
-npx mgw --help
+npx @snipcodeit/mgw --help
 
 # List your open issues
-npx mgw issues
+npx @snipcodeit/mgw issues
 
 # Sync local state with GitHub
-npx mgw sync
+npx @snipcodeit/mgw sync
 
 # Cross-reference two issues
-npx mgw link 42 43
+npx @snipcodeit/mgw link 42 43
 ```
 
-`npx mgw` gives you the CLI subset that works without Claude Code. For the AI-powered pipeline commands (`run`, `issue`, `project`, `milestone`, etc.), do the full install.
+`npx @snipcodeit/mgw` gives you the CLI subset that works without Claude Code. For the AI-powered pipeline commands (`run`, `issue`, `project`, `milestone`, etc.), do the full install.
 
 ### Option 3: Slash Commands Only (No CLI)
 
@@ -100,8 +100,8 @@ mgw --version
 
 # Slash command verification
 ls ~/.claude/commands/mgw/
-# Expected: ask.md help.md init.md issue.md issues.md link.md
-#           milestone.md next.md pr.md project.md review.md
+# Expected: ask.md assign.md board.md help.md init.md issue.md issues.md link.md
+#           milestone.md next.md pr.md project.md review.md roadmap.md
 #           run.md status.md sync.md update.md workflows/
 ```
 
@@ -120,7 +120,7 @@ Not all commands work via `npx`. The CLI has two tiers:
 | Tier | Commands | Requirements |
 |------|----------|--------------|
 | **CLI-only** (works with npx) | `issues`, `sync`, `link`, `help`, `--help`, `--version` | Node.js >= 18, `gh` CLI |
-| **AI-powered** (requires full install) | `run`, `init`, `project`, `milestone`, `next`, `issue`, `update`, `pr` | Node.js >= 18, `gh` CLI, Claude Code CLI, GSD |
+| **AI-powered** (requires full install) | `run`, `init`, `project`, `milestone`, `next`, `issue`, `update`, `pr`, `ask`, `review`, `assign`, `board`, `roadmap`, `status` | Node.js >= 18, `gh` CLI, Claude Code CLI, GSD |
 
 AI-powered commands call `claude -p` under the hood and require the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) to be installed and authenticated. The slash command `.md` files must also be deployed to `~/.claude/commands/mgw/` for the full pipeline to work.
 
@@ -229,7 +229,7 @@ Your main workspace stays on the default branch throughout. All work happens in 
 
 ```bash
 # Remove CLI
-npm unlink mgw
+npm uninstall -g @snipcodeit/mgw
 
 # Remove slash commands
 rm -rf ~/.claude/commands/mgw/

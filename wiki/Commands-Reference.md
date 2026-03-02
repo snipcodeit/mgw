@@ -22,6 +22,9 @@ Complete reference for all MGW commands. Each command is available as both a Cla
 | `/mgw:sync` | Reconcile local state with GitHub | No |
 | `/mgw:ask <question>` | Route a question during work | Yes |
 | `/mgw:review <n>` | Classify new comments on an issue | Yes |
+| `/mgw:roadmap [--set-dates] [--post-discussion]` | Render milestones as roadmap; set due dates; post Discussion | No |
+| `/mgw:assign <n> [user]` | Claim or reassign an issue | Yes |
+| `/mgw:board [--sync]` | Create, configure, and sync a GitHub Projects v2 board | Yes |
 | `/mgw:help` | Command reference display | No |
 
 ---
@@ -75,7 +78,7 @@ State-aware project initializer. Detects what state your repo is in and routes t
 **Fresh path — Vision Collaboration Cycle:**
 1. **Intake** — describe your idea in plain language
 2. **Domain Expansion** — vision-researcher agent analyzes domain → `.mgw/vision-research.json`
-3. **Structured Questioning** — 3–8 rounds (soft cap), 15 max; decisions → `.mgw/vision-draft.md`
+3. **Structured Questioning** — 3–8 rounds (soft cap), 15 max (hard cap); decisions → `.mgw/vision-draft.md`
 4. **Vision Synthesis** — vision-synthesizer → `.mgw/vision-brief.json` (MoSCoW, personas, metrics)
 5. **Review** — accept or revise (loops back to step 4)
 6. **Condense + Spawn** — vision-condenser → `.mgw/vision-handoff.md` → gsd:new-project → milestone_mapper
@@ -343,6 +346,58 @@ mgw link 42 43 --quiet    # Skip GitHub comments
 mgw link 42 43 --dry-run  # Preview without creating
 mgw link 42 43 --json     # JSON output
 ```
+
+---
+
+### `/mgw:roadmap [--set-dates] [--post-discussion] [--json]`
+
+Render project milestones as a roadmap view. Read-only by default.
+
+**Usage:**
+```
+/mgw:roadmap                      # Print roadmap table
+/mgw:roadmap --set-dates          # Interactively set GitHub milestone due dates
+/mgw:roadmap --post-discussion    # Post roadmap as a GitHub Discussion
+/mgw:roadmap --json               # Machine-readable JSON output
+```
+
+**Table output includes:**
+- Milestone name, status (planned/active/done), issues done/total, progress bar, due date
+- Overall completion summary across all milestones
+
+**Notes:**
+- `--set-dates` calls `PATCH /repos/{owner}/{repo}/milestones/{number}` with `due_on`; enables Roadmap timeline layout in GitHub Projects v2
+- `--post-discussion` requires Discussions to be enabled on the repo; creates a "Roadmap" category if one exists, otherwise falls back to first available category
+- `--json` outputs machine-readable data and exits; useful for scripting
+
+---
+
+### `/mgw:assign <number> [user]`
+
+Claim an issue for a user (defaults to current user). Updates GitHub assignment and board state.
+
+**Usage:**
+```
+/mgw:assign 42         # Assign to yourself
+/mgw:assign 42 alice   # Assign to another user
+```
+
+---
+
+### `/mgw:board [--sync]`
+
+Create, configure, and sync a GitHub Projects v2 board for the repository.
+
+**Usage:**
+```
+/mgw:board          # Show board status or create board if missing
+/mgw:board --sync   # Sync all active issues to board columns
+```
+
+**What it does:**
+- Creates a GitHub Projects v2 board linked to the repo (if not already present)
+- Stores board URL and item IDs in `project.json`
+- `--sync` updates each issue's board column to match its current `pipeline_stage`
 
 ---
 
