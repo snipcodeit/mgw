@@ -207,37 +207,37 @@ Try MGW without installing anything:
 
 ```bash
 # See available commands
-npx mgw --help
+npx @snipcodeit/mgw --help
 
 # List your open issues
-npx mgw issues
+npx @snipcodeit/mgw issues
 
 # Sync local state with GitHub
-npx mgw sync
+npx @snipcodeit/mgw sync
 
 # Cross-reference two issues
-npx mgw link 42 43
+npx @snipcodeit/mgw link 42 43
 ```
 
-`npx mgw` gives you the full CLI subset that works without Claude Code. For the AI-powered pipeline commands (`run`, `issue`, `project`, `milestone`, etc.), do a full install below.
+`npx @snipcodeit/mgw` gives you the full CLI subset that works without Claude Code. For the AI-powered pipeline commands (`run`, `issue`, `project`, `milestone`, etc.), do a full install below.
 
 ## Installation
 
-### Full install (CLI + slash commands)
+### npm (recommended)
+
+```bash
+npm install -g @snipcodeit/mgw
+# Slash commands are automatically deployed to ~/.claude/commands/mgw/
+```
+
+### From source
 
 ```bash
 git clone https://github.com/snipcodeit/mgw.git
 cd mgw
 npm install && npm run build
-npm link
+npm install -g . --prefix ~/.npm-global
 # Slash commands are installed automatically by npm postinstall
-```
-
-### Slash commands only (no CLI)
-
-```bash
-npm install -g mgw
-# Slash commands are automatically deployed to ~/.claude/commands/mgw/
 ```
 
 ### Verify
@@ -268,7 +268,7 @@ Not all commands work via `npx`. The CLI has two tiers:
 | **CLI-only** (works with npx) | `issues`, `sync`, `link`, `help`, `--help`, `--version` | Node.js >= 18, `gh` CLI |
 | **AI-powered** (requires full install) | `run`, `init`, `project`, `milestone`, `next`, `issue`, `update`, `pr`, `ask`, `review` | Node.js >= 18, `gh` CLI, Claude Code CLI, GSD |
 
-AI-powered commands call `claude -p` under the hood and require the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) to be installed and authenticated. The slash command `.md` files must also be deployed to `~/.claude/commands/mgw/` for the full pipeline to work. Use `npx mgw` to explore the CLI and verify your GitHub setup before committing to a full install.
+AI-powered commands call `claude -p` under the hood and require the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) to be installed and authenticated. The slash command `.md` files must also be deployed to `~/.claude/commands/mgw/` for the full pipeline to work — this happens automatically via `postinstall`. Use `npx @snipcodeit/mgw` to explore the CLI and verify your GitHub setup before committing to a full install.
 
 ## Typical Workflow
 
