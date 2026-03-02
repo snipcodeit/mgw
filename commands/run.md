@@ -483,7 +483,7 @@ SYSTEM_LIST="${triage.scope.systems}"
 FILE_LIST="${triage.scope.files}"
 CONFLICTS="${triage.conflicts}"
 ROUTE_REASONING="${triage.route_reasoning}"
-TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+TIMESTAMP=$(node -e "try{process.stdout.write(require('./lib/gsd-adapter.cjs').getTimestamp())}catch(e){process.stdout.write(new Date().toISOString().replace(/\\.\\d{3}Z$/,'Z'))}")
 
 # Load milestone/phase context from project.json if available
 MILESTONE_CONTEXT=""
@@ -754,9 +754,9 @@ This is the most complex path. The orchestrator needs to:
 
 **Resolve models for milestone agents:**
 ```bash
-PLANNER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-planner --raw)
-EXECUTOR_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-executor --raw)
-VERIFIER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-verifier --raw)
+PLANNER_MODEL=$(node -e "process.stdout.write(require('./lib/gsd-adapter.cjs').resolveModel('gsd-planner'))")
+EXECUTOR_MODEL=$(node -e "process.stdout.write(require('./lib/gsd-adapter.cjs').resolveModel('gsd-executor'))")
+VERIFIER_MODEL=$(node -e "process.stdout.write(require('./lib/gsd-adapter.cjs').resolveModel('gsd-verifier'))")
 ```
 
 1. **Discussion phase trigger for large-scope issues:**
@@ -765,7 +765,7 @@ If the issue was triaged with large scope and `gsd_route == "gsd:new-milestone"`
 a scope proposal comment and set the discussing stage before proceeding to phase execution:
 
 ```bash
-DISCUSS_TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+DISCUSS_TIMESTAMP=$(node -e "try{process.stdout.write(require('./lib/gsd-adapter.cjs').getTimestamp())}catch(e){process.stdout.write(new Date().toISOString().replace(/\\.\\d{3}Z$/,'Z'))}")
 
 # Build scope breakdown from triage data
 SCOPE_SIZE="${triage.scope.size}"
@@ -1000,7 +1000,7 @@ After GSD execution completes, post a structured update before creating the PR:
 COMMIT_COUNT=$(git rev-list ${DEFAULT_BRANCH}..HEAD --count 2>/dev/null || echo "0")
 TEST_STATUS=$(npm test 2>&1 >/dev/null && echo "passing" || echo "failing")
 FILE_CHANGES=$(git diff --stat ${DEFAULT_BRANCH}..HEAD 2>/dev/null | tail -1)
-EXEC_TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+EXEC_TIMESTAMP=$(node -e "try{process.stdout.write(require('./lib/gsd-adapter.cjs').getTimestamp())}catch(e){process.stdout.write(new Date().toISOString().replace(/\\.\\d{3}Z$/,'Z'))}")
 ```
 
 Post the execution-complete comment directly (no sub-agent — guarantees it happens):
@@ -1223,7 +1223,7 @@ ONE_LINER=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs summary-extract "${gs
 Post structured PR-ready comment directly (no sub-agent — guarantees it happens):
 
 ```bash
-DONE_TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+DONE_TIMESTAMP=$(node -e "try{process.stdout.write(require('./lib/gsd-adapter.cjs').getTimestamp())}catch(e){process.stdout.write(new Date().toISOString().replace(/\\.\\d{3}Z$/,'Z'))}")
 
 PR_READY_BODY=$(cat <<COMMENTEOF
 > **MGW** · \`pr-ready\` · ${DONE_TIMESTAMP}
