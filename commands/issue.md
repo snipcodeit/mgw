@@ -287,16 +287,15 @@ MISSING_FIELDS_LIST = gate_result.missing_fields formatted as "- ${field}" list
 ```
 
 Use the "Gate Blocked Comment" template from @~/.claude/commands/mgw/workflows/github.md.
-Post comment and apply label:
+Post comment and apply label using the highest-severity blocker (security > detail > validity):
 ```bash
-# Use remove_mgw_labels_and_apply pattern from github.md
-# For validity failures:
-#   pipeline_stage = "needs-info", label = "mgw:needs-info"
-# For security failures:
-#   pipeline_stage = "needs-security-review", label = "mgw:needs-security-review"
-# For detail failures:
-#   pipeline_stage = "needs-info", label = "mgw:needs-info"
-# If multiple blockers, use the highest-severity label (security > detail > validity)
+# For validity or detail failures:
+remove_mgw_labels_and_apply ${ISSUE_NUMBER} "mgw:needs-info"
+
+# For security failures (highest severity — takes precedence over needs-info):
+remove_mgw_labels_and_apply ${ISSUE_NUMBER} "mgw:needs-security-review"
+
+# If multiple blockers, apply security label if security gate failed; otherwise needs-info.
 ```
 
 **If gates passed (gate_result.status == "passed"):**
@@ -316,7 +315,7 @@ ROUTE_REASONING = triage reasoning
 
 Post comment and apply label:
 ```bash
-gh issue edit ${ISSUE_NUMBER} --add-label "mgw:triaged" 2>/dev/null
+remove_mgw_labels_and_apply ${ISSUE_NUMBER} "mgw:triaged"
 ```
 </step>
 
