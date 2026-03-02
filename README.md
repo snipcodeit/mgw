@@ -230,20 +230,14 @@ git clone https://github.com/snipcodeit/mgw.git
 cd mgw
 npm install && npm run build
 npm link
-
-# Deploy slash commands to Claude Code
-mkdir -p ~/.claude/commands/mgw/workflows
-cp -r .claude/commands/mgw/* ~/.claude/commands/mgw/
+# Slash commands are installed automatically by npm postinstall
 ```
 
 ### Slash commands only (no CLI)
 
-If you only want the Claude Code slash commands:
-
 ```bash
-git clone https://github.com/snipcodeit/mgw.git
-mkdir -p ~/.claude/commands/mgw/workflows
-cp -r mgw/.claude/commands/mgw/* ~/.claude/commands/mgw/
+npm install -g mgw
+# Slash commands are automatically deployed to ~/.claude/commands/mgw/
 ```
 
 ### Verify
@@ -252,9 +246,9 @@ cp -r mgw/.claude/commands/mgw/* ~/.claude/commands/mgw/
 # CLI (if installed)
 mgw --version
 
-# Slash commands
+# Slash commands (installed automatically by postinstall)
 ls ~/.claude/commands/mgw/
-# ask.md  help.md  init.md  issue.md  issues.md  link.md  milestone.md
+# ask.md  board.md  help.md  init.md  issue.md  issues.md  link.md  milestone.md
 # next.md  pr.md  project.md  review.md  run.md  status.md  sync.md
 # update.md  workflows/
 ```
@@ -346,8 +340,9 @@ lib/
   output.cjs              Logging and formatting
   templates.cjs           Template system
   template-loader.cjs     Output validation (JSON Schema) + parseRoadmap()
-commands/                  Slash command source files (deployed to ~/.claude/commands/mgw/)
+commands/                  Slash command source files (deployed to ~/.claude/commands/mgw/ at install time)
   ask.md                  Contextual question routing during milestone execution
+  board.md                GitHub Projects v2 board management
   help.md                 Command reference display
   init.md                 One-time repo bootstrap (state, templates, labels)
   project.md              State-aware project init (Vision Cycle, alignment, drift, extend)
@@ -362,18 +357,15 @@ commands/                  Slash command source files (deployed to ~/.claude/com
   link.md                 Cross-referencing system (incl. maps-to milestone links)
   status.md               Project status dashboard and milestone progress query
   sync.md                 State reconciliation (GSD milestone consistency check)
+  workflows/
+    state.md              Shared state schema and initialization
+    github.md             Shared GitHub CLI patterns
+    gsd.md                GSD agent spawn templates
+    validation.md         Delegation boundary rules
+    board-sync.md         Board sync utilities (update_board_status, sync_pr_to_board)
 templates/
   schema.json             JSON Schema for project output validation
   vision-brief-schema.json  JSON Schema for Vision Brief output from vision-synthesizer
-.claude/
-  commands/
-    mgw/                   Deployed slash commands (symlinked or copied)
-      workflows/
-        state.md           Shared state schema and initialization
-        github.md          Shared GitHub CLI patterns
-        gsd.md             GSD agent spawn templates
-        validation.md      Delegation boundary rules
-        board-sync.md      Board sync utilities (update_board_status, sync_pr_to_board)
 ```
 
 For a detailed walkthrough of the directory structure, slash command anatomy, and CLI architecture, see the [Architecture Guide](docs/ARCHITECTURE.md#directory-structure).
