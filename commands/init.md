@@ -1,6 +1,6 @@
 ---
 name: mgw:init
-description: Bootstrap current repo for MGW integration — creates .mgw/ state, GitHub templates, gitignore entries
+description: Bootstrap current repo for MGW integration — creates .mgw/ state, GitHub templates, gitignore entries, and optionally installs shell completions
 argument-hint: ""
 allowed-tools:
   - Bash
@@ -213,6 +213,60 @@ gh label create "mgw:blocked" --description "Pipeline blocked by stakeholder com
 `--force` updates existing labels without error.
 </step>
 
+<step name="install_completions">
+**Offer to install shell completions (opt-in):**
+
+Locate the completions directory bundled with the MGW package:
+```bash
+MGW_PKG_DIR=$(node -e "require.resolve('mgw/package.json')" 2>/dev/null | xargs dirname 2>/dev/null || echo "")
+COMPLETIONS_DIR="${MGW_PKG_DIR}/completions"
+```
+
+If completions are not found (package not globally installed or completions dir absent) → skip silently, note "Shell completions not available (mgw not installed globally)" in report.
+
+If completions are found, detect the user's shell and determine the install target:
+```bash
+CURRENT_SHELL=$(basename "${SHELL:-}")
+```
+
+Shell → target directory mapping:
+- `bash` → `~/.local/share/bash-completion/completions/` (source file: `mgw.bash`)
+- `zsh`  → `~/.zsh/completions/` (source file: `mgw.zsh`)
+- `fish` → `~/.config/fish/completions/` (source file: `mgw.fish`)
+
+If shell is unrecognized or `SHELL` is unset → show all three install commands and skip auto-install.
+
+**Interactive mode (default):** Ask the user:
+```
+Shell completions are available for ${CURRENT_SHELL}.
+
+Install to ${COMPLETION_TARGET_DIR}? [Y/n]
+```
+
+If the user answers yes (or presses Enter for the default):
+```bash
+mkdir -p "${COMPLETION_TARGET_DIR}"
+cp "${COMPLETIONS_DIR}/mgw.${SHELL_EXT}" "${COMPLETION_TARGET_DIR}/mgw.${SHELL_EXT}"
+```
+
+Then show the source/activation line appropriate for the shell:
+- bash: `# Reload with: source ~/.local/share/bash-completion/completions/mgw.bash`
+  (or add to ~/.bashrc: `source ~/.local/share/bash-completion/completions/mgw.bash`)
+- zsh: `# Reload with: fpath=(~/.zsh/completions $fpath) && autoload -U compinit && compinit`
+  (or add to ~/.zshrc if not already present)
+- fish: `# Completions loaded automatically from ~/.config/fish/completions/`
+
+If user answers no → skip, note "Shell completions: skipped" in report.
+
+If the completion file already exists at the target → overwrite (idempotent re-run).
+
+**Non-interactive mode** (stdin is not a TTY): Skip the prompt entirely, print the install command as a hint:
+```
+  Shell completions available. Install manually:
+    cp ${COMPLETIONS_DIR}/mgw.${SHELL_EXT} ${COMPLETION_TARGET_DIR}/mgw.${SHELL_EXT}
+```
+</step>
+
 <step name="report">
 **Report setup status:**
 
@@ -228,6 +282,7 @@ gh label create "mgw:blocked" --description "Pipeline blocked by stakeholder com
   PR template            ${created|exists}
   GitHub labels          synced
   MGW pipeline labels    synced (7 labels)
+  Shell completions      ${installed (bash|zsh|fish)|skipped|not available}
 
 Ready to use:
   /mgw:issues            Browse issues
@@ -246,5 +301,7 @@ Ready to use:
 - [ ] PR template created
 - [ ] GitHub labels ensured (bug, enhancement)
 - [ ] MGW pipeline labels ensured (7 mgw:* labels)
-- [ ] Setup report shown
+- [ ] Shell completion install offered (interactive) or hint printed (non-interactive)
+- [ ] Completion install skipped gracefully if completions dir not found
+- [ ] Setup report shown with completion status line
 </success_criteria>
