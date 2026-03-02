@@ -262,7 +262,7 @@ program
   .description('Browse open issues — interactive TUI in TTY, static table otherwise')
   .option('--label <label>', 'filter by label')
   .option('--milestone <name>', 'filter by milestone')
-  .option('--assignee <user>', 'filter by assignee (default: @me, "all" = no filter)', '@me')
+  .option('--assignee <user>', 'filter by assignee ("all" = no filter, default: all)', 'all')
   .option('--state <state>', 'issue state: open, closed, all (default: open)', 'open')
   .option('-s, --search <query>', 'pre-populate fuzzy search input')
   .option('--limit <n>', 'max issues to load (default: 50)', '50')
@@ -316,7 +316,7 @@ program
       initialFilter: {
         label: opts.label,
         milestone: opts.milestone,
-        assignee: opts.assignee || '@me',
+        assignee: opts.assignee || 'all',
       },
     });
   });
