@@ -107,6 +107,24 @@ If state file exists → load it. Check pipeline_stage:
       Update state: pipeline_stage = "triaged", add override_log entry.
       Continue pipeline.
 
+**Route selection via gsd-adapter (runs after loading issue state):**
+
+Use `selectGsdRoute()` from `lib/gsd-adapter.cjs` to determine the GSD execution
+path. This centralizes the routing decision so it is auditable and consistent
+across all pipeline commands:
+
+```bash
+GSD_ROUTE=$(node -e "
+const { selectGsdRoute } = require('./lib/gsd-adapter.cjs');
+const issue = $(cat ${REPO_ROOT}/.mgw/active/${STATE_FILE});
+const { loadProjectState } = require('./lib/state.cjs');
+const projectState = loadProjectState() || {};
+const route = selectGsdRoute(issue, projectState);
+console.log(route);
+")
+# GSD_ROUTE is one of: quick | plan-phase | diagnose | execute-only | verify-only
+```
+
 **Cross-milestone detection (runs after loading issue state):**
 
 Check if this issue belongs to a non-active GSD milestone:

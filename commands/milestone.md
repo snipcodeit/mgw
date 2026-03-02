@@ -793,9 +793,18 @@ writeProjectState(state);
 
 5. Milestone mapping verification:
 
-After advancing to the next milestone, check its GSD linkage:
+After advancing to the next milestone, check its GSD linkage using `getGsdState()`
+from `lib/gsd-adapter.cjs` to read current GSD execution state (.planning/STATE.md
+and ROADMAP.md) alongside the project.json milestone map:
 
 ```bash
+# Read current GSD state from .planning/ via the adapter
+GSD_STATE=$(node -e "
+const { getGsdState } = require('./lib/gsd-adapter.cjs');
+const state = getGsdState();
+console.log(JSON.stringify(state));
+" 2>/dev/null || echo "null")
+
 NEXT_MILESTONE_CHECK=$(node -e "
 const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
 const state = loadProjectState();
