@@ -8,6 +8,7 @@
   "main": "./dist/lib/index.cjs",
   "files": [
     "dist/",
+    "bin/mgw-install.cjs",
     "commands/",
     "templates/"
   ],
@@ -15,7 +16,8 @@
     "build": "pkgroll --clean-dist --src .",
     "dev": "pkgroll --watch --src .",
     "test": "node --test 'test/**/*.test.cjs'",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "postinstall": "node ./bin/mgw-install.cjs"
   },
   "dependencies": {
     "commander": "^14.0.3"
