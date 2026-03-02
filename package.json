@@ -1,6 +1,6 @@
 {
   "name": "@snipcodeit/mgw",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "GitHub-native issue-to-PR automation for Claude Code, powered by Get Shit Done",
   "bin": {
     "mgw": "./dist/bin/mgw.cjs"
