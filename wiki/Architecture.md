@@ -139,7 +139,7 @@ The delegation boundary is the architectural rule that keeps MGW and GSD separat
 **Fresh path (Vision Collaboration Cycle):**
 1. Intake -- freeform project description
 2. Domain Expansion -- `vision-researcher` agent → `.mgw/vision-research.json`
-3. Structured Questioning -- 8 rounds (soft cap), 15 max → `.mgw/vision-draft.md`
+3. Structured Questioning -- 3-8 rounds (soft cap), 15 max (hard cap) → `.mgw/vision-draft.md`
 4. Vision Synthesis -- `vision-synthesizer` → `.mgw/vision-brief.json`
 5. Review -- accept or revise loop
 6. Condense -- `vision-condenser` → `.mgw/vision-handoff.md` → `gsd:new-project` Task spawn → `milestone_mapper`

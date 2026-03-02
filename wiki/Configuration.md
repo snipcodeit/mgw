@@ -84,7 +84,10 @@ Created by `/mgw:project`. Contains the full project structure:
 
 | Field | Description |
 |-------|-------------|
-| `current_milestone` | 1-indexed pointer to the active milestone. Advanced automatically when a milestone completes. |
+| `active_gsd_milestone` | **Canonical** active milestone pointer — a GSD milestone ID string (e.g. `"v1.1"`). Always resolve this via `resolveActiveMilestoneIndex()` from `lib/state.cjs`, never read `current_milestone` directly. |
+| `current_milestone` | Legacy 1-indexed pointer kept for backward compatibility. Advanced automatically when a milestone completes. |
+| `milestones[].gsd_milestone_id` | GSD milestone ID string linking this milestone to a `.planning/` phase group (e.g. `"v1.0"`). |
+| `milestones[].gsd_state` | GSD execution state: `"active"`, `"completed"`, `"planned"`, or `null`. |
 | `pipeline_stage` (per issue) | Progress: `new` -> `triaged` -> `planning` -> `executing` -> `verifying` -> `pr-created` -> `done` (or `failed` / `blocked`) |
 | `depends_on_slugs` | Slugified issue titles for dependency resolution |
 | `phase_number` | Ordering within a milestone |

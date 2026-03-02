@@ -96,6 +96,9 @@ If you're already using Claude Code and GSD for development, MGW is the missing 
 | `/mgw:review <n>` | Review and classify new comments on an issue since last triage |
 | `/mgw:link <ref> <ref>` | Cross-reference issues, PRs, and branches (including milestone ↔ GSD milestone maps-to links) |
 | `/mgw:status [n]` | Project dashboard — milestone progress, issue stages, open PRs |
+| `/mgw:roadmap [--set-dates] [--post-discussion]` | Render project milestones as a roadmap table; optionally set GitHub due dates or post as a Discussion |
+| `/mgw:assign <n> [user]` | Claim or reassign an issue; resolves GitHub noreply co-author tag |
+| `/mgw:board [--sync]` | Create, configure, and sync a GitHub Projects v2 board |
 | `/mgw:sync` | Reconcile local state with GitHub; verifies GSD milestone consistency |
 | `/mgw:help` | Command reference |
 
@@ -185,9 +188,12 @@ MGW tracks pipeline state in a local `.mgw/` directory (gitignored, per-develope
     42-fix-auth.json   Issue state: triage results, pipeline stage, artifacts
   completed/           Archived after PR merge
   cross-refs.json      Bidirectional issue/PR/branch/milestone links
-  vision-draft.md      (Fresh projects) Rolling decisions from questioning loop
-  vision-brief.json    (Fresh projects) Structured Vision Brief (MoSCoW, personas, scope)
+  vision-research.json   (Fresh projects) Domain research from vision-researcher agent
+  vision-draft.md        (Fresh projects) Rolling decisions from questioning loop
+  vision-brief.json      (Fresh projects) Structured Vision Brief (MoSCoW, personas, scope)
+  vision-handoff.md      (Fresh projects) Condensed brief handed off to gsd:new-project
   alignment-report.json  (GSD-Only projects) GSD state mapped for milestone backfill
+  drift-report.json      (Diverged projects) Reconciliation table from drift-analyzer agent
 ```
 
 Pipeline stages flow: `new` → `triaged` → `planning` → `executing` → `verifying` → `pr-created` → `done` (or `failed`/`blocked`). Bugs routed to `gsd:diagnose-issues` pass through `diagnosing` before `planning`.
@@ -249,9 +255,9 @@ mgw --version
 
 # Slash commands (installed automatically by postinstall)
 ls ~/.claude/commands/mgw/
-# ask.md  board.md  help.md  init.md  issue.md  issues.md  link.md  milestone.md
-# next.md  pr.md  project.md  review.md  run.md  status.md  sync.md
-# update.md  workflows/
+# ask.md  assign.md  board.md  help.md  init.md  issue.md  issues.md  link.md
+# milestone.md  next.md  pr.md  project.md  review.md  roadmap.md  run.md
+# status.md  sync.md  update.md  workflows/
 ```
 
 Then in Claude Code:
@@ -267,7 +273,7 @@ Not all commands work via `npx`. The CLI has two tiers:
 | Tier | Commands | Requirements |
 |------|----------|--------------|
 | **CLI-only** (works with npx) | `issues`, `sync`, `link`, `help`, `--help`, `--version` | Node.js >= 18, `gh` CLI |
-| **AI-powered** (requires full install) | `run`, `init`, `project`, `milestone`, `next`, `issue`, `update`, `pr`, `ask`, `review` | Node.js >= 18, `gh` CLI, Claude Code CLI, GSD |
+| **AI-powered** (requires full install) | `run`, `init`, `project`, `milestone`, `next`, `issue`, `update`, `pr`, `ask`, `review`, `assign`, `board`, `roadmap`, `status` | Node.js >= 18, `gh` CLI, Claude Code CLI, GSD |
 
 AI-powered commands call `claude -p` under the hood and require the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) to be installed and authenticated. The slash command `.md` files must also be deployed to `~/.claude/commands/mgw/` for the full pipeline to work — this happens automatically via `postinstall`. Use `npx @snipcodeit/mgw` to explore the CLI and verify your GitHub setup before committing to a full install.
 
@@ -337,12 +343,15 @@ lib/
   claude.cjs              Claude Code invocation helpers
   github.cjs              GitHub CLI wrappers (issues, PRs, milestones, Projects v2)
   gsd.cjs                 GSD integration
+  gsd-adapter.cjs         GSD route adapter (maps triage results to GSD spawn args)
   state.cjs               .mgw/ state management (migrateProjectState, resolveActiveMilestoneIndex)
   output.cjs              Logging and formatting
+  retry.cjs               Retry logic for GitHub API calls
   templates.cjs           Template system
   template-loader.cjs     Output validation (JSON Schema) + parseRoadmap()
 commands/                  Slash command source files (deployed to ~/.claude/commands/mgw/ at install time)
   ask.md                  Contextual question routing during milestone execution
+  assign.md               Claim/reassign issues; resolves GitHub noreply co-author tag
   board.md                GitHub Projects v2 board management
   help.md                 Command reference display
   init.md                 One-time repo bootstrap (state, templates, labels)
@@ -351,6 +360,7 @@ commands/                  Slash command source files (deployed to ~/.claude/com
   issue.md                Deep triage with agent analysis
   next.md                 Next unblocked issue picker (surfaces failed issues as advisory)
   review.md               Comment review and classification since last triage
+  roadmap.md              Milestone roadmap table; optional GitHub due-date setter and Discussion post
   run.md                  Autonomous pipeline orchestrator (cross-milestone enforcement)
   milestone.md            Milestone execution with dependency ordering and failed-issue recovery
   update.md               Structured GitHub comment templates
@@ -492,7 +502,7 @@ If rate-limited, wait for the reset window (usually under an hour) or reduce the
 
 ```bash
 # Remove CLI
-npm unlink mgw
+npm uninstall -g @snipcodeit/mgw
 
 # Remove slash commands
 rm -rf ~/.claude/commands/mgw/

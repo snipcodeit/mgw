@@ -23,7 +23,7 @@ Starting a brand new project from scratch:
 #     A vision-researcher agent analyzes your idea, identifies similar products,
 #     relevant technologies, and domain patterns. Produces .mgw/vision-research.json.
 #
-#   Stage 3 — Structured Questioning (3–8 rounds, 15 max)
+#   Stage 3 — Structured Questioning (3–8 rounds soft cap, 15 max hard cap)
 #     MGW asks targeted questions informed by the domain research.
 #     Your answers are captured as key decisions in .mgw/vision-draft.md.
 #     Type 'done' at any point to move on.
