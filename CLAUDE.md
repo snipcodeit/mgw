@@ -89,6 +89,7 @@ Context strategy: rolling summary only. Agents receive Vision Brief + latest del
 | `next` | Find next unblocked issue; surfaces failed issues as advisory | No |
 | `pr` | Create PR from GSD artifacts; includes Phase Context and PLAN.md (collapsed) | Yes (.mgw/active/) |
 | `review` | Classify new comments | No |
+| `roadmap` | Render milestone roadmap table; set GitHub milestone due dates; post Discussion | No (Yes with --set-dates or --post-discussion) |
 | `status` | Project status dashboard | No |
 | `sync` | Reconcile .mgw/ with GitHub; checks maps-to GSD milestone consistency | Yes (.mgw/) |
 | `update` | Post structured status comment | No |
