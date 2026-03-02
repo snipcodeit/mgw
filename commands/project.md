@@ -122,6 +122,60 @@ PREFIX="v1"
 @workflows/generate-template.md
 </step>
 
+<step name="discover_board">
+**Non-blocking board discovery before GitHub structure creation:**
+
+If `project.project_board.node_id` is empty, search GitHub for an existing board whose
+title contains the project name. If found, register it in project.json so the board sync
+step inside `create-github-structure.md` can use it immediately without requiring a
+separate `/mgw:board create` run.
+
+Silently skipped if board is already registered or if the API call fails.
+
+```bash
+EXISTING_NODE_ID=$(python3 -c "
+import json
+try:
+    p = json.load(open('${MGW_DIR}/project.json'))
+    print(p.get('project', {}).get('project_board', {}).get('node_id', ''))
+except:
+    print('')
+" 2>/dev/null || echo "")
+
+if [ -z "$EXISTING_NODE_ID" ]; then
+  DISCOVERED=$(node -e "
+const { findExistingBoard, getProjectFields } = require('./lib/github.cjs');
+const board = findExistingBoard('${OWNER}', '${PROJECT_NAME}');
+if (!board) { process.stdout.write(''); process.exit(0); }
+const fields = getProjectFields('${OWNER}', board.number) || {};
+console.log(JSON.stringify({ ...board, fields }));
+" 2>/dev/null || echo "")
+
+  if [ -n "$DISCOVERED" ]; then
+    python3 << PYEOF
+import json
+
+with open('${MGW_DIR}/project.json') as f:
+    project = json.load(f)
+
+d = json.loads('${DISCOVERED}')
+project['project']['project_board'] = {
+    'number': d['number'],
+    'url': d['url'],
+    'node_id': d['nodeId'],
+    'fields': d.get('fields', {})
+}
+
+with open('${MGW_DIR}/project.json', 'w') as f:
+    json.dump(project, f, indent=2)
+
+print(f"Board auto-discovered and registered: #{d['number']} — {d['url']}")
+PYEOF
+  fi
+fi
+```
+</step>
+
 <step name="create_github_structure">
 @workflows/create-github-structure.md
 </step>
@@ -138,6 +192,7 @@ PREFIX="v1"
 - [ ] Slug-to-number mapping built during Pass 1b
 - [ ] Dependency labels applied (Pass 2) — blocked-by:#N on dependent issues
 - [ ] cross-refs.json updated with dependency entries
+- [ ] Board discovery: if project_board.node_id empty before create_github_structure runs, findExistingBoard() called; if found, registered silently in project.json
 - [ ] Board sync: if board configured (PROJECT_NUMBER + BOARD_NODE_ID in project.json), each new issue added as board item
 - [ ] Board sync: Milestone, Phase, and GSD Route fields set on each board item where field IDs are available
 - [ ] Board sync: board_item_id stored per issue in project.json (null if board sync skipped or failed)
