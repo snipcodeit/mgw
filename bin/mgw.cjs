@@ -25,6 +25,7 @@ const { log, error, formatJson, verbose } = require('../lib/output.cjs');
 const { getActiveDir, getCompletedDir, getMgwDir } = require('../lib/state.cjs');
 const { getIssue, listIssues } = require('../lib/github.cjs');
 const { createIssuesBrowser } = require('../lib/tui/index.cjs');
+const { createSpinner } = require('../lib/spinner.cjs');
 
 const pkg = require('../package.json');
 
@@ -49,6 +50,21 @@ program
 // ---------------------------------------------------------------------------
 
 /**
+ * Pipeline stage labels shown as spinners before handing off to claude.
+ * Used by runAiCommand when a stageLabel is provided.
+ */
+const STAGE_LABELS = {
+  run: 'pipeline',
+  init: 'init',
+  project: 'project',
+  milestone: 'milestone',
+  issue: 'triage',
+  pr: 'create-pr',
+  update: 'update',
+  next: 'next',
+};
+
+/**
  * @param {string} commandName - Name of the command (filename without .md)
  * @param {string} userPrompt - Prompt text to pass to claude
  * @param {object} opts - Merged options from this.optsWithGlobals()
@@ -56,13 +72,51 @@ program
 async function runAiCommand(commandName, userPrompt, opts) {
   assertClaudeAvailable();
   const cmdFile = path.join(getCommandsDir(), `${commandName}.md`);
-  const result = await invokeClaude(cmdFile, userPrompt, {
-    model: opts.model,
-    quiet: opts.quiet,
-    dryRun: opts.dryRun,
-    json: opts.json,
-  });
-  process.exitCode = result.exitCode;
+  const stageLabel = STAGE_LABELS[commandName] || commandName;
+
+  if (opts.quiet) {
+    // Quiet mode: buffer claude output and show a spinner while it runs.
+    // The spinner gives real-time feedback when output is suppressed.
+    const spinner = createSpinner(`mgw:${stageLabel}`);
+    spinner.start();
+    let result;
+    try {
+      result = await invokeClaude(cmdFile, userPrompt, {
+        model: opts.model,
+        quiet: true,
+        dryRun: opts.dryRun,
+        json: opts.json,
+      });
+    } catch (err) {
+      spinner.fail(`${stageLabel} failed`);
+      throw err;
+    }
+    if (result.exitCode === 0) {
+      spinner.succeed(`${stageLabel} complete`);
+    } else {
+      spinner.fail(`${stageLabel} failed (exit ${result.exitCode})`);
+    }
+    if (result.output) {
+      process.stdout.write(result.output);
+    }
+    process.exitCode = result.exitCode;
+  } else {
+    // Streaming mode: show a brief stage announcement, then hand off to claude.
+    // Claude streams its own output — no spinner during streaming to avoid conflicts.
+    const spinner = createSpinner(`mgw:${stageLabel}`);
+    spinner.start();
+    // Give a brief visual indication before handing TTY to claude's streaming output
+    await new Promise(r => setTimeout(r, 80));
+    spinner.stop();
+
+    const result = await invokeClaude(cmdFile, userPrompt, {
+      model: opts.model,
+      quiet: false,
+      dryRun: opts.dryRun,
+      json: opts.json,
+    });
+    process.exitCode = result.exitCode;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +124,15 @@ async function runAiCommand(commandName, userPrompt, opts) {
 // Note: All .action() handlers use `function` (not arrow) so `this` is bound
 // to the Command instance, enabling this.optsWithGlobals() for global flags.
 // ---------------------------------------------------------------------------
+
+/** Pipeline stage sequence shown as a progress header for `mgw run` */
+const RUN_PIPELINE_STAGES = [
+  'validate',
+  'triage',
+  'create-worktree',
+  'execute-gsd',
+  'create-pr',
+];
 
 // run <issue-number>
 program
@@ -79,6 +142,15 @@ program
   .option('--auto', 'phase chaining: discuss -> plan -> execute')
   .action(async function(issueNumber) {
     const opts = this.optsWithGlobals();
+    // Print pipeline stage overview before launching
+    if (!opts.json) {
+      const { USE_COLOR, COLORS } = require('../lib/output.cjs');
+      const dim = USE_COLOR ? COLORS.dim : '';
+      const reset = USE_COLOR ? COLORS.reset : '';
+      const bold = USE_COLOR ? COLORS.bold : '';
+      const stages = RUN_PIPELINE_STAGES.join(` ${dim}→${reset} `);
+      process.stdout.write(`${bold}mgw:run${reset} #${issueNumber}  ${dim}${stages}${reset}\n`);
+    }
     await runAiCommand('run', issueNumber, opts);
   });
 
