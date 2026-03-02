@@ -38,14 +38,20 @@ if [ ! -f "${MGW_DIR}/project.json" ]; then
 fi
 
 PROJECT_JSON=$(cat "${MGW_DIR}/project.json")
-CURRENT_MILESTONE=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['current_milestone'])")
+
+# Resolve active milestone index using state resolution (supports both schema versions)
+ACTIVE_IDX=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+console.log(resolveActiveMilestoneIndex(state));
+")
 
 # Get milestone data
 MILESTONE_DATA=$(echo "$PROJECT_JSON" | python3 -c "
 import json,sys
 p = json.load(sys.stdin)
-idx = p['current_milestone'] - 1
-if idx >= len(p['milestones']):
+idx = ${ACTIVE_IDX}
+if idx < 0 or idx >= len(p['milestones']):
     print(json.dumps({'error': 'No more milestones'}))
     sys.exit(0)
 m = p['milestones'][idx]

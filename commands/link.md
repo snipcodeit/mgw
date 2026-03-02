@@ -19,6 +19,8 @@ Reference formats:
 - Issue: 42 or #42 or issue:42
 - PR: pr:15 or pr:#15
 - Branch: branch:fix/auth-42
+- GitHub Milestone: milestone:N
+- GSD Milestone: gsd-milestone:name
 </objective>
 
 <execution_context>
@@ -39,6 +41,8 @@ Normalize reference formats:
 - Bare number or #N → "issue:N"
 - pr:N or pr:#N → "pr:N"
 - branch:name → "branch:name"
+- milestone:N → "milestone:N" (GitHub milestone by number)
+- gsd-milestone:name → "gsd-milestone:name" (GSD milestone by id/name)
 
 If fewer than 2 refs provided:
 ```
@@ -68,6 +72,7 @@ Determine link type:
 - issue + pr → "implements"
 - issue + branch → "tracks"
 - pr + branch → "tracks"
+- milestone + gsd-milestone → "maps-to" (maps GitHub milestone to GSD milestone)
 
 Check for duplicate (same a+b pair exists). If duplicate, report and skip.
 

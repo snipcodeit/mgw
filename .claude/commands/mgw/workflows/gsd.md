@@ -196,6 +196,64 @@ ROADMAP_ANALYSIS=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs roadmap analyz
   v{X.Y}-REQUIREMENTS.md        (archived requirements)
 ```
 
+## GSD Debug Pipeline Pattern
+
+Used by `/mgw:run` when triage recommends `gsd:diagnose-issues`. This route investigates
+a bug's root cause before planning a fix. It is a two-step process: diagnose, then fix.
+
+The GSD debug workflow is `diagnose-issues.md` -- it spawns parallel debug agents per
+symptom/gap, each investigating autonomously, returning root causes.
+
+```bash
+# 1. Gather symptoms from the issue body
+# Extract: what's broken, error messages, reproduction steps, expected vs actual
+
+# 2. Create debug directory
+mkdir -p .planning/debug
+
+# 3. Spawn diagnosis agent
+Task(
+  prompt="
+    <files_to_read>
+    - ./CLAUDE.md (Project instructions -- if exists, follow all guidelines)
+    - .planning/STATE.md (if exists)
+    </files_to_read>
+
+    Diagnose the root cause of this bug.
+
+    <issue>
+    Title: ${issue_title}
+    Body: ${issue_body}
+    </issue>
+
+    <instructions>
+    Read the GSD diagnose-issues workflow for your process:
+    @~/.claude/get-shit-done/workflows/diagnose-issues.md
+
+    Create a debug session file at .planning/debug/${slug}.md
+    Investigate the codebase to find the root cause.
+    Return: root cause, evidence, files involved, suggested fix direction.
+    </instructions>
+  ",
+  subagent_type="general-purpose",
+  description="Diagnose bug: ${issue_title}"
+)
+
+# 4. After diagnosis, route to quick fix
+# Read the debug session file for root cause
+# If root cause found: spawn gsd:quick executor with the root cause as context
+# If inconclusive: report to user, suggest manual investigation
+```
+
+**Artifacts created:**
+```
+.planning/debug/
+  {slug}.md              (debug session with root cause)
+```
+
+After diagnosis, the pipeline continues to the quick execution flow (task 3 in the
+existing Quick Pipeline Pattern) with the root cause informing the plan.
+
 ## Utility Patterns
 
 GSD tools used by MGW for common operations.

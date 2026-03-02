@@ -42,7 +42,17 @@ if [ ! -f "${MGW_DIR}/cross-refs.json" ]; then
   echo '{"links":[]}' > "${MGW_DIR}/cross-refs.json"
 fi
 
-# 4. Run staleness check (see Staleness Detection below)
+# 4. Migrate project.json schema (idempotent — adds new fields without overwriting)
+# This ensures all commands see gsd_milestone_id, gsd_state, active_gsd_milestone, etc.
+# Non-blocking: if migration fails for any reason, continue silently.
+if [ -f "${MGW_DIR}/project.json" ]; then
+  node -e "
+const { migrateProjectState } = require('./lib/state.cjs');
+try { migrateProjectState(); } catch(e) { /* non-blocking */ }
+" 2>/dev/null || true
+fi
+
+# 5. Run staleness check (see Staleness Detection below)
 # Only if active issues exist — skip for commands that don't need it (e.g., init, help)
 if ls "${MGW_DIR}/active/"*.json 1>/dev/null 2>&1; then
   check_staleness "${MGW_DIR}"
@@ -216,7 +226,7 @@ File: `.mgw/active/<number>-<slug>.json`
   },
   "gsd_route": null,
   "gsd_artifacts": { "type": null, "path": null },
-  "pipeline_stage": "new|triaged|needs-info|needs-security-review|discussing|approved|planning|executing|verifying|pr-created|done|failed|blocked",
+  "pipeline_stage": "new|triaged|needs-info|needs-security-review|discussing|approved|planning|diagnosing|executing|verifying|pr-created|done|failed|blocked",
   "comments_posted": [],
   "linked_pr": null,
   "linked_issues": [],
@@ -237,11 +247,14 @@ needs-security-review --> triaged  (re-triage after security ack)
 triaged --> discussing  (new-milestone route, large scope)
 triaged --> approved    (discussion complete, ready for execution)
 triaged --> planning    (direct route, skip discussion)
+triaged --> diagnosing  (gsd:diagnose-issues route)
 
 discussing --> approved (stakeholder approval)
 approved --> planning
 
 planning --> executing
+diagnosing --> planning  (root cause found, proceeding to fix)
+diagnosing --> blocked   (investigation inconclusive)
 executing --> verifying
 verifying --> pr-created
 pr-created --> done
@@ -301,52 +314,87 @@ if [ -z "$PROJECT_JSON" ]; then
   exit 1
 fi
 
-CURRENT_MILESTONE=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['current_milestone'])")
+# Resolve active milestone index — supports both new schema (active_gsd_milestone string)
+# and legacy schema (current_milestone 1-indexed integer).
+ACTIVE_IDX=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+console.log(resolveActiveMilestoneIndex(state));
+")
+CURRENT_MILESTONE=$((ACTIVE_IDX + 1))  # 1-indexed for display/legacy compat
 ```
 
 ### Read Milestone Issues
 ```bash
-MILESTONE_ISSUES=$(echo "$PROJECT_JSON" | python3 -c "
-import json,sys
-p = json.load(sys.stdin)
-m = p['milestones'][p['current_milestone'] - 1]
-print(json.dumps(m['issues'], indent=2))
+MILESTONE_ISSUES=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+const idx = resolveActiveMilestoneIndex(state);
+if (idx < 0) { console.error('No active milestone'); process.exit(1); }
+console.log(JSON.stringify(state.milestones[idx].issues || [], null, 2));
 ")
 ```
 
 ### Update Issue Pipeline Stage
 Used after each `/mgw:run` completion to checkpoint progress.
 ```bash
-python3 -c "
-import json
-with open('${MGW_DIR}/project.json') as f:
-    project = json.load(f)
-milestone = project['milestones'][project['current_milestone'] - 1]
-for issue in milestone['issues']:
-    if issue['github_number'] == ${ISSUE_NUMBER}:
-        issue['pipeline_stage'] = '${NEW_STAGE}'
-        break
-with open('${MGW_DIR}/project.json', 'w') as f:
-    json.dump(project, f, indent=2)
+node -e "
+const { loadProjectState, resolveActiveMilestoneIndex, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+const idx = resolveActiveMilestoneIndex(state);
+if (idx < 0) { console.error('No active milestone'); process.exit(1); }
+const issue = (state.milestones[idx].issues || []).find(i => i.github_number === ${ISSUE_NUMBER});
+if (issue) { issue.pipeline_stage = '${NEW_STAGE}'; }
+writeProjectState(state);
 "
 ```
 
-Valid stages: `new`, `triaged`, `planning`, `executing`, `verifying`, `pr-created`, `done`, `failed`, `blocked`.
+Valid stages: `new`, `triaged`, `planning`, `diagnosing`, `executing`, `verifying`, `pr-created`, `done`, `failed`, `blocked`.
 
 ### Advance Current Milestone
 Used after milestone completion to move pointer to next milestone.
 ```bash
-python3 -c "
-import json
-with open('${MGW_DIR}/project.json') as f:
-    project = json.load(f)
-project['current_milestone'] += 1
-with open('${MGW_DIR}/project.json', 'w') as f:
-    json.dump(project, f, indent=2)
+node -e "
+const { loadProjectState, resolveActiveMilestoneIndex, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+const currentIdx = resolveActiveMilestoneIndex(state);
+const next = (state.milestones || [])[currentIdx + 1];
+if (next) {
+  state.active_gsd_milestone = next.gsd_milestone_id || null;
+  if (!state.active_gsd_milestone) {
+    state.current_milestone = currentIdx + 2; // legacy fallback
+  }
+} else {
+  state.active_gsd_milestone = null;
+  state.current_milestone = currentIdx + 2; // past end, signals completion
+}
+writeProjectState(state);
 "
 ```
 
 Only advance if ALL issues in current milestone completed successfully.
+
+### Phase Map Usage
+
+The `phase_map` in project.json maps GSD phase numbers to their metadata. This is the
+bridge between MGW's issue tracking and GSD's phase-based execution:
+
+```json
+{
+  "phase_map": {
+    "1": {"milestone_index": 0, "gsd_route": "plan-phase", "name": "Core Data Models"},
+    "2": {"milestone_index": 0, "gsd_route": "plan-phase", "name": "API Endpoints"},
+    "3": {"milestone_index": 1, "gsd_route": "plan-phase", "name": "Frontend Components"}
+  }
+}
+```
+
+Each issue in project.json has a `phase_number` field that indexes into this map.
+When `/mgw:run` picks up an issue, it reads the `phase_number` to determine which
+GSD phase directory (`.planning/phases/{NN}-{slug}/`) to operate in.
+
+Issues created outside of `/mgw:project` (e.g., manually filed bugs) will not have
+a `phase_number`. In this case, `/mgw:run` falls back to the quick pipeline.
 
 ## Consumers
 

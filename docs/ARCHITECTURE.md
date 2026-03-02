@@ -159,6 +159,16 @@ The full rule with a review checklist is defined in `workflows/validation.md`. E
 
 ## How an Issue Becomes a PR
 
+### ROADMAP.md Integration
+
+`/mgw:project` now reads `.planning/ROADMAP.md` when it exists. The recommended setup flow is:
+
+1. `gsd:new-project` or `gsd:new-milestone` -- creates `.planning/ROADMAP.md` with structured phases
+2. `/mgw:project` -- reads the ROADMAP.md and creates GitHub milestones and issues from it
+3. `/mgw:milestone` -- executes the first milestone
+
+When no ROADMAP.md exists, `/mgw:project` falls back to AI-driven generation from a project description.
+
 This is the end-to-end data flow for a single issue processed through `/mgw:run`:
 
 ```
@@ -201,6 +211,15 @@ GitHub Issue #42
     |  f. gsd-tools verify artifacts           |
     +------------------------------------------+
     |
+    +--[diagnose-issues route]-----------------+
+    |  a. Create .planning/debug/ directory    |
+    |  b. Spawn diagnosis agent (general-purpose)|
+    |     - Reads codebase, finds root cause   |
+    |     - Creates .planning/debug/{slug}.md  |
+    |  c. If root cause found: route to quick  |
+    |  d. If inconclusive: report to user      |
+    +------------------------------------------+
+    |
     +--[milestone route]-----------------------+
     |  a. gsd-tools init new-milestone         |
     |  b. Spawn roadmapper agent              |
@@ -241,7 +260,7 @@ Issue #42 auto-closes on merge
 MGW provides composable commands. The full pipeline is `/mgw:run`, but each stage can be invoked independently:
 
 ```
-/mgw:project -----> Scaffold milestones + issues from a project description
+/mgw:project -----> Read GSD ROADMAP.md to create GitHub milestones and issues (or generate from AI description as fallback)
                     Creates: GitHub milestones, issues, labels, .mgw/project.json
 
 /mgw:issue N -----> Deep triage of a single issue
@@ -773,6 +792,17 @@ PR Body:
 MGW also runs non-blocking post-execution checks via `gsd-tools verify artifacts` and `gsd-tools verify key-links`. If these flag issues, they appear as warnings in the PR description rather than blocking creation.
 
 The PR agent is a `general-purpose` type (no code execution). It reads the artifacts as text and composes the PR body. It never reads application source code -- it only works from GSD's structured output.
+
+### Debug Artifacts
+
+When the `gsd:diagnose-issues` route is used, the following artifact is created before execution:
+
+```
+.planning/debug/
+  {slug}.md    (debug session: root cause, evidence, files involved, fix direction)
+```
+
+MGW may reference `.planning/debug/{slug}.md` when building context for the subsequent quick-fix execution agent. The debug artifact is not included in the PR body directly, but informs the planner agent that follows.
 
 ---
 

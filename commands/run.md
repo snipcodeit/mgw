@@ -106,6 +106,187 @@ If state file exists → load it. Check pipeline_stage:
       Log warning: "MGW: WARNING — Acknowledging security risk for #${ISSUE_NUMBER}. Proceeding with --security-ack."
       Update state: pipeline_stage = "triaged", add override_log entry.
       Continue pipeline.
+
+**Cross-milestone detection (runs after loading issue state):**
+
+Check if this issue belongs to a non-active GSD milestone:
+
+```bash
+CROSS_MILESTONE_WARN=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+if (!state) { console.log('none'); process.exit(0); }
+
+const activeGsdId = state.active_gsd_milestone;
+
+// Find this issue's milestone in project.json
+const issueNum = ${ISSUE_NUMBER};
+let issueMilestone = null;
+for (const m of (state.milestones || [])) {
+  if ((m.issues || []).some(i => i.github_number === issueNum)) {
+    issueMilestone = m;
+    break;
+  }
+}
+
+if (!issueMilestone) { console.log('none'); process.exit(0); }
+
+const issueGsdId = issueMilestone.gsd_milestone_id;
+
+// No active_gsd_milestone set (legacy schema): no warning
+if (!activeGsdId) { console.log('none'); process.exit(0); }
+
+// Issue is in the active milestone: no warning
+if (issueGsdId === activeGsdId) { console.log('none'); process.exit(0); }
+
+// Issue is in a different milestone
+const gsdRoute = '${GSD_ROUTE}';
+if (gsdRoute === 'quick' || gsdRoute === 'gsd:quick') {
+  console.log('isolation:' + issueMilestone.name + ':' + (issueGsdId || 'unlinked'));
+} else {
+  console.log('warn:' + issueMilestone.name + ':' + (issueGsdId || 'unlinked') + ':' + activeGsdId);
+}
+")
+
+case "$CROSS_MILESTONE_WARN" in
+  none)
+    # No cross-milestone issue — proceed normally
+    ;;
+  isolation:*)
+    MILESTONE_NAME=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f2)
+    GSD_ID=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f3)
+
+    # Re-validate route against live GitHub labels (project.json may be stale from triage time)
+    LIVE_LABELS=$(gh issue view ${ISSUE_NUMBER} --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+    QUICK_CONFIRMED=false
+    if echo "$LIVE_LABELS" | grep -qiE "gsd-route:quick|gsd:quick|quick"; then
+      QUICK_CONFIRMED=true
+    fi
+
+    if [ "$QUICK_CONFIRMED" = "true" ]; then
+      echo ""
+      echo "NOTE: Issue #${ISSUE_NUMBER} belongs to milestone '${MILESTONE_NAME}' (GSD: ${GSD_ID})"
+      echo "      Confirmed gsd:quick via live labels — running in isolation."
+      echo ""
+    else
+      # Route mismatch: project.json says quick but labels don't confirm it
+      echo ""
+      echo "⚠️  Route mismatch for cross-milestone issue #${ISSUE_NUMBER}:"
+      echo "   project.json route: quick (set at triage time)"
+      echo "   Live GitHub labels: ${LIVE_LABELS:-none}"
+      echo "   Labels do not confirm gsd:quick — treating as plan-phase (requires milestone context)."
+      echo ""
+      echo "Options:"
+      echo "  1) Switch active milestone to '${GSD_ID}' and continue"
+      echo "  2) Re-triage this issue (/mgw:issue ${ISSUE_NUMBER}) to update its route"
+      echo "  3) Abort"
+      echo ""
+      read -p "Choice [1/2/3]: " ROUTE_MISMATCH_CHOICE
+      case "$ROUTE_MISMATCH_CHOICE" in
+        1)
+          node -e "
+const { loadProjectState, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+state.active_gsd_milestone = '${GSD_ID}';
+writeProjectState(state);
+console.log('Switched active_gsd_milestone to: ${GSD_ID}');
+"
+          # Validate ROADMAP.md matches (same check as option 1 in warn case)
+          ROADMAP_VALID=$(python3 -c "
+import os
+if not os.path.exists('.planning/ROADMAP.md'):
+    print('missing')
+else:
+    with open('.planning/ROADMAP.md') as f:
+        content = f.read()
+    print('match' if '${GSD_ID}' in content else 'mismatch')
+" 2>/dev/null || echo "missing")
+          if [ "$ROADMAP_VALID" != "match" ]; then
+            node -e "
+const { loadProjectState, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+state.active_gsd_milestone = '$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f4)';
+writeProjectState(state);
+" 2>/dev/null || true
+            echo "Switch rolled back — ROADMAP.md does not match '${GSD_ID}'."
+            echo "Run /gsd:new-milestone to update ROADMAP.md first."
+            exit 0
+          fi
+          ;;
+        2)
+          echo "Re-triage with: /mgw:issue ${ISSUE_NUMBER}"
+          exit 0
+          ;;
+        *)
+          echo "Aborted."
+          exit 0
+          ;;
+      esac
+    fi
+    ;;
+  warn:*)
+    ISSUE_MILESTONE=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f2)
+    ISSUE_GSD=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f3)
+    ACTIVE_GSD=$(echo "$CROSS_MILESTONE_WARN" | cut -d':' -f4)
+    echo ""
+    echo "⚠️  Cross-milestone issue detected:"
+    echo "   Issue #${ISSUE_NUMBER} belongs to: '${ISSUE_MILESTONE}' (GSD: ${ISSUE_GSD})"
+    echo "   Active GSD milestone:              ${ACTIVE_GSD}"
+    echo ""
+    echo "This issue requires plan-phase work that depends on ROADMAP.md context."
+    echo "Running it against the wrong active milestone may produce incorrect plans."
+    echo ""
+    echo "Options:"
+    echo "  1) Switch active milestone to '${ISSUE_GSD}' and continue"
+    echo "  2) Continue anyway (not recommended)"
+    echo "  3) Abort — run /gsd:new-milestone to set up the correct milestone first"
+    echo ""
+    read -p "Choice [1/2/3]: " MILESTONE_CHOICE
+    case "$MILESTONE_CHOICE" in
+      1)
+        node -e "
+const { loadProjectState, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+state.active_gsd_milestone = '${ISSUE_GSD}';
+writeProjectState(state);
+console.log('Switched active_gsd_milestone to: ${ISSUE_GSD}');
+"
+        # Validate ROADMAP.md matches the new active milestone
+        ROADMAP_VALID=$(python3 -c "
+import os
+if not os.path.exists('.planning/ROADMAP.md'):
+    print('missing')
+else:
+    with open('.planning/ROADMAP.md') as f:
+        content = f.read()
+    print('match' if '${ISSUE_GSD}' in content else 'mismatch')
+" 2>/dev/null || echo "missing")
+        if [ "$ROADMAP_VALID" = "match" ]; then
+          echo "Active milestone updated. ROADMAP.md confirmed for '${ISSUE_GSD}'."
+        else
+          # Roll back — ROADMAP.md doesn't match
+          node -e "
+const { loadProjectState, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+state.active_gsd_milestone = '${ACTIVE_GSD}';
+writeProjectState(state);
+" 2>/dev/null || true
+          echo "Switch rolled back — ROADMAP.md does not match '${ISSUE_GSD}'."
+          echo "Run /gsd:new-milestone to update ROADMAP.md first."
+          exit 0
+        fi
+        ;;
+      2)
+        echo "Proceeding with cross-milestone issue (may affect plan quality)."
+        ;;
+      *)
+        echo "Aborted. Run /gsd:new-milestone then /mgw:project to align milestones."
+        exit 0
+        ;;
+    esac
+    ;;
+esac
+```
 </step>
 
 <step name="create_worktree">
@@ -289,14 +470,19 @@ TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --r
 # Load milestone/phase context from project.json if available
 MILESTONE_CONTEXT=""
 if [ -f "${REPO_ROOT}/.mgw/project.json" ]; then
-  MILESTONE_CONTEXT=$(python3 -c "
-import json
-p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
-for m in p['milestones']:
-  for i in m.get('issues', []):
-    if i.get('github_number') == ${ISSUE_NUMBER}:
-      print(f\"Milestone: {m['name']} | Phase {i['phase_number']}: {i['phase_name']}\")
-      break
+  MILESTONE_CONTEXT=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+if (!state) process.exit(0);
+// Search all milestones for the issue (not just active) to handle cross-milestone lookups
+for (const m of (state.milestones || [])) {
+  for (const i of (m.issues || [])) {
+    if (i.github_number === ${ISSUE_NUMBER}) {
+      console.log('Milestone: ' + m.name + ' | Phase ' + i.phase_number + ': ' + i.phase_name);
+      process.exit(0);
+    }
+  }
+}
 " 2>/dev/null || echo "")
 fi
 ```

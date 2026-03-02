@@ -67,7 +67,17 @@ if [ -z "$MILESTONE_NUM" ]; then
     echo "No project initialized. Run /mgw:project first."
     exit 1
   fi
-  MILESTONE_NUM=$(python3 -c "import json; print(json.load(open('${MGW_DIR}/project.json'))['current_milestone'])")
+  # Resolve active milestone index (0-based) and convert to 1-indexed milestone number
+  ACTIVE_IDX=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+console.log(resolveActiveMilestoneIndex(state));
+")
+  if [ "$ACTIVE_IDX" -lt 0 ]; then
+    echo "No active milestone set. Run /mgw:project to initialize or set active_gsd_milestone."
+    exit 1
+  fi
+  MILESTONE_NUM=$((ACTIVE_IDX + 1))
 fi
 ```
 </step>
@@ -250,6 +260,72 @@ fi
 ```
 </step>
 
+<step name="post_start_hook">
+**Post milestone-start announcement to GitHub Discussions (or first-issue comment fallback):**
+
+Runs once before the execute loop. Skipped if --dry-run is set. Failure is non-blocking — a warning is logged and execution continues.
+
+```bash
+if [ "$DRY_RUN" = true ]; then
+  echo "MGW: Skipping milestone-start announcement (dry-run mode)"
+else
+  # Gather board URL from project.json if present (non-blocking)
+  BOARD_URL=$(echo "$PROJECT_JSON" | python3 -c "
+import json,sys
+p = json.load(sys.stdin)
+m = p['milestones'][${MILESTONE_NUM} - 1]
+print(m.get('board_url', ''))
+" 2>/dev/null || echo "")
+
+  # Build issues JSON array with assignee and gsd_route per issue
+  ISSUES_PAYLOAD=$(echo "$ISSUES_JSON" | python3 -c "
+import json,sys
+issues = json.load(sys.stdin)
+result = []
+for i in issues:
+    result.append({
+        'number': i.get('github_number', 0),
+        'title': i.get('title', '')[:60],
+        'assignee': i.get('assignee') or None,
+        'gsdRoute': i.get('gsd_route', 'plan-phase')
+    })
+print(json.dumps(result))
+" 2>/dev/null || echo "[]")
+
+  # Get first issue number for fallback comment (non-blocking)
+  FIRST_ISSUE_NUM=$(echo "$ISSUES_JSON" | python3 -c "
+import json,sys
+issues = json.load(sys.stdin)
+print(issues[0]['github_number'] if issues else '')
+" 2>/dev/null || echo "")
+
+  REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+
+  REPO="$REPO" \
+  MILESTONE_NAME="$MILESTONE_NAME" \
+  BOARD_URL="$BOARD_URL" \
+  ISSUES_PAYLOAD="$ISSUES_PAYLOAD" \
+  FIRST_ISSUE_NUM="$FIRST_ISSUE_NUM" \
+  node -e "
+const { postMilestoneStartAnnouncement } = require('./lib/index.cjs');
+const result = postMilestoneStartAnnouncement({
+  repo: process.env.REPO,
+  milestoneName: process.env.MILESTONE_NAME,
+  boardUrl: process.env.BOARD_URL || undefined,
+  issues: JSON.parse(process.env.ISSUES_PAYLOAD || '[]'),
+  firstIssueNumber: process.env.FIRST_ISSUE_NUM ? parseInt(process.env.FIRST_ISSUE_NUM) : undefined
+});
+if (result.posted) {
+  const detail = result.url ? ': ' + result.url : '';
+  console.log('MGW: Milestone-start announcement posted via ' + result.method + detail);
+} else {
+  console.log('MGW: Milestone-start announcement skipped (Discussions unavailable, no fallback)');
+}
+" 2>/dev/null || echo "MGW: Announcement step failed (non-blocking) — continuing"
+fi
+```
+</step>
+
 <step name="dry_run">
 **If --dry-run flag: display execution plan and exit:**
 
@@ -316,17 +392,15 @@ if [ "$IN_PROGRESS_COUNT" -gt 0 ]; then
     fi
 
     # Reset pipeline_stage to 'new' (will be re-run from scratch)
-    python3 -c "
-import json
-with open('${MGW_DIR}/project.json') as f:
-    project = json.load(f)
-milestone = project['milestones'][project['current_milestone'] - 1]
-for issue in milestone['issues']:
-    if issue['github_number'] == ${ISSUE_NUM}:
-        issue['pipeline_stage'] = 'new'
-        break
-with open('${MGW_DIR}/project.json', 'w') as f:
-    json.dump(project, f, indent=2)
+    node -e "
+const { loadProjectState, resolveActiveMilestoneIndex, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+const idx = resolveActiveMilestoneIndex(state);
+if (idx < 0) { console.error('No active milestone'); process.exit(1); }
+const milestone = state.milestones[idx];
+const issue = (milestone.issues || []).find(i => i.github_number === ${ISSUE_NUM});
+if (issue) { issue.pipeline_stage = 'new'; }
+writeProjectState(state);
 "
   done
 fi
@@ -570,17 +644,15 @@ COMMENTEOF
 
   # Update project.json checkpoint (MLST-05)
   STAGE=$([ -n "$PR_NUMBER" ] && echo "done" || echo "failed")
-  python3 -c "
-import json
-with open('${MGW_DIR}/project.json') as f:
-    project = json.load(f)
-milestone = project['milestones'][project['current_milestone'] - 1]
-for issue in milestone['issues']:
-    if issue['github_number'] == ${ISSUE_NUMBER}:
-        issue['pipeline_stage'] = '${STAGE}'
-        break
-with open('${MGW_DIR}/project.json', 'w') as f:
-    json.dump(project, f, indent=2)
+  node -e "
+const { loadProjectState, resolveActiveMilestoneIndex, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+const idx = resolveActiveMilestoneIndex(state);
+if (idx < 0) { console.error('No active milestone'); process.exit(1); }
+const milestone = state.milestones[idx];
+const issue = (milestone.issues || []).find(i => i.github_number === ${ISSUE_NUMBER});
+if (issue) { issue.pipeline_stage = '${STAGE}'; }
+writeProjectState(state);
 "
 
   ISSUES_RUN=$((ISSUES_RUN + 1))
@@ -668,19 +740,140 @@ gh release create "$RELEASE_TAG" --draft \
   --notes "$RELEASE_BODY" 2>/dev/null
 ```
 
-3. Advance current_milestone in project.json:
+3. Finalize GSD milestone state (archive phases, clean up):
 ```bash
-python3 -c "
-import json
-with open('${MGW_DIR}/project.json') as f:
-    project = json.load(f)
-project['current_milestone'] += 1
-with open('${MGW_DIR}/project.json', 'w') as f:
-    json.dump(project, f, indent=2)
+# Only run if .planning/phases exists (GSD was used for this milestone)
+if [ -d ".planning/phases" ]; then
+  EXECUTOR_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-executor --raw)
+  Task(
+    prompt="
+<files_to_read>
+- ./CLAUDE.md (Project instructions -- if exists, follow all guidelines)
+- .planning/ROADMAP.md (Current roadmap to archive)
+- .planning/REQUIREMENTS.md (Requirements to archive)
+</files_to_read>
+
+Complete the GSD milestone. Follow the complete-milestone workflow:
+@~/.claude/get-shit-done/workflows/complete-milestone.md
+
+This archives the milestone's ROADMAP and REQUIREMENTS to .planning/milestones/,
+cleans up ROADMAP.md for the next milestone, and tags the release in git.
+
+Milestone: ${MILESTONE_NAME}
+",
+    subagent_type="gsd-executor",
+    model="${EXECUTOR_MODEL}",
+    description="Complete GSD milestone: ${MILESTONE_NAME}"
+  )
+fi
+```
+
+4. Advance active milestone pointer in project.json:
+```bash
+node -e "
+const { loadProjectState, resolveActiveMilestoneIndex, writeProjectState } = require('./lib/state.cjs');
+const state = loadProjectState();
+const currentIdx = resolveActiveMilestoneIndex(state);
+const nextMilestone = (state.milestones || [])[currentIdx + 1];
+if (nextMilestone) {
+  // New schema: point active_gsd_milestone at the next milestone's gsd_milestone_id
+  state.active_gsd_milestone = nextMilestone.gsd_milestone_id || null;
+  // Backward compat: if next milestone has no gsd_milestone_id, fall back to legacy integer
+  if (!state.active_gsd_milestone) {
+    state.current_milestone = currentIdx + 2; // next 1-indexed
+  }
+} else {
+  // All milestones complete — clear the active pointer
+  state.active_gsd_milestone = null;
+  state.current_milestone = currentIdx + 2; // past end, signals completion
+}
+writeProjectState(state);
 "
 ```
 
-4. Display completion banner:
+5. Milestone mapping verification:
+
+After advancing to the next milestone, check its GSD linkage:
+
+```bash
+NEXT_MILESTONE_CHECK=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+const activeIdx = resolveActiveMilestoneIndex(state);
+
+if (activeIdx < 0 || activeIdx >= state.milestones.length) {
+  console.log('none');
+  process.exit(0);
+}
+
+const nextMilestone = state.milestones[activeIdx];
+if (!nextMilestone) {
+  console.log('none');
+  process.exit(0);
+}
+
+const gsdId = nextMilestone.gsd_milestone_id;
+const name = nextMilestone.name;
+
+if (!gsdId) {
+  console.log('unlinked:' + name);
+} else {
+  console.log('linked:' + name + ':' + gsdId);
+}
+")
+
+case "$NEXT_MILESTONE_CHECK" in
+  none)
+    echo "All milestones complete — project is done!"
+    ;;
+  unlinked:*)
+    NEXT_NAME=$(echo "$NEXT_MILESTONE_CHECK" | cut -d':' -f2-)
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo " Next milestone '${NEXT_NAME}' has no GSD milestone linked."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Before running /mgw:milestone for the next milestone:"
+    echo "  1) Run /gsd:new-milestone to create GSD state for '${NEXT_NAME}'"
+    echo "  2) Run /mgw:project extend to link the new GSD milestone"
+    echo ""
+    ;;
+  linked:*)
+    NEXT_NAME=$(echo "$NEXT_MILESTONE_CHECK" | cut -d':' -f2)
+    GSD_ID=$(echo "$NEXT_MILESTONE_CHECK" | cut -d':' -f3)
+    # Verify ROADMAP.md matches expected GSD milestone
+    ROADMAP_CHECK=$(python3 -c "
+import os, sys
+if not os.path.exists('.planning/ROADMAP.md'):
+    print('no_roadmap')
+    sys.exit()
+with open('.planning/ROADMAP.md') as f:
+    content = f.read()
+if '${GSD_ID}' in content:
+    print('match')
+else:
+    print('mismatch')
+" 2>/dev/null || echo "no_roadmap")
+
+    case "$ROADMAP_CHECK" in
+      match)
+        echo "Next milestone '${NEXT_NAME}' (GSD: ${GSD_ID}) — ROADMAP.md is ready."
+        ;;
+      mismatch)
+        echo "Next milestone '${NEXT_NAME}' links to GSD milestone '${GSD_ID}'"
+        echo "    but .planning/ROADMAP.md does not contain that milestone ID."
+        echo "    Run /gsd:new-milestone to update ROADMAP.md before proceeding."
+        ;;
+      no_roadmap)
+        echo "NOTE: Next milestone '${NEXT_NAME}' (GSD: ${GSD_ID}) linked."
+        echo "      No .planning/ROADMAP.md found — run /gsd:new-milestone when ready."
+        ;;
+    esac
+    ;;
+esac
+```
+
+6. Display completion banner:
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  MGW ► MILESTONE ${MILESTONE_NUM} COMPLETE ✓
@@ -709,7 +902,7 @@ Draft release created: ${RELEASE_TAG}
 ───────────────────────────────────────────────────────────────
 ```
 
-5. Check if next milestone exists and offer auto-advance (only if no failures in current).
+7. Check if next milestone exists and offer auto-advance (only if no failures in current).
 
 **If some issues failed:**
 
@@ -732,7 +925,7 @@ Milestone NOT closed. Resolve failures and re-run:
   /mgw:milestone ${MILESTONE_NUM}
 ```
 
-6. Post final results table as GitHub comment on the first issue in the milestone:
+8. Post final results table as GitHub comment on the first issue in the milestone:
 ```bash
 gh issue comment ${FIRST_ISSUE_NUMBER} --body "$FINAL_RESULTS_COMMENT"
 ```

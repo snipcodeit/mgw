@@ -17,9 +17,10 @@ issues scaffolded from AI-generated project-specific content, dependencies label
 state persisted. The developer never leaves Claude Code and never does project management
 manually.
 
-MGW does NOT write to .planning/ — that directory is owned by GSD. If a project needs
-a ROADMAP.md or other GSD files, run the appropriate GSD command (e.g., /gsd:new-milestone)
-after project initialization.
+MGW does NOT write to .planning/ directly — that directory is owned by GSD. For Fresh
+projects, MGW spawns a gsd:new-project Task agent (spawn_gsd_new_project step) which creates
+.planning/PROJECT.md and .planning/ROADMAP.md as part of the vision cycle. For non-Fresh
+projects with existing GSD state, .planning/ is already populated before this command runs.
 
 This command creates structure only. It does NOT trigger execution.
 Run /mgw:milestone to begin executing the first milestone.
@@ -44,35 +45,6 @@ REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 If not a git repo → error: "Not a git repository. Run from a repo root."
 If no GitHub remote → error: "No GitHub remote found. MGW requires a GitHub repo."
 
-**Check for existing project initialization:**
-
-```bash
-if [ -f "${REPO_ROOT}/.mgw/project.json" ]; then
-  # Check if all milestones are complete
-  ALL_COMPLETE=$(python3 -c "
-import json
-p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
-milestones = p.get('milestones', [])
-current = p.get('current_milestone', 1)
-# All complete when current_milestone exceeds array length
-# (milestone.md increments current_milestone after completing each)
-all_done = current > len(milestones) and len(milestones) > 0
-print('true' if all_done else 'false')
-")
-
-  if [ "$ALL_COMPLETE" = "true" ]; then
-    EXTEND_MODE=true
-    EXISTING_MILESTONE_COUNT=$(python3 -c "import json; print(len(json.load(open('${REPO_ROOT}/.mgw/project.json'))['milestones']))")
-    EXISTING_PHASE_COUNT=$(python3 -c "import json; print(max((int(k) for k in json.load(open('${REPO_ROOT}/.mgw/project.json')).get('phase_map',{}).keys()), default=0))")
-    echo "All ${EXISTING_MILESTONE_COUNT} milestones complete. Entering extend mode."
-    echo "Phase numbering will continue from phase ${EXISTING_PHASE_COUNT}."
-  else
-    echo "Project already initialized. Run /mgw:milestone to continue."
-    exit 0
-  fi
-fi
-```
-
 **Initialize .mgw/ state (from state.md validate_and_load):**
 
 ```bash
@@ -91,8 +63,864 @@ fi
 ```
 </step>
 
+<step name="detect_state">
+**Detect existing project state from five signal sources:**
+
+Check five signals to determine what already exists for this project:
+
+```bash
+# Signal checks
+P=false  # .planning/PROJECT.md exists
+R=false  # .planning/ROADMAP.md exists
+S=false  # .planning/STATE.md exists
+M=false  # .mgw/project.json exists
+G=0      # GitHub milestone count
+
+[ -f "${REPO_ROOT}/.planning/PROJECT.md" ] && P=true
+[ -f "${REPO_ROOT}/.planning/ROADMAP.md" ] && R=true
+[ -f "${REPO_ROOT}/.planning/STATE.md" ] && S=true
+[ -f "${REPO_ROOT}/.mgw/project.json" ] && M=true
+
+G=$(gh api "repos/${REPO}/milestones" --jq 'length' 2>/dev/null || echo 0)
+```
+
+**Classify into STATE_CLASS:**
+
+| State | P | R | S | M | G | Meaning |
+|---|---|---|---|---|---|---|
+| Fresh | false | false | false | false | 0 | Clean slate — no GSD, no MGW |
+| GSD-Only | true | false | false | false | 0 | PROJECT.md present but no roadmap yet |
+| GSD-Mid-Exec | true | true | true | false | 0 | GSD in progress, MGW not yet linked |
+| Aligned | true | — | — | true | >0 | Both MGW + GitHub consistent with each other |
+| Diverged | — | — | — | true | >0 | MGW + GitHub present but inconsistent |
+| Extend | true | — | — | true | >0 | All milestones in project.json are done |
+
+```bash
+# Classification logic
+STATE_CLASS="Fresh"
+EXTEND_MODE=false
+
+if [ "$M" = "true" ] && [ "$G" -gt 0 ]; then
+  # Check if all milestones are complete (Extend detection)
+  ALL_COMPLETE=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+milestones = p.get('milestones', [])
+current = p.get('current_milestone', 1)
+# All complete when current_milestone exceeds array length
+# (milestone.md increments current_milestone after completing each)
+all_done = current > len(milestones) and len(milestones) > 0
+print('true' if all_done else 'false')
+")
+
+  if [ "$ALL_COMPLETE" = "true" ]; then
+    STATE_CLASS="Extend"
+    EXTEND_MODE=true
+    EXISTING_MILESTONE_COUNT=$(python3 -c "import json; print(len(json.load(open('${REPO_ROOT}/.mgw/project.json'))['milestones']))")
+    EXISTING_PHASE_COUNT=$(python3 -c "import json; print(max((int(k) for k in json.load(open('${REPO_ROOT}/.mgw/project.json')).get('phase_map',{}).keys()), default=0))")
+  else
+    # M=true, G>0, not all done — check consistency (Aligned vs Diverged)
+    GH_MILESTONE_COUNT=$G
+    LOCAL_MILESTONE_COUNT=$(python3 -c "import json; print(len(json.load(open('${REPO_ROOT}/.mgw/project.json')).get('milestones', [])))")
+
+    # Consistency: milestone counts match and names overlap
+    CONSISTENCY_OK=$(python3 -c "
+import json, subprocess, sys
+local = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+local_names = set(m['name'] for m in local.get('milestones', []))
+local_count = len(local_names)
+gh_count = ${GH_MILESTONE_COUNT}
+
+# Count mismatch is a drift signal (allow off-by-one for in-flight)
+if abs(local_count - gh_count) > 1:
+    print('false')
+    sys.exit(0)
+
+# Name overlap check: at least 50% of local milestone names found on GitHub
+result = subprocess.run(
+    ['gh', 'api', 'repos/${REPO}/milestones', '--jq', '[.[].title]'],
+    capture_output=True, text=True
+)
+try:
+    gh_names = set(json.loads(result.stdout))
+    overlap = len(local_names & gh_names)
+    print('true' if overlap >= max(1, local_count // 2) else 'false')
+except Exception:
+    print('false')
+")
+
+    if [ "$CONSISTENCY_OK" = "true" ]; then
+      STATE_CLASS="Aligned"
+    else
+      STATE_CLASS="Diverged"
+    fi
+  fi
+elif [ "$M" = "false" ] && [ "$G" -eq 0 ]; then
+  # No MGW state, no GitHub milestones — GSD signals determine class
+  if [ "$P" = "true" ] && [ "$R" = "true" ] && [ "$S" = "true" ]; then
+    STATE_CLASS="GSD-Mid-Exec"
+  elif [ "$P" = "true" ] && [ "$R" = "true" ]; then
+    STATE_CLASS="GSD-Mid-Exec"
+  elif [ "$P" = "true" ]; then
+    STATE_CLASS="GSD-Only"
+  else
+    STATE_CLASS="Fresh"
+  fi
+fi
+
+echo "State detected: ${STATE_CLASS} (P=${P} R=${R} S=${S} M=${M} G=${G})"
+```
+
+**Route by STATE_CLASS:**
+
+```bash
+case "$STATE_CLASS" in
+  "Fresh")
+    # Proceed to gather_inputs (standard flow)
+    ;;
+
+  "GSD-Only"|"GSD-Mid-Exec")
+    # GSD artifacts exist but MGW not initialized — delegate to align_from_gsd
+    # (proceed to align_from_gsd step)
+    ;;
+
+  "Aligned")
+    # MGW + GitHub consistent — display status and offer extend mode
+    TOTAL_ISSUES=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+print(sum(len(m.get('issues', [])) for m in p.get('milestones', [])))
+")
+    echo ""
+    echo "Project already initialized and aligned with GitHub."
+    echo "  Milestones: ${LOCAL_MILESTONE_COUNT} local / ${GH_MILESTONE_COUNT} on GitHub"
+    echo "  Issues: ${TOTAL_ISSUES} tracked in project.json"
+    echo ""
+    echo "What would you like to do?"
+    echo ""
+    echo "  1) Continue with /mgw:milestone (execute next milestone)"
+    echo "  2) Add new milestones to this project (extend mode)"
+    echo "  3) View full status (/mgw:status)"
+    echo ""
+    read -p "Choose [1/2/3]: " ALIGNED_CHOICE
+    case "$ALIGNED_CHOICE" in
+      2)
+        echo ""
+        echo "Entering extend mode — new milestones will be added to the existing project."
+        EXTEND_MODE=true
+        EXISTING_MILESTONE_COUNT=${LOCAL_MILESTONE_COUNT}
+        EXISTING_PHASE_COUNT=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+print(sum(len(m.get('phases', [])) for m in p.get('milestones', [])))
+")
+        echo "Phase numbering will continue from phase ${EXISTING_PHASE_COUNT}."
+        # Fall through to gather_inputs — do NOT exit
+        ;;
+      3)
+        echo ""
+        echo "Run /mgw:status to view the full project status dashboard."
+        exit 0
+        ;;
+      *)
+        echo ""
+        echo "Run /mgw:milestone to execute the next milestone."
+        exit 0
+        ;;
+    esac
+    ;;
+
+  "Diverged")
+    # MGW + GitHub inconsistent — delegate to reconcile_drift
+    # (proceed to reconcile_drift step)
+    ;;
+
+  "Extend")
+    # All milestones done — entering extend mode
+    echo "All ${EXISTING_MILESTONE_COUNT} milestones complete. Entering extend mode."
+    echo "Phase numbering will continue from phase ${EXISTING_PHASE_COUNT}."
+    # Proceed to gather_inputs in extend mode (EXTEND_MODE=true already set)
+    ;;
+esac
+```
+</step>
+
+<step name="align_from_gsd">
+**Align MGW state from existing GSD artifacts (STATE_CLASS = GSD-Only or GSD-Mid-Exec):**
+
+Spawn alignment-analyzer agent:
+
+Task(
+  description="Analyze GSD state for alignment",
+  subagent_type="general-purpose",
+  prompt="
+<files_to_read>
+- ./CLAUDE.md
+- .planning/PROJECT.md (if exists)
+- .planning/ROADMAP.md (if exists)
+- .planning/MILESTONES.md (if exists)
+- .planning/STATE.md (if exists)
+</files_to_read>
+
+Analyze existing GSD project state and produce an alignment report.
+
+Read each file that exists. Extract:
+- Project name and description from PROJECT.md (H1 heading, description paragraph)
+- Active milestone: from ROADMAP.md header or STATE.md current milestone name
+- Archived milestones: from MILESTONES.md — list each milestone with name and phase count
+- Phases per milestone: from ROADMAP.md sections (### Phase N:) and MILESTONES.md
+
+For each milestone found:
+- name: milestone name string
+- source: 'ROADMAP' (if from current ROADMAP.md) or 'MILESTONES' (if archived)
+- state: 'active' (ROADMAP source), 'completed' (archived in MILESTONES.md), 'planned' (referenced but not yet created)
+- phases: array of { number, name, status } objects
+
+<output>
+Write JSON to .mgw/alignment-report.json:
+{
+  \"project_name\": \"extracted from PROJECT.md\",
+  \"project_description\": \"extracted from PROJECT.md\",
+  \"milestones\": [
+    {
+      \"name\": \"milestone name\",
+      \"source\": \"ROADMAP|MILESTONES\",
+      \"state\": \"active|completed|planned\",
+      \"phases\": [{ \"number\": N, \"name\": \"...\", \"status\": \"...\" }]
+    }
+  ],
+  \"active_milestone\": \"name of currently active milestone or null\",
+  \"total_phases\": N,
+  \"total_issues_estimated\": N
+}
+</output>
+"
+)
+
+After agent completes:
+1. Read .mgw/alignment-report.json
+2. Display alignment summary to user:
+   - Project: {project_name}
+   - Milestones found: {count} ({active_milestone} active, N completed)
+   - Phases: {total_phases} total, ~{total_issues_estimated} issues estimated
+3. Ask: "Import this GSD state into MGW? This will create GitHub milestones and issues, and build project.json. (Y/N)"
+4. If Y: proceed to step milestone_mapper
+5. If N: exit with message "Run /mgw:project again when ready to import."
+</step>
+
+<step name="milestone_mapper">
+**Map GSD milestones to GitHub milestones:**
+
+Read .mgw/alignment-report.json produced by the alignment-analyzer agent.
+
+```bash
+ALIGNMENT=$(python3 -c "
+import json
+with open('.mgw/alignment-report.json') as f:
+    data = json.load(f)
+print(json.dumps(data))
+")
+```
+
+For each milestone in the alignment report:
+1. Check if a GitHub milestone with a matching title already exists:
+   ```bash
+   gh api repos/${REPO}/milestones --jq '.[].title'
+   ```
+2. If not found: create it:
+   ```bash
+   gh api repos/${REPO}/milestones -X POST \
+     -f title="${MILESTONE_NAME}" \
+     -f description="Imported from GSD: ${MILESTONE_SOURCE}" \
+     -f state="open"
+   ```
+   Capture the returned `number` as GITHUB_MILESTONE_NUMBER.
+3. If found: use the existing milestone's number.
+4. For each phase in the milestone: create GitHub issues (one per phase, title = phase name, body includes phase goals and gsd_route). Use the same issue creation pattern as the existing `create_issues` step.
+5. Add project.json entry for this milestone using the new schema fields:
+   ```json
+   {
+     "github_number": GITHUB_MILESTONE_NUMBER,
+     "name": milestone_name,
+     "gsd_milestone_id": null,
+     "gsd_state": "active|completed based on alignment report state",
+     "roadmap_archived_at": null
+   }
+   ```
+6. Add maps-to cross-ref entry:
+   ```bash
+   # Append to .mgw/cross-refs.json
+   TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+   # Add entry: { "a": "milestone:${GITHUB_NUMBER}", "b": "gsd-milestone:${GSD_ID}", "type": "maps-to", "created": "${TIMESTAMP}" }
+   ```
+
+After all milestones are mapped:
+- Write updated project.json with all milestone entries and new schema fields
+- Set active_gsd_milestone to the name of the 'active' milestone from alignment report
+- Display mapping summary:
+  ```
+  Mapped N GSD milestones → GitHub milestones:
+    ✓ "Milestone Name" → #N (created/existing)
+    ...
+  cross-refs.json updated with N maps-to entries
+  ```
+- Proceed to create_project_board step (existing step — reused for new project)
+</step>
+
+<step name="reconcile_drift">
+**Reconcile diverged state (STATE_CLASS = Diverged):**
+
+Spawn drift-analyzer agent:
+
+Task(
+  description="Analyze project state drift",
+  subagent_type="general-purpose",
+  prompt="
+<files_to_read>
+- ./CLAUDE.md
+- .mgw/project.json
+</files_to_read>
+
+Compare .mgw/project.json with live GitHub state.
+
+1. Read project.json: parse milestones array, get repo name from project.repo
+2. Query GitHub milestones:
+   gh api repos/{REPO}/milestones --jq '.[] | {number, title, state, open_issues, closed_issues}'
+3. For each milestone in project.json:
+   - Does a GitHub milestone with matching title exist? (fuzzy: case-insensitive, strip emoji)
+   - If no match: flag as missing_github
+   - If match: compare issue count (open + closed GitHub vs issues array length)
+4. For each GitHub milestone NOT matched to project.json entry: flag as missing_local
+5. For issues: check pipeline_stage vs GitHub issue state
+   - GitHub closed + local not 'done' or 'pr-created': flag as stage_mismatch
+
+<output>
+Write JSON to .mgw/drift-report.json:
+{
+  \"mismatches\": [
+    {\"type\": \"missing_github\", \"milestone_name\": \"...\", \"local_issue_count\": N, \"action\": \"create_github_milestone\"},
+    {\"type\": \"missing_local\", \"github_number\": N, \"github_title\": \"...\", \"action\": \"import_to_project_json\"},
+    {\"type\": \"count_mismatch\", \"milestone_name\": \"...\", \"local\": N, \"github\": M, \"action\": \"review_manually\"},
+    {\"type\": \"stage_mismatch\", \"issue\": N, \"local_stage\": \"...\", \"github_state\": \"closed\", \"action\": \"update_local_stage\"}
+  ],
+  \"summary\": \"N mismatches found across M milestones\"
+}
+</output>
+"
+)
+
+After agent completes:
+1. Read .mgw/drift-report.json
+2. Display mismatches as a table:
+
+   | Type | Detail | Suggested Action |
+   |------|--------|-----------------|
+   | missing_github | Milestone: {name} ({N} local issues) | Create GitHub milestone |
+   | missing_local | GitHub #N: {title} | Import to project.json |
+   | count_mismatch | {name}: local={N}, github={M} | Review manually |
+   | stage_mismatch | Issue #{N}: local={stage}, github=closed | Update local stage to done |
+
+3. If no mismatches: echo "No drift detected — state is consistent. Reclassifying as Aligned." and proceed to report alignment status.
+4. If mismatches: Ask "Apply auto-fixes? Options: (A)ll / (S)elective / (N)one"
+   - All: apply each action (create missing milestones, update stages in project.json)
+   - Selective: present each fix individually, Y/N per item
+   - None: exit with "Drift noted. Run /mgw:sync to reconcile later."
+5. After applying fixes: write updated project.json and display summary.
+</step>
+
+<step name="vision_intake">
+**Intake: capture the raw project idea (Fresh path only)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Display to user:
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MGW ► VISION CYCLE — Let's Build Your Project
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Tell me about the project you want to build. Don't worry
+about being complete or precise — just describe the idea,
+the problem you're solving, and who it's for.
+```
+
+Capture freeform user input as RAW_IDEA.
+
+```bash
+TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+```
+
+Save to `.mgw/vision-draft.md`:
+```markdown
+---
+current_stage: intake
+rounds_completed: 0
+soft_cap_reached: false
+---
+
+# Vision Draft
+
+## Intake
+**Raw Idea:** {RAW_IDEA}
+**Captured:** {TIMESTAMP}
+```
+
+Proceed to vision_research step.
+</step>
+
+<step name="vision_research">
+**Domain Expansion: spawn vision-researcher agent (silent)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Spawn vision-researcher Task agent:
+
+Task(
+  description="Research project domain and platform requirements",
+  subagent_type="general-purpose",
+  prompt="
+You are a domain research agent for a new software project.
+
+Raw idea from user:
+{RAW_IDEA}
+
+Research this project idea and produce a domain analysis. Write your output to .mgw/vision-research.json.
+
+Your analysis must include:
+
+1. **domain_analysis**: What does this domain actually require to succeed?
+   - Core capabilities users expect
+   - Table stakes vs differentiators
+   - Common failure modes in this domain
+
+2. **platform_requirements**: Specific technical/integration needs
+   - APIs, third-party services the domain typically needs
+   - Compliance or regulatory considerations
+   - Platform targets (mobile, web, desktop, API-only)
+
+3. **competitive_landscape**: What similar solutions exist?
+   - 2-3 examples with their key approaches
+   - Gaps in existing solutions that this could fill
+
+4. **risk_factors**: Common failure modes for this type of project
+   - Technical risks
+   - Business/adoption risks
+   - Scope creep patterns in this domain
+
+5. **suggested_questions**: 6-10 targeted questions to ask the user
+   - Prioritized by most impactful for scoping
+   - Each question should clarify a decision that affects architecture or milestone structure
+   - Format: [{\"question\": \"...\", \"why_it_matters\": \"...\"}, ...]
+
+Output format — write to .mgw/vision-research.json:
+{
+  \"domain_analysis\": {\"core_capabilities\": [...], \"differentiators\": [...], \"failure_modes\": [...]},
+  \"platform_requirements\": [...],
+  \"competitive_landscape\": [{\"name\": \"...\", \"approach\": \"...\"}],
+  \"risk_factors\": [...],
+  \"suggested_questions\": [{\"question\": \"...\", \"why_it_matters\": \"...\"}]
+}
+"
+)
+
+After agent completes:
+- Read .mgw/vision-research.json
+- Append research summary to .mgw/vision-draft.md:
+  ```markdown
+  ## Domain Research (silent)
+  - Domain: {domain from analysis}
+  - Key platform requirements: {top 3}
+  - Risks identified: {count}
+  - Questions generated: {count}
+  ```
+- Update vision-draft.md frontmatter: current_stage: questioning
+- Proceed to vision_questioning step.
+</step>
+
+<step name="vision_questioning">
+**Structured Questioning Loop (Fresh path only)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Read .mgw/vision-research.json to get suggested_questions.
+Read .mgw/vision-draft.md to get current state.
+
+Initialize loop:
+```bash
+ROUND=0
+SOFT_CAP=8
+HARD_CAP=15
+SOFT_CAP_REACHED=false
+```
+
+**Questioning loop:**
+
+Each round:
+
+1. Load questions remaining from .mgw/vision-research.json suggested_questions (dequeue used ones).
+   Also allow orchestrator to generate follow-up questions based on previous answers.
+
+2. Present 2-4 questions to user (never more than 4 per round):
+   ```
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Vision Cycle — Round {N} of {SOFT_CAP}
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   1) {question_1}
+   2) {question_2}
+   3) {question_3}
+
+   (Answer all, some, or type 'done' to proceed to synthesis)
+   ```
+
+3. Capture user answers as ANSWERS_ROUND_N.
+
+4. Append round to .mgw/vision-draft.md:
+   ```markdown
+   ## Round {N} — {TIMESTAMP}
+   **Questions asked:**
+   1. {q1}
+   2. {q2}
+
+   **Answers:**
+   {ANSWERS_ROUND_N}
+
+   **Key decisions extracted:**
+   - {decision_1}
+   - {decision_2}
+   ```
+   (Key decisions: orchestrator extracts 1-3 concrete decisions from answers inline — no agent spawn needed)
+
+5. Increment ROUND.
+   Update .mgw/vision-draft.md frontmatter: rounds_completed={ROUND}
+
+6. **Soft cap check** (after round {SOFT_CAP}):
+   If ROUND >= SOFT_CAP and !SOFT_CAP_REACHED:
+     Set SOFT_CAP_REACHED=true
+     Update vision-draft.md frontmatter: soft_cap_reached=true
+     Display:
+     ```
+     ─────────────────────────────────────
+     We've covered {ROUND} rounds of questions.
+
+     Options:
+       D) Dig deeper — continue questioning (up to {HARD_CAP} rounds total)
+       S) Synthesize — proceed to Vision Brief generation
+     ─────────────────────────────────────
+     ```
+     If user chooses S: exit loop and proceed to vision_synthesis
+     If user chooses D: continue loop
+
+7. **Hard cap** (ROUND >= HARD_CAP): automatically exit loop with notice:
+   ```
+   Reached {HARD_CAP}-round limit. Proceeding to synthesis.
+   ```
+
+8. **User 'done'**: if user types 'done' as answer: exit loop immediately.
+
+After loop exits:
+- Update vision-draft.md frontmatter: current_stage: synthesizing
+- Display: "Questioning complete ({ROUND} rounds). Generating Vision Brief..."
+- Proceed to vision_synthesis step.
+</step>
+
+<step name="vision_synthesis">
+**Vision Synthesis: spawn vision-synthesizer agent and review loop (Fresh path only)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Display: "Generating Vision Brief from {rounds_completed} rounds of input..."
+
+**Synthesizer spawn:**
+
+Task(
+  description="Synthesize Vision Brief from research and questioning",
+  subagent_type="general-purpose",
+  prompt="
+You are the vision-synthesizer agent for a software project planning cycle.
+
+Read these files:
+- .mgw/vision-draft.md — all rounds of user questions and answers, raw idea
+- .mgw/vision-research.json — domain research, platform requirements, risks
+
+Synthesize a comprehensive Vision Brief. Write it to .mgw/vision-brief.json using this schema (templates/vision-brief-schema.json):
+
+{
+  \"project_identity\": { \"name\": \"...\", \"tagline\": \"...\", \"domain\": \"...\" },
+  \"target_users\": [{ \"persona\": \"...\", \"needs\": [...], \"pain_points\": [...] }],
+  \"core_value_proposition\": \"1-2 sentences: who, what, why different\",
+  \"feature_categories\": {
+    \"must_have\": [{ \"name\": \"...\", \"description\": \"...\", \"rationale\": \"why non-negotiable\" }],
+    \"should_have\": [{ \"name\": \"...\", \"description\": \"...\" }],
+    \"could_have\": [{ \"name\": \"...\", \"description\": \"...\" }],
+    \"wont_have\": [{ \"name\": \"...\", \"reason\": \"explicit out-of-scope reasoning\" }]
+  },
+  \"technical_constraints\": [...],
+  \"success_metrics\": [...],
+  \"estimated_scope\": { \"milestones\": N, \"phases\": N, \"complexity\": \"small|medium|large|enterprise\" },
+  \"recommended_milestone_structure\": [{ \"name\": \"...\", \"focus\": \"...\", \"deliverables\": [...] }]
+}
+
+Be specific and concrete. Use the user's actual answers from vision-draft.md. Do NOT pad with generic content.
+"
+)
+
+After synthesizer completes:
+1. Read .mgw/vision-brief.json
+2. Display the Vision Brief to user in structured format:
+   ```
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Vision Brief: {project_identity.name}
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   Tagline: {tagline}
+   Domain: {domain}
+
+   Target Users:
+     • {persona_1}: {needs summary}
+     • {persona_2}: ...
+
+   Core Value: {core_value_proposition}
+
+   Must-Have Features ({count}):
+     • {feature_1}: {rationale}
+     • ...
+
+   Won't Have ({count}): {list}
+
+   Estimated Scope: {complexity} — {milestones} milestones, ~{phases} phases
+
+   Recommended Milestones:
+     1. {name}: {focus}
+     2. ...
+   ```
+
+3. Present review options:
+   ```
+   ─────────────────────────────────────────
+   Review Options:
+     A) Accept — proceed to condensing and project creation
+     R) Revise — tell me what to change, regenerate
+     D) Dig deeper on: [specify area]
+   ─────────────────────────────────────────
+   ```
+
+4. If Accept: proceed to vision_condense step
+5. If Revise: capture correction, spawn vision-synthesizer again with correction appended to vision-draft.md, loop back to step 2
+6. If Dig deeper: append "Deeper exploration of {area}" to vision-draft.md, spawn vision-synthesizer again
+</step>
+
+<step name="vision_condense">
+**Vision Condense: produce gsd:new-project handoff document (Fresh path only)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Display: "Condensing Vision Brief into project handoff..."
+
+Task(
+  description="Condense Vision Brief into gsd:new-project handoff",
+  subagent_type="general-purpose",
+  prompt="
+You are the vision-condenser agent. Your job is to produce a handoff document
+that will be passed as context to a gsd:new-project spawn.
+
+Read .mgw/vision-brief.json.
+
+Produce a structured handoff document at .mgw/vision-handoff.md that:
+
+1. Opens with a context block that gsd:new-project can use directly to produce PROJECT.md:
+   - Project name, tagline, domain
+   - Target users and their core needs
+   - Core value proposition
+   - Must-have feature list with rationale
+   - Won't-have list (explicit out-of-scope)
+   - Technical constraints
+   - Success metrics
+
+2. Includes recommended milestone structure as a numbered list:
+   - Each milestone: name, focus area, key deliverables
+
+3. Closes with an instruction for gsd:new-project:
+   'Use the above as the full project context when creating PROJECT.md.
+   The project name, scope, users, and milestones above reflect decisions
+   made through {rounds_completed} rounds of collaborative planning.
+   Do not hallucinate scope beyond what is specified.'
+
+Format as clean markdown. This document becomes the prompt prefix for gsd:new-project.
+"
+)
+
+After condenser completes:
+1. Verify .mgw/vision-handoff.md exists and has content
+2. Display: "Vision Brief condensed. Ready to initialize project structure."
+3. Update .mgw/vision-draft.md frontmatter: current_stage: spawning
+4. Proceed to spawn_gsd_new_project step.
+</step>
+
+<step name="spawn_gsd_new_project">
+**Spawn gsd:new-project with Vision Brief context (Fresh path only)**
+
+If STATE_CLASS != Fresh: skip this step.
+
+Read .mgw/vision-handoff.md:
+```bash
+HANDOFF_CONTENT=$(cat .mgw/vision-handoff.md)
+```
+
+Display: "Spawning gsd:new-project with full vision context..."
+
+Spawn gsd:new-project as a Task agent, passing the handoff document as context prefix:
+
+Task(
+  description="Initialize GSD project from Vision Brief",
+  subagent_type="general-purpose",
+  prompt="
+${HANDOFF_CONTENT}
+
+---
+
+You are now running gsd:new-project. Using the Vision Brief above as your full project context, create:
+
+1. .planning/PROJECT.md — Complete project definition following GSD format:
+   - Project name and one-line description from vision brief
+   - Vision and goals aligned with the value proposition
+   - Target users from the personas
+   - Core requirements mapping to the must-have features
+   - Non-goals matching the wont-have list
+   - Success criteria from success_metrics
+   - Technical constraints listed explicitly
+
+2. .planning/ROADMAP.md — First milestone plan following GSD format:
+   - Use the first milestone from recommended_milestone_structure
+   - Break it into 3-8 phases
+   - Each phase has: number, name, goal, requirements, success criteria
+   - Phase numbering starts at 1
+   - Include a progress table at the top
+
+Write both files. Do not create additional files. Do not deviate from the Vision Brief scope.
+"
+)
+
+After agent completes:
+1. Verify .planning/PROJECT.md exists:
+   ```bash
+   if [ ! -f .planning/PROJECT.md ]; then
+     echo "ERROR: gsd:new-project did not create .planning/PROJECT.md"
+     echo "Check the agent output and retry, or create PROJECT.md manually."
+     exit 1
+   fi
+   ```
+
+2. Verify .planning/ROADMAP.md exists:
+   ```bash
+   if [ ! -f .planning/ROADMAP.md ]; then
+     echo "ERROR: gsd:new-project did not create .planning/ROADMAP.md"
+     echo "Check the agent output and retry, or create ROADMAP.md manually."
+     exit 1
+   fi
+   ```
+
+3. Display success:
+   ```
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    GSD Project Initialized
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   .planning/PROJECT.md  created
+   .planning/ROADMAP.md  created (first milestone phases ready)
+
+   Vision cycle: {rounds_completed} rounds -> Vision Brief -> PROJECT.md
+   ```
+
+4. Update .mgw/vision-draft.md frontmatter: current_stage: complete
+
+4b. Synthesize alignment-report.json for milestone_mapper:
+
+The Fresh path skips `align_from_gsd`, so `.mgw/alignment-report.json` does not exist yet.
+Synthesize it from the freshly created ROADMAP.md and PROJECT.md so `milestone_mapper` has
+consistent input regardless of which path was taken.
+
+```bash
+python3 << 'PYEOF'
+import json, re, os
+
+repo_root = os.environ.get("REPO_ROOT", ".")
+
+# --- Parse PROJECT.md for name and description ---
+project_path = os.path.join(repo_root, ".planning", "PROJECT.md")
+with open(project_path, "r") as f:
+    project_text = f.read()
+
+# Extract H1 heading as project name
+name_match = re.search(r"^#\s+(.+)$", project_text, re.MULTILINE)
+project_name = name_match.group(1).strip() if name_match else "Untitled Project"
+
+# Extract first paragraph after H1 as description
+desc_match = re.search(r"^#\s+.+\n+(.+?)(?:\n\n|\n#)", project_text, re.MULTILINE | re.DOTALL)
+project_description = desc_match.group(1).strip() if desc_match else ""
+
+# --- Parse ROADMAP.md for phases ---
+roadmap_path = os.path.join(repo_root, ".planning", "ROADMAP.md")
+with open(roadmap_path, "r") as f:
+    roadmap_text = f.read()
+
+# Extract milestone name from first heading after any frontmatter
+roadmap_body = re.sub(r"^---\n.*?\n---\n?", "", roadmap_text, flags=re.DOTALL)
+milestone_heading = re.search(r"^#{1,2}\s+(.+)$", roadmap_body, re.MULTILINE)
+milestone_name = milestone_heading.group(1).strip() if milestone_heading else "Milestone 1"
+
+# Extract phases (### Phase N: Name or ## Phase N: Name)
+phase_pattern = re.compile(r"^#{2,3}\s+Phase\s+(\d+)[:\s]+(.+)$", re.MULTILINE)
+phases = []
+for m in phase_pattern.finditer(roadmap_text):
+    phases.append({
+        "number": int(m.group(1)),
+        "name": m.group(2).strip(),
+        "status": "pending"
+    })
+
+if not phases:
+    phases = [{"number": 1, "name": milestone_name, "status": "pending"}]
+
+# Estimate ~2 issues per phase as a rough default
+total_issues_estimated = len(phases) * 2
+
+report = {
+    "project_name": project_name,
+    "project_description": project_description,
+    "milestones": [
+        {
+            "name": milestone_name,
+            "source": "ROADMAP",
+            "state": "active",
+            "phases": phases
+        }
+    ],
+    "active_milestone": milestone_name,
+    "total_phases": len(phases),
+    "total_issues_estimated": total_issues_estimated
+}
+
+output_path = os.path.join(repo_root, ".mgw", "alignment-report.json")
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
+with open(output_path, "w") as f:
+    json.dump(report, f, indent=2)
+
+print(f"Synthesized alignment-report.json: {len(phases)} phases, milestone='{milestone_name}'")
+PYEOF
+```
+
+5. Proceed to milestone_mapper step:
+   The ROADMAP.md now exists, so PATH A (HAS_ROADMAP=true) logic applies.
+   Call the milestone_mapper step to read ROADMAP.md and create GitHub milestones/issues.
+   (Note: at this point STATE_CLASS was Fresh but now GSD files exist — the milestone_mapper
+   step was designed for the GSD-Only path but works identically here. Proceed to it directly.)
+</step>
+
 <step name="gather_inputs">
 **Gather project inputs conversationally:**
+
+If STATE_CLASS = Fresh: skip this step (handled by vision_intake through spawn_gsd_new_project above — proceed directly to milestone_mapper).
 
 Ask the following questions in sequence:
 
@@ -942,6 +1770,23 @@ the newly created milestones/phases (matching the existing project.json schema).
 so indices remain globally unique.
 
 When `EXTEND_MODE` is false, the existing write logic (full project.json from scratch) is unchanged.
+
+**Extend mode: verify new milestone GSD linkage**
+
+After writing the updated project.json in extend mode, report the GSD linkage status for each newly added milestone:
+
+```bash
+if [ "$EXTEND_MODE" = true ]; then
+  echo ""
+  echo "New milestone linkage status:"
+  for MILESTONE in "${NEW_MILESTONES[@]}"; do
+    MILE_NAME=$(echo "$MILESTONE" | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])" 2>/dev/null || echo "unknown")
+    echo "  o '${MILE_NAME}' — no GSD milestone linked yet"
+    echo "    -> Run /gsd:new-milestone after completing the previous milestone to link"
+  done
+  echo ""
+fi
+```
 </step>
 
 <step name="report">

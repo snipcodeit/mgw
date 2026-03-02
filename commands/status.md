@@ -105,8 +105,18 @@ Exit after display.
 ```bash
 PROJECT_JSON=$(cat "${MGW_DIR}/project.json")
 
-# Get current milestone pointer
-CURRENT_MILESTONE=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['current_milestone'])")
+# Resolve active milestone index (0-based) via state resolution (supports both schema versions)
+ACTIVE_IDX=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+const idx = resolveActiveMilestoneIndex(state);
+const milestone = state.milestones ? state.milestones[idx] : null;
+const gsdId = state.active_gsd_milestone || ('legacy:' + state.current_milestone);
+console.log(JSON.stringify({ idx, gsd_id: gsdId, name: milestone ? milestone.name : 'unknown' }));
+")
+CURRENT_MILESTONE_IDX=$(echo "$ACTIVE_IDX" | python3 -c "import json,sys; print(json.load(sys.stdin)['idx'])")
+# Convert 0-based index to 1-indexed milestone number for display and compatibility
+CURRENT_MILESTONE=$((CURRENT_MILESTONE_IDX + 1))
 TOTAL_MILESTONES=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['milestones']))")
 
 # Use specified milestone or current
@@ -422,7 +432,8 @@ import json
 result = {
     'repo': '${REPO_NAME}',
     'board_url': '${BOARD_URL}',
-    'current_milestone': ${CURRENT_MILESTONE},
+    'current_milestone': ${CURRENT_MILESTONE},  # 1-indexed (legacy compat)
+    'active_milestone_idx': ${CURRENT_MILESTONE_IDX},  # 0-based resolved index
     'viewing_milestone': ${TARGET_MILESTONE},
     'milestone': {
         'name': '${MILESTONE_NAME}',
@@ -453,6 +464,7 @@ The JSON structure:
   "repo": "owner/repo",
   "board_url": "https://github.com/orgs/snipcodeit/projects/1",
   "current_milestone": 2,
+  "active_milestone_idx": 1,
   "viewing_milestone": 2,
   "milestone": {
     "name": "v2 — Team Collaboration & Lifecycle Orchestration",

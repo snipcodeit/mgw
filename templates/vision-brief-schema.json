@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Vision Brief",
+  "description": "Structured output from the vision-synthesizer agent. Represents the full project vision after the collaboration cycle.",
+  "type": "object",
+  "required": ["project_identity", "target_users", "core_value_proposition", "feature_categories", "success_metrics", "estimated_scope", "recommended_milestone_structure"],
+  "properties": {
+    "project_identity": {
+      "type": "object",
+      "required": ["name", "tagline", "domain"],
+      "properties": {
+        "name": { "type": "string", "description": "Short project name" },
+        "tagline": { "type": "string", "description": "One-line value statement" },
+        "domain": { "type": "string", "description": "Industry/domain (e.g. 'local services', 'developer tooling', 'healthcare')" }
+      }
+    },
+    "target_users": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["persona", "needs", "pain_points"],
+        "properties": {
+          "persona": { "type": "string" },
+          "needs": { "type": "array", "items": { "type": "string" } },
+          "pain_points": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "core_value_proposition": {
+      "type": "string",
+      "description": "1-2 sentences: who it's for, what it does, why it's different"
+    },
+    "feature_categories": {
+      "type": "object",
+      "required": ["must_have", "should_have", "could_have", "wont_have"],
+      "properties": {
+        "must_have": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "description", "rationale"],
+            "properties": {
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "rationale": { "type": "string", "description": "Why this is non-negotiable" }
+            }
+          }
+        },
+        "should_have": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "description": { "type": "string" } } } },
+        "could_have": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "description": { "type": "string" } } } },
+        "wont_have": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "reason"],
+            "properties": {
+              "name": { "type": "string" },
+              "reason": { "type": "string", "description": "Explicit out-of-scope reasoning" }
+            }
+          }
+        }
+      }
+    },
+    "technical_constraints": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Hard constraints: tech stack requirements, platform targets, compliance needs"
+    },
+    "success_metrics": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Measurable definition of done for the full project"
+    },
+    "estimated_scope": {
+      "type": "object",
+      "required": ["milestones", "phases", "complexity"],
+      "properties": {
+        "milestones": { "type": "integer", "minimum": 1 },
+        "phases": { "type": "integer", "minimum": 1 },
+        "complexity": { "type": "string", "enum": ["small", "medium", "large", "enterprise"] }
+      }
+    },
+    "recommended_milestone_structure": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "focus", "deliverables"],
+        "properties": {
+          "name": { "type": "string", "description": "Milestone name (e.g. 'v1 — Foundation')" },
+          "focus": { "type": "string", "description": "What this milestone achieves" },
+          "deliverables": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

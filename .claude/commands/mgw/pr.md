@@ -61,6 +61,10 @@ SUMMARY_DATA=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs summary-extract "$
 # Also read raw artifacts for full context
 SUMMARY_RAW=$(cat ${gsd_artifacts_path}/*SUMMARY* 2>/dev/null)
 VERIFICATION=$(cat ${gsd_artifacts_path}/*VERIFICATION* 2>/dev/null)
+# Read PLAN.md content for Phase Context section (may be long — pass as-is, agent wraps in details tag)
+PLAN_CONTENT=$(cat ${gsd_artifacts_path}/*PLAN* 2>/dev/null)
+PLAN_PATH=$(ls ${gsd_artifacts_path}/*PLAN* 2>/dev/null | head -1 || echo "")
+SUMMARY_PATH=$(ls ${gsd_artifacts_path}/*SUMMARY* 2>/dev/null | head -1 || echo "")
 # Progress table for details section
 PROGRESS_TABLE=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs progress table --raw 2>/dev/null || echo "")
 
@@ -148,6 +152,12 @@ ${SUMMARY_DATA}
 ${SUMMARY_RAW}
 </gsd_summary_raw>
 
+<gsd_plan>
+${PLAN_CONTENT}
+Plan path: ${PLAN_PATH}
+Summary path: ${SUMMARY_PATH}
+</gsd_plan>
+
 <gsd_verification>
 ${VERIFICATION}
 </gsd_verification>
@@ -176,6 +186,14 @@ SECTION 1 — PR body:
 
 ${if_linked: 'Closes #${ISSUE_NUMBER}'}
 
+## Phase Context
+- **Issue:** #${ISSUE_NUMBER} — ${issue_title} (omit if standalone)
+- **Phase:** ${PHASE_INFO} (omit if no phase mapping)
+- **GSD Route:** ${gsd_route} (omit if unknown)
+- **PLAN.md:** ${path_to_plan_file} (omit if not found)
+- **SUMMARY.md:** ${path_to_summary_file} (omit if not found)
+(Omit this section entirely if issue is standalone and no phase context exists)
+
 ${if MILESTONE_TITLE non-empty:
 ## Milestone Context
 - **Milestone:** ${MILESTONE_TITLE}
@@ -189,6 +207,21 @@ ${if MILESTONE_TITLE non-empty:
 
 ## Cross-References
 ${cross_ref_list_or_omit_if_none}
+
+${if PLAN_CONTENT non-empty:
+## Plan
+<details>
+<summary>Expand to see the execution plan</summary>
+
+${PLAN_CONTENT}
+
+</details>
+}
+
+${if VERIFICATION non-empty:
+## Verification
+${VERIFICATION}
+}
 
 ${if PROGRESS_TABLE non-empty:
 <details>
