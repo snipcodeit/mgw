@@ -311,13 +311,32 @@ fi
 </step>
 
 <step name="create_project_board">
-**Create GitHub Projects v2 board and add all issues:**
+**Create GitHub Projects v2 board, custom fields, and prepare field metadata for sync:**
+
+Initialize all board field variables. These are populated either from an existing board
+(extend mode) or from newly created fields (new board). They are consumed by
+`sync_milestone_to_board` and `write_project_json` — project.json has not been written yet
+at this point, so fields are passed via bash variables rather than read from disk.
 
 ```bash
-OWNER=$(echo "$REPO" | cut -d'/' -f1)
+# Board field variables — set below, consumed by sync_milestone_to_board and write_project_json
+BOARD_NODE_ID=""
+BOARD_STATUS_FIELD_ID=""
+BOARD_STATUS_OPTIONS="{}"
+BOARD_AI_STATE_FIELD_ID=""
+BOARD_MILESTONE_FIELD_ID=""
+BOARD_PHASE_FIELD_ID=""
+BOARD_GSD_ROUTE_FIELD_ID=""
+BOARD_GSD_ROUTE_OPTIONS="{}"
 
+OWNER=$(echo "$REPO" | cut -d'/' -f1)
+REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
+```
+
+**Extend mode — reuse existing board and load its field metadata into bash variables:**
+
+```bash
 if [ "$EXTEND_MODE" = true ]; then
-  # Reuse existing project board — load number and URL from project.json
   EXISTING_BOARD=$(python3 -c "
 import json
 p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
@@ -326,107 +345,226 @@ print(json.dumps(board))
 ")
   PROJECT_NUMBER=$(echo "$EXISTING_BOARD" | python3 -c "import json,sys; print(json.load(sys.stdin).get('number',''))")
   PROJECT_URL=$(echo "$EXISTING_BOARD" | python3 -c "import json,sys; print(json.load(sys.stdin).get('url',''))")
+  BOARD_NODE_ID=$(echo "$EXISTING_BOARD" | python3 -c "import json,sys; print(json.load(sys.stdin).get('node_id',''))")
 
   if [ -n "$PROJECT_NUMBER" ]; then
     echo "  Reusing existing project board: #${PROJECT_NUMBER} — ${PROJECT_URL}"
 
-    # Add only NEW issues to the existing board
-    for RECORD in "${ISSUE_RECORDS[@]}"; do
-      ISSUE_NUM=$(echo "$RECORD" | cut -d':' -f2)
-      ISSUE_URL="https://github.com/${REPO}/issues/${ISSUE_NUM}"
-      gh project item-add "$PROJECT_NUMBER" --owner "$OWNER" --url "$ISSUE_URL" 2>/dev/null || true
-    done
-    echo "  Added ${TOTAL_ISSUES_CREATED} new issues to existing project board"
+    # Load existing field IDs into bash variables for sync_milestone_to_board
+    if [ -n "$BOARD_NODE_ID" ]; then
+      EXISTING_FIELDS=$(echo "$EXISTING_BOARD" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('fields',{})))")
+      BOARD_STATUS_FIELD_ID=$(echo "$EXISTING_FIELDS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',{}).get('field_id',''))")
+      BOARD_STATUS_OPTIONS=$(echo "$EXISTING_FIELDS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('status',{}).get('options',{})))")
+      BOARD_AI_STATE_FIELD_ID=$(echo "$EXISTING_FIELDS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('ai_agent_state',{}).get('field_id',''))")
+      BOARD_MILESTONE_FIELD_ID=$(echo "$EXISTING_FIELDS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('milestone',{}).get('field_id',''))")
+      BOARD_PHASE_FIELD_ID=$(echo "$EXISTING_FIELDS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase',{}).get('field_id',''))")
+      BOARD_GSD_ROUTE_FIELD_ID=$(echo "$EXISTING_FIELDS" | python3 -c "import json,sys; print(json.load(sys.stdin).get('gsd_route',{}).get('field_id',''))")
+      BOARD_GSD_ROUTE_OPTIONS=$(echo "$EXISTING_FIELDS" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('gsd_route',{}).get('options',{})))")
+    fi
   else
     # Board not found — fall through to create a new one
     EXTEND_MODE_BOARD=false
   fi
 fi
+```
 
+**New board — create via GraphQL (returns node_id) and provision all custom fields:**
+
+The GraphQL `createProjectV2` mutation returns `id` (node_id) in one call — no separate
+lookup needed. Custom fields are created immediately so `sync_milestone_to_board` can
+set field values on every newly added item. Items are NOT added here; they are added
+with field values in `sync_milestone_to_board` via `addProjectV2ItemById`.
+
+```bash
 if [ "$EXTEND_MODE" != true ] || [ "$EXTEND_MODE_BOARD" = false ]; then
-  # Create a new project board (standard flow or extend fallback)
-  PROJECT_RESP=$(gh project create --owner "$OWNER" --title "${PROJECT_NAME} Roadmap" --format json 2>&1)
-  PROJECT_NUMBER=$(echo "$PROJECT_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['number'])" 2>/dev/null || echo "")
-  PROJECT_URL=$(echo "$PROJECT_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin)['url'])" 2>/dev/null || echo "")
+  # Resolve owner node ID for GraphQL createProjectV2
+  OWNER_ID=$(gh api graphql -f query='query($login: String!) { user(login: $login) { id } }' \
+    -f login="$OWNER" --jq '.data.user.id' 2>/dev/null)
+  if [ -z "$OWNER_ID" ]; then
+    OWNER_ID=$(gh api graphql -f query='query($login: String!) { organization(login: $login) { id } }' \
+      -f login="$OWNER" --jq '.data.organization.id' 2>/dev/null)
+  fi
 
-  if [ -n "$PROJECT_NUMBER" ]; then
-    echo "  Created project board: #${PROJECT_NUMBER} — ${PROJECT_URL}"
-
-    # Add all issues to the board
-    for RECORD in "${ISSUE_RECORDS[@]}"; do
-      ISSUE_NUM=$(echo "$RECORD" | cut -d':' -f2)
-      ISSUE_URL="https://github.com/${REPO}/issues/${ISSUE_NUM}"
-      gh project item-add "$PROJECT_NUMBER" --owner "$OWNER" --url "$ISSUE_URL" 2>/dev/null || true
-    done
-    echo "  Added ${TOTAL_ISSUES_CREATED} issues to project board"
-  else
-    echo "  WARNING: Failed to create project board: ${PROJECT_RESP}"
+  if [ -z "$OWNER_ID" ]; then
+    echo "  WARNING: Cannot resolve owner node ID — board creation skipped"
+    echo "           Run /mgw:board create after project init to provision the board"
     PROJECT_NUMBER=""
     PROJECT_URL=""
+  else
+    BOARD_TITLE="${PROJECT_NAME} Roadmap"
+    CREATE_RESULT=$(gh api graphql -f query='
+      mutation($ownerId: ID!, $title: String!) {
+        createProjectV2(input: { ownerId: $ownerId title: $title }) {
+          projectV2 { id number url }
+        }
+      }
+    ' -f ownerId="$OWNER_ID" -f title="$BOARD_TITLE" 2>&1)
+
+    PROJECT_NUMBER=$(echo "$CREATE_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['createProjectV2']['projectV2']['number'])" 2>/dev/null || echo "")
+    PROJECT_URL=$(echo "$CREATE_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['createProjectV2']['projectV2']['url'])" 2>/dev/null || echo "")
+    BOARD_NODE_ID=$(echo "$CREATE_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['createProjectV2']['projectV2']['id'])" 2>/dev/null || echo "")
+
+    if [ -z "$BOARD_NODE_ID" ]; then
+      echo "  WARNING: Failed to create project board: ${CREATE_RESULT}"
+      PROJECT_NUMBER=""
+      PROJECT_URL=""
+    else
+      echo "  Created board: #${PROJECT_NUMBER} — ${PROJECT_URL}"
+      echo "  Board node ID: ${BOARD_NODE_ID}"
+      echo "  Provisioning custom fields..."
+
+      # Field 1: Status (SINGLE_SELECT — 13 pipeline stages)
+      STATUS_RESULT=$(gh api graphql -f query='
+        mutation($projectId: ID!) {
+          createProjectV2Field(input: {
+            projectId: $projectId
+            dataType: SINGLE_SELECT
+            name: "Status"
+            singleSelectOptions: [
+              { name: "New", color: GRAY, description: "Issue created, not yet triaged" }
+              { name: "Triaged", color: BLUE, description: "Triage complete, ready for execution" }
+              { name: "Needs Info", color: YELLOW, description: "Blocked at triage gate" }
+              { name: "Needs Security Review", color: RED, description: "High security risk flagged" }
+              { name: "Discussing", color: PURPLE, description: "Awaiting stakeholder scope approval" }
+              { name: "Approved", color: GREEN, description: "Cleared for execution" }
+              { name: "Planning", color: BLUE, description: "GSD planner agent active" }
+              { name: "Executing", color: ORANGE, description: "GSD executor agent active" }
+              { name: "Verifying", color: BLUE, description: "GSD verifier agent active" }
+              { name: "PR Created", color: GREEN, description: "PR open, awaiting review" }
+              { name: "Done", color: GREEN, description: "PR merged, issue closed" }
+              { name: "Failed", color: RED, description: "Unrecoverable pipeline error" }
+              { name: "Blocked", color: RED, description: "Blocking comment detected" }
+            ]
+          }) {
+            projectV2Field {
+              ... on ProjectV2SingleSelectField { id name options { id name } }
+            }
+          }
+        }
+      ' -f projectId="$BOARD_NODE_ID" 2>&1)
+      BOARD_STATUS_FIELD_ID=$(echo "$STATUS_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['createProjectV2Field']['projectV2Field']['id'])" 2>/dev/null || echo "")
+      BOARD_STATUS_OPTIONS=$(echo "$STATUS_RESULT" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+opts = d['data']['createProjectV2Field']['projectV2Field']['options']
+stage_map = {
+  'new':'New','triaged':'Triaged','needs-info':'Needs Info',
+  'needs-security-review':'Needs Security Review','discussing':'Discussing',
+  'approved':'Approved','planning':'Planning','executing':'Executing',
+  'verifying':'Verifying','pr-created':'PR Created','done':'Done',
+  'failed':'Failed','blocked':'Blocked'
+}
+name_to_id = {o['name']: o['id'] for o in opts}
+print(json.dumps({s: name_to_id.get(l,'') for s,l in stage_map.items()}))
+" 2>/dev/null || echo "{}")
+      [ -n "$BOARD_STATUS_FIELD_ID" ] && echo "    Status: ${BOARD_STATUS_FIELD_ID}" \
+        || echo "    WARNING: Status field creation failed"
+
+      # Field 2: AI Agent State (TEXT)
+      AI_RESULT=$(gh api graphql -f query='
+        mutation($projectId: ID!) {
+          createProjectV2Field(input: { projectId: $projectId dataType: TEXT name: "AI Agent State" }) {
+            projectV2Field { ... on ProjectV2Field { id name } }
+          }
+        }
+      ' -f projectId="$BOARD_NODE_ID" 2>&1)
+      BOARD_AI_STATE_FIELD_ID=$(echo "$AI_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['createProjectV2Field']['projectV2Field']['id'])" 2>/dev/null || echo "")
+      [ -n "$BOARD_AI_STATE_FIELD_ID" ] && echo "    AI Agent State: ${BOARD_AI_STATE_FIELD_ID}" \
+        || echo "    WARNING: AI Agent State field creation failed"
+
+      # Field 3: Milestone (TEXT)
+      MS_RESULT=$(gh api graphql -f query='
+        mutation($projectId: ID!) {
+          createProjectV2Field(input: { projectId: $projectId dataType: TEXT name: "Milestone" }) {
+            projectV2Field { ... on ProjectV2Field { id name } }
+          }
+        }
+      ' -f projectId="$BOARD_NODE_ID" 2>&1)
+      BOARD_MILESTONE_FIELD_ID=$(echo "$MS_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['createProjectV2Field']['projectV2Field']['id'])" 2>/dev/null || echo "")
+      [ -n "$BOARD_MILESTONE_FIELD_ID" ] && echo "    Milestone: ${BOARD_MILESTONE_FIELD_ID}" \
+        || echo "    WARNING: Milestone field creation failed"
+
+      # Field 4: Phase (TEXT)
+      PH_RESULT=$(gh api graphql -f query='
+        mutation($projectId: ID!) {
+          createProjectV2Field(input: { projectId: $projectId dataType: TEXT name: "Phase" }) {
+            projectV2Field { ... on ProjectV2Field { id name } }
+          }
+        }
+      ' -f projectId="$BOARD_NODE_ID" 2>&1)
+      BOARD_PHASE_FIELD_ID=$(echo "$PH_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['createProjectV2Field']['projectV2Field']['id'])" 2>/dev/null || echo "")
+      [ -n "$BOARD_PHASE_FIELD_ID" ] && echo "    Phase: ${BOARD_PHASE_FIELD_ID}" \
+        || echo "    WARNING: Phase field creation failed"
+
+      # Field 5: GSD Route (SINGLE_SELECT — 4 route options)
+      GSD_RESULT=$(gh api graphql -f query='
+        mutation($projectId: ID!) {
+          createProjectV2Field(input: {
+            projectId: $projectId
+            dataType: SINGLE_SELECT
+            name: "GSD Route"
+            singleSelectOptions: [
+              { name: "quick", color: GREEN, description: "gsd:quick" }
+              { name: "quick --full", color: BLUE, description: "gsd:quick --full" }
+              { name: "plan-phase", color: YELLOW, description: "gsd:plan-phase" }
+              { name: "new-milestone", color: ORANGE, description: "gsd:new-milestone" }
+            ]
+          }) {
+            projectV2Field {
+              ... on ProjectV2SingleSelectField { id name options { id name } }
+            }
+          }
+        }
+      ' -f projectId="$BOARD_NODE_ID" 2>&1)
+      BOARD_GSD_ROUTE_FIELD_ID=$(echo "$GSD_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['createProjectV2Field']['projectV2Field']['id'])" 2>/dev/null || echo "")
+      BOARD_GSD_ROUTE_OPTIONS=$(echo "$GSD_RESULT" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+opts = d['data']['createProjectV2Field']['projectV2Field']['options']
+route_map = {
+  'gsd:quick':'quick','gsd:quick --full':'quick --full',
+  'gsd:plan-phase':'plan-phase','gsd:new-milestone':'new-milestone'
+}
+name_to_id = {o['name']: o['id'] for o in opts}
+print(json.dumps({r: name_to_id.get(l,'') for r,l in route_map.items()}))
+" 2>/dev/null || echo "{}")
+      [ -n "$BOARD_GSD_ROUTE_FIELD_ID" ] && echo "    GSD Route: ${BOARD_GSD_ROUTE_FIELD_ID}" \
+        || echo "    WARNING: GSD Route field creation failed"
+    fi
   fi
 fi
 ```
 
-Store `PROJECT_NUMBER` and `PROJECT_URL` for inclusion in project.json and the summary report.
+Store `PROJECT_NUMBER`, `PROJECT_URL`, `BOARD_NODE_ID`, and field ID variables for use in
+`sync_milestone_to_board` and `write_project_json`.
 </step>
 
 <step name="sync_milestone_to_board">
 **Sync newly created issues onto the board as items with field values (non-blocking):**
 
 This step runs after `create_project_board` (both init and extend modes). It adds each
-newly created issue as a board item and sets Milestone, Phase, and GSD Route field values.
-Board item IDs are collected here and stored in project.json (as `board_item_id` per issue).
+newly created issue as a board item and sets Status, Milestone, Phase, and GSD Route field
+values. Board item IDs are collected here and stored in project.json (as `board_item_id`
+per issue).
 
-If no board is configured (PROJECT_NUMBER is empty) or the board has no custom fields
-configured (node_id or fields missing from project.json), skip silently.
+Field metadata is consumed from the bash variables set during `create_project_board`
+(BOARD_NODE_ID, BOARD_STATUS_FIELD_ID, BOARD_MILESTONE_FIELD_ID, etc.). These variables
+are available in-process — project.json has NOT been written yet at this point, so
+reading field IDs from disk is not possible here.
+
+If no board was created or provisioned (BOARD_NODE_ID is empty), skip silently.
 
 Non-blocking: any GraphQL error is logged as a WARNING and does not halt the pipeline.
 
 ```bash
-# Load board field metadata from project.json
-BOARD_NODE_ID=$(python3 -c "
-import json
-try:
-  p = json.load(open('${MGW_DIR}/project.json'))
-  print(p.get('project', {}).get('project_board', {}).get('node_id', ''))
-except:
-  print('')
-" 2>/dev/null || echo "")
-
-BOARD_FIELDS_JSON=$(python3 -c "
-import json
-try:
-  p = json.load(open('${MGW_DIR}/project.json'))
-  fields = p.get('project', {}).get('project_board', {}).get('fields', {})
-  print(json.dumps(fields))
-except:
-  print('{}')
-" 2>/dev/null || echo "{}")
-
-# Resolve field IDs from stored metadata
-MILESTONE_FIELD_ID=$(echo "$BOARD_FIELDS_JSON" | python3 -c "
-import json,sys
-fields = json.load(sys.stdin)
-print(fields.get('milestone', {}).get('field_id', ''))
-" 2>/dev/null || echo "")
-
-PHASE_FIELD_ID=$(echo "$BOARD_FIELDS_JSON" | python3 -c "
-import json,sys
-fields = json.load(sys.stdin)
-print(fields.get('phase', {}).get('field_id', ''))
-" 2>/dev/null || echo "")
-
-GSD_ROUTE_FIELD_ID=$(echo "$BOARD_FIELDS_JSON" | python3 -c "
-import json,sys
-fields = json.load(sys.stdin)
-print(fields.get('gsd_route', {}).get('field_id', ''))
-" 2>/dev/null || echo "")
-
-GSD_ROUTE_OPTIONS=$(echo "$BOARD_FIELDS_JSON" | python3 -c "
-import json,sys
-fields = json.load(sys.stdin)
-print(json.dumps(fields.get('gsd_route', {}).get('options', {})))
-" 2>/dev/null || echo "{}")
+# Use field IDs set during create_project_board — already in scope as bash variables.
+# BOARD_NODE_ID, BOARD_STATUS_FIELD_ID, BOARD_STATUS_OPTIONS, BOARD_AI_STATE_FIELD_ID,
+# BOARD_MILESTONE_FIELD_ID, BOARD_PHASE_FIELD_ID, BOARD_GSD_ROUTE_FIELD_ID,
+# BOARD_GSD_ROUTE_OPTIONS are all set (possibly empty) by the previous step.
+MILESTONE_FIELD_ID="${BOARD_MILESTONE_FIELD_ID}"
+PHASE_FIELD_ID="${BOARD_PHASE_FIELD_ID}"
+GSD_ROUTE_FIELD_ID="${BOARD_GSD_ROUTE_FIELD_ID}"
+GSD_ROUTE_OPTIONS="${BOARD_GSD_ROUTE_OPTIONS}"
 
 # Determine if sync is possible
 BOARD_SYNC_ENABLED=false
@@ -436,8 +574,8 @@ if [ -n "$PROJECT_NUMBER" ] && [ -n "$BOARD_NODE_ID" ]; then
   echo "Syncing ${TOTAL_ISSUES_CREATED} issues onto board #${PROJECT_NUMBER}..."
 elif [ -n "$PROJECT_NUMBER" ] && [ -z "$BOARD_NODE_ID" ]; then
   echo ""
-  echo "NOTE: Board #${PROJECT_NUMBER} exists but custom fields not configured."
-  echo "      Run /mgw:board create to set up fields, then board sync will be available."
+  echo "NOTE: Board #${PROJECT_NUMBER} exists but node_id not available."
+  echo "      Run /mgw:board create to provision custom fields and enable board sync."
 fi
 
 # ISSUE_RECORD format: "milestone_index:issue_number:title:phase_num:phase_name:gsd_route:depends_on"
@@ -576,6 +714,29 @@ print('')
           2>/dev/null || BOARD_SYNC_WARNINGS+=("WARNING: Failed to set GSD Route field on board item for #${ISSUE_NUM}")
       fi
     fi
+
+    # Set Status field to "new" (pipeline_stage for all newly created issues)
+    if [ -n "$BOARD_STATUS_FIELD_ID" ]; then
+      STATUS_NEW_OPTION_ID=$(echo "$BOARD_STATUS_OPTIONS" | python3 -c "
+import json,sys
+opts = json.load(sys.stdin)
+print(opts.get('new', ''))
+" 2>/dev/null || echo "")
+      if [ -n "$STATUS_NEW_OPTION_ID" ]; then
+        gh api graphql -f query='
+          mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+            updateProjectV2ItemFieldValue(input: {
+              projectId: $projectId
+              itemId: $itemId
+              fieldId: $fieldId
+              value: { singleSelectOptionId: $optionId }
+            }) { projectV2Item { id } }
+          }
+        ' -f projectId="$BOARD_NODE_ID" -f itemId="$ITEM_ID" \
+          -f fieldId="$BOARD_STATUS_FIELD_ID" -f optionId="$STATUS_NEW_OPTION_ID" \
+          2>/dev/null || BOARD_SYNC_WARNINGS+=("WARNING: Failed to set Status field on board item for #${ISSUE_NUM}")
+      fi
+    fi
   done
 
   if [ ${#BOARD_SYNC_WARNINGS[@]} -gt 0 ]; then
@@ -657,7 +818,9 @@ project_json = {
         "created": CREATED,
         "project_board": {
             "number": PROJECT_NUMBER or None,
-            "url": PROJECT_URL or None
+            "url": PROJECT_URL or None,
+            "node_id": BOARD_NODE_ID or None,
+            "fields": BOARD_FIELDS_DICT
         }
     },
     "milestones": milestones_out,
@@ -672,6 +835,47 @@ Write the output to `${MGW_DIR}/project.json`.
 **In practice** (bash + python3 inline): construct the full project.json by assembling
 data from `/tmp/mgw-template.json`, the milestone map built in create_milestones, the slug-to-number
 map from create_issues, and the phase_map built during create_issues. Write using:
+
+Before writing, build `BOARD_FIELDS_DICT` from the bash field variables set in
+`create_project_board`. This is passed into the heredoc via shell variable expansion:
+
+```bash
+# Build board fields JSON from bash variables set during create_project_board
+BOARD_FIELDS_DICT_JSON=$(python3 -c "
+import json, sys, os
+fields = {}
+status_fid = os.environ.get('BOARD_STATUS_FIELD_ID', '')
+status_opts_raw = os.environ.get('BOARD_STATUS_OPTIONS', '{}')
+ai_fid = os.environ.get('BOARD_AI_STATE_FIELD_ID', '')
+ms_fid = os.environ.get('BOARD_MILESTONE_FIELD_ID', '')
+ph_fid = os.environ.get('BOARD_PHASE_FIELD_ID', '')
+gsd_fid = os.environ.get('BOARD_GSD_ROUTE_FIELD_ID', '')
+gsd_opts_raw = os.environ.get('BOARD_GSD_ROUTE_OPTIONS', '{}')
+
+try:
+    status_opts = json.loads(status_opts_raw)
+except Exception:
+    status_opts = {}
+try:
+    gsd_opts = json.loads(gsd_opts_raw)
+except Exception:
+    gsd_opts = {}
+
+if status_fid:
+    fields['status'] = {'field_id': status_fid, 'field_name': 'Status', 'type': 'SINGLE_SELECT', 'options': status_opts}
+if ai_fid:
+    fields['ai_agent_state'] = {'field_id': ai_fid, 'field_name': 'AI Agent State', 'type': 'TEXT'}
+if ms_fid:
+    fields['milestone'] = {'field_id': ms_fid, 'field_name': 'Milestone', 'type': 'TEXT'}
+if ph_fid:
+    fields['phase'] = {'field_id': ph_fid, 'field_name': 'Phase', 'type': 'TEXT'}
+if gsd_fid:
+    fields['gsd_route'] = {'field_id': gsd_fid, 'field_name': 'GSD Route', 'type': 'SINGLE_SELECT', 'options': gsd_opts}
+print(json.dumps(fields))
+" 2>/dev/null || echo "{}")
+```
+
+Then write project.json using:
 
 ```bash
 python3 << 'PYEOF' > "${MGW_DIR}/project.json"
@@ -689,6 +893,12 @@ for entry in [x for x in '''${ITEM_ID_MAP[*]}'''.split() if ':' in x]:
         ITEM_ID_MAP_DICT[int(parts[0])] = parts[1]
     except (ValueError, IndexError):
         pass
+
+# Board fields dict — built from bash env vars above
+try:
+    BOARD_FIELDS_DICT = json.loads('''${BOARD_FIELDS_DICT_JSON}''')
+except Exception:
+    BOARD_FIELDS_DICT = {}
 
 # ... (construct from available bash variables — see pseudocode above)
 PYEOF

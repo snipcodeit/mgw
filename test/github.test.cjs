@@ -483,6 +483,285 @@ describe('createProject', () => {
 });
 
 // ---------------------------------------------------------------------------
+// getProjectNodeId
+// ---------------------------------------------------------------------------
+
+describe('getProjectNodeId', () => {
+  beforeEach(restoreMocks);
+
+  it('returns node ID when user projectV2 query succeeds', () => {
+    const { github, spy } = loadWithMock('PVT_kwDOABC123');
+    const result = github.getProjectNodeId('snipcodeit', 7);
+
+    assert.equal(result, 'PVT_kwDOABC123');
+    assert.equal(spy.mock.calls.length, 1);
+    const cmd = spy.mock.calls[0].arguments[0];
+    assert.ok(cmd.includes('user(login:'), 'should query user projectV2');
+    assert.ok(cmd.includes('snipcodeit'), 'should include owner');
+    assert.ok(cmd.includes('7'), 'should include project number');
+  });
+
+  it('falls back to org query when user query returns "null"', () => {
+    let callCount = 0;
+    delete require.cache[GITHUB_MODULE];
+    mock.method(childProcess, 'execSync', (_cmd, _opts) => {
+      callCount++;
+      return callCount === 1 ? 'null' : 'PVT_orgNodeId';
+    });
+    const github = require(GITHUB_MODULE);
+
+    const result = github.getProjectNodeId('snipcodeit', 7);
+    assert.equal(result, 'PVT_orgNodeId');
+    assert.equal(callCount, 2);
+  });
+
+  it('falls back to org query when user query throws', () => {
+    let callCount = 0;
+    delete require.cache[GITHUB_MODULE];
+    mock.method(childProcess, 'execSync', (_cmd, _opts) => {
+      callCount++;
+      if (callCount === 1) throw new Error('user not found');
+      return 'PVT_orgNodeId';
+    });
+    const github = require(GITHUB_MODULE);
+
+    const result = github.getProjectNodeId('myorg', 3);
+    assert.equal(result, 'PVT_orgNodeId');
+  });
+
+  it('returns null when both user and org queries fail', () => {
+    delete require.cache[GITHUB_MODULE];
+    mock.method(childProcess, 'execSync', () => { throw new Error('not found'); });
+    const github = require(GITHUB_MODULE);
+
+    const result = github.getProjectNodeId('snipcodeit', 999);
+    assert.equal(result, null);
+  });
+
+  it('returns null when both queries return "null" string', () => {
+    const { github } = loadWithMock('null');
+    const result = github.getProjectNodeId('snipcodeit', 7);
+    assert.equal(result, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findExistingBoard
+// ---------------------------------------------------------------------------
+
+describe('findExistingBoard', () => {
+  beforeEach(restoreMocks);
+
+  const FX_USER_BOARDS = JSON.stringify([
+    { id: 'PVT_user1', number: 5, url: 'https://github.com/users/snipcodeit/projects/5', title: 'MGW Roadmap' },
+    { id: 'PVT_user2', number: 6, url: 'https://github.com/users/snipcodeit/projects/6', title: 'Other Project' }
+  ]);
+
+  const FX_ORG_BOARDS = JSON.stringify([
+    { id: 'PVT_org1', number: 2, url: 'https://github.com/orgs/snipcodeit/projects/2', title: 'MGW Pipeline Board' }
+  ]);
+
+  it('returns board when user projectsV2 contains a title match', () => {
+    const { github } = loadWithMock(FX_USER_BOARDS);
+    const result = github.findExistingBoard('snipcodeit', 'MGW');
+
+    assert.ok(result !== null, 'should find a board');
+    assert.equal(result.number, 5);
+    assert.equal(result.nodeId, 'PVT_user1');
+    assert.equal(result.title, 'MGW Roadmap');
+  });
+
+  it('performs case-insensitive title matching', () => {
+    const { github } = loadWithMock(FX_USER_BOARDS);
+    const result = github.findExistingBoard('snipcodeit', 'mgw roadmap');
+
+    assert.ok(result !== null);
+    assert.equal(result.number, 5);
+  });
+
+  it('falls back to org projects when user query finds no match', () => {
+    let callCount = 0;
+    delete require.cache[GITHUB_MODULE];
+    mock.method(childProcess, 'execSync', (_cmd, _opts) => {
+      callCount++;
+      // First call: user boards — no matching title
+      if (callCount === 1) return JSON.stringify([
+        { id: 'PVT_other', number: 1, url: 'https://github.com/users/snipcodeit/projects/1', title: 'Unrelated Board' }
+      ]);
+      // Second call: org boards — has match
+      return FX_ORG_BOARDS;
+    });
+    const github = require(GITHUB_MODULE);
+
+    const result = github.findExistingBoard('snipcodeit', 'MGW');
+    assert.ok(result !== null);
+    assert.equal(result.number, 2);
+    assert.equal(result.nodeId, 'PVT_org1');
+  });
+
+  it('falls back to org projects when user query throws', () => {
+    let callCount = 0;
+    delete require.cache[GITHUB_MODULE];
+    mock.method(childProcess, 'execSync', (_cmd, _opts) => {
+      callCount++;
+      if (callCount === 1) throw new Error('user not found');
+      return FX_ORG_BOARDS;
+    });
+    const github = require(GITHUB_MODULE);
+
+    const result = github.findExistingBoard('snipcodeit', 'MGW');
+    assert.ok(result !== null);
+    assert.equal(result.number, 2);
+  });
+
+  it('returns null when no match in either user or org projects', () => {
+    let callCount = 0;
+    delete require.cache[GITHUB_MODULE];
+    mock.method(childProcess, 'execSync', (_cmd, _opts) => {
+      callCount++;
+      return JSON.stringify([
+        { id: 'PVT_x', number: 9, url: 'https://github.com/users/snipcodeit/projects/9', title: 'Unrelated' }
+      ]);
+    });
+    const github = require(GITHUB_MODULE);
+
+    const result = github.findExistingBoard('snipcodeit', 'MGW');
+    assert.equal(result, null);
+  });
+
+  it('returns null when both queries throw', () => {
+    delete require.cache[GITHUB_MODULE];
+    mock.method(childProcess, 'execSync', () => { throw new Error('API error'); });
+    const github = require(GITHUB_MODULE);
+
+    const result = github.findExistingBoard('snipcodeit', 'anything');
+    assert.equal(result, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getProjectFields
+// ---------------------------------------------------------------------------
+
+describe('getProjectFields', () => {
+  beforeEach(restoreMocks);
+
+  const statusOptions = [
+    { id: 'opt_new', name: 'New' },
+    { id: 'opt_triaged', name: 'Triaged' },
+    { id: 'opt_planning', name: 'Planning' },
+    { id: 'opt_executing', name: 'Executing' },
+    { id: 'opt_done', name: 'Done' },
+    { id: 'opt_failed', name: 'Failed' },
+    { id: 'opt_blocked', name: 'Blocked' },
+    { id: 'opt_verifying', name: 'Verifying' },
+    { id: 'opt_prcreated', name: 'PR Created' },
+    { id: 'opt_approved', name: 'Approved' },
+    { id: 'opt_discussing', name: 'Discussing' },
+    { id: 'opt_needsinfo', name: 'Needs Info' },
+    { id: 'opt_security', name: 'Needs Security Review' }
+  ];
+
+  const gsdRouteOptions = [
+    { id: 'gsd_quick', name: 'quick' },
+    { id: 'gsd_quickfull', name: 'quick --full' },
+    { id: 'gsd_plan', name: 'plan-phase' },
+    { id: 'gsd_milestone', name: 'new-milestone' }
+  ];
+
+  const FX_FIELDS_NODES = JSON.stringify([
+    { id: 'PVTSSF_status', name: 'Status', options: statusOptions },
+    { id: 'PVTF_ai', name: 'AI Agent State' },
+    { id: 'PVTF_ms', name: 'Milestone' },
+    { id: 'PVTF_phase', name: 'Phase' },
+    { id: 'PVTSSF_route', name: 'GSD Route', options: gsdRouteOptions }
+  ]);
+
+  it('returns parsed fields object with all 5 field types', () => {
+    const { github } = loadWithMock(FX_FIELDS_NODES);
+    const result = github.getProjectFields('snipcodeit', 7);
+
+    assert.ok(result !== null, 'should return fields');
+    assert.ok('status' in result, 'should have status field');
+    assert.ok('ai_agent_state' in result, 'should have ai_agent_state field');
+    assert.ok('milestone' in result, 'should have milestone field');
+    assert.ok('phase' in result, 'should have phase field');
+    assert.ok('gsd_route' in result, 'should have gsd_route field');
+  });
+
+  it('maps status field options to pipeline_stage keys', () => {
+    const { github } = loadWithMock(FX_FIELDS_NODES);
+    const result = github.getProjectFields('snipcodeit', 7);
+
+    assert.equal(result.status.field_id, 'PVTSSF_status');
+    assert.equal(result.status.type, 'SINGLE_SELECT');
+    assert.equal(result.status.options.new, 'opt_new');
+    assert.equal(result.status.options.triaged, 'opt_triaged');
+    assert.equal(result.status.options.planning, 'opt_planning');
+    assert.equal(result.status.options.executing, 'opt_executing');
+    assert.equal(result.status.options.done, 'opt_done');
+    assert.equal(result.status.options['pr-created'], 'opt_prcreated');
+    assert.equal(result.status.options['needs-info'], 'opt_needsinfo');
+    assert.equal(result.status.options['needs-security-review'], 'opt_security');
+  });
+
+  it('maps gsd_route field options to route keys with gsd: prefix', () => {
+    const { github } = loadWithMock(FX_FIELDS_NODES);
+    const result = github.getProjectFields('snipcodeit', 7);
+
+    assert.equal(result.gsd_route.field_id, 'PVTSSF_route');
+    assert.equal(result.gsd_route.type, 'SINGLE_SELECT');
+    assert.equal(result.gsd_route.options['gsd:quick'], 'gsd_quick');
+    assert.equal(result.gsd_route.options['gsd:plan-phase'], 'gsd_plan');
+    assert.equal(result.gsd_route.options['gsd:new-milestone'], 'gsd_milestone');
+  });
+
+  it('returns TEXT type for ai_agent_state, milestone, and phase fields', () => {
+    const { github } = loadWithMock(FX_FIELDS_NODES);
+    const result = github.getProjectFields('snipcodeit', 7);
+
+    assert.equal(result.ai_agent_state.field_id, 'PVTF_ai');
+    assert.equal(result.ai_agent_state.type, 'TEXT');
+    assert.equal(result.milestone.field_id, 'PVTF_ms');
+    assert.equal(result.milestone.type, 'TEXT');
+    assert.equal(result.phase.field_id, 'PVTF_phase');
+    assert.equal(result.phase.type, 'TEXT');
+  });
+
+  it('falls back to org query when user query throws', () => {
+    let callCount = 0;
+    delete require.cache[GITHUB_MODULE];
+    mock.method(childProcess, 'execSync', (_cmd, _opts) => {
+      callCount++;
+      if (callCount === 1) throw new Error('user not found');
+      return FX_FIELDS_NODES;
+    });
+    const github = require(GITHUB_MODULE);
+
+    const result = github.getProjectFields('snipcodeit', 7);
+    assert.ok(result !== null);
+    assert.ok('status' in result);
+  });
+
+  it('returns null when both queries fail', () => {
+    delete require.cache[GITHUB_MODULE];
+    mock.method(childProcess, 'execSync', () => { throw new Error('API error'); });
+    const github = require(GITHUB_MODULE);
+
+    const result = github.getProjectFields('snipcodeit', 7);
+    assert.equal(result, null);
+  });
+
+  it('returns null when nodes array has no recognized fields', () => {
+    const { github } = loadWithMock(JSON.stringify([
+      { id: 'PVTF_unknown', name: 'UnknownField' }
+    ]));
+    const result = github.getProjectFields('snipcodeit', 7);
+    assert.equal(result, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // addItemToProject
 // ---------------------------------------------------------------------------
 
