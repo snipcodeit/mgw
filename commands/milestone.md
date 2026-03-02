@@ -414,6 +414,7 @@ Track state for progress table:
 ```bash
 COMPLETED_ISSUES=()
 FAILED_ISSUES=()
+FAILED_ISSUES_WITH_CLASS=()  # Entries: "issue_number:failure_class" for results display
 BLOCKED_ISSUES=()
 SKIPPED_ISSUES=()
 ISSUES_RUN=0
@@ -620,8 +621,29 @@ COMMENTEOF
     echo "  ✓ #${ISSUE_NUMBER} — PR #${PR_NUMBER} created"
 
   else
-    # Failure — post failure comment
+    # Failure — read failure_class from active issue state, then post failure comment
     FAILED_ISSUES+=("$ISSUE_NUMBER")
+
+    # Read failure_class and dead_letter from the active issue state file
+    ISSUE_FAILURE_CLASS=$(node -e "
+const { loadActiveIssue } = require('./lib/state.cjs');
+const state = loadActiveIssue(${ISSUE_NUMBER});
+console.log((state && state.last_failure_class) ? state.last_failure_class : 'unknown');
+" 2>/dev/null || echo "unknown")
+
+    ISSUE_DEAD_LETTER=$(node -e "
+const { loadActiveIssue } = require('./lib/state.cjs');
+const state = loadActiveIssue(${ISSUE_NUMBER});
+console.log(state && state.dead_letter === true ? 'true' : 'false');
+" 2>/dev/null || echo "false")
+
+    ISSUE_RETRY_COUNT=$(node -e "
+const { loadActiveIssue } = require('./lib/state.cjs');
+const state = loadActiveIssue(${ISSUE_NUMBER});
+console.log((state && typeof state.retry_count === 'number') ? state.retry_count : 0);
+" 2>/dev/null || echo "0")
+
+    FAILED_ISSUES_WITH_CLASS+=("${ISSUE_NUMBER}:${ISSUE_FAILURE_CLASS}")
 
     FAIL_BODY=$(cat <<COMMENTEOF
 > **MGW** · \`pipeline-failed\` · ${DONE_TIMESTAMP}
@@ -630,16 +652,22 @@ COMMENTEOF
 ### Pipeline Failed
 
 Issue #${ISSUE_NUMBER} did not produce a PR.
-Check the execution log for details.
+
+| | |
+|---|---|
+| **Failure class** | \`${ISSUE_FAILURE_CLASS}\` |
+| **Retries attempted** | ${ISSUE_RETRY_COUNT} of 3 |
+| **Dead-lettered** | ${ISSUE_DEAD_LETTER} |
 
 Dependents of this issue will be skipped.
+To retry after resolving root cause: \`/mgw:run ${ISSUE_NUMBER} --retry\`
 COMMENTEOF
 )
 
     gh issue comment ${ISSUE_NUMBER} --body "$FAIL_BODY" 2>/dev/null || true
     gh issue edit ${ISSUE_NUMBER} --add-label "pipeline-failed" 2>/dev/null || true
     gh label create "pipeline-failed" --description "Pipeline execution failed" --color "d73a4a" --force 2>/dev/null || true
-    echo "  ✗ #${ISSUE_NUMBER} — Failed (no PR created)"
+    echo "  ✗ #${ISSUE_NUMBER} — Failed (class: ${ISSUE_FAILURE_CLASS}, no PR created)"
   fi
 
   # Update project.json checkpoint (MLST-05)
@@ -684,16 +712,19 @@ Every comment posted during milestone orchestration includes:
 <details>
 <summary>Milestone Progress ({done}/{total} complete)</summary>
 
-| # | Issue | Status | PR | Stage |
-|---|-------|--------|----|-------|
-| N | title | ✓ Done | #PR | done |
-| M | title | ✗ Failed | — | failed |
-| K | title | ○ Pending | — | new |
-| J | title | ◆ Running | — | executing |
-| L | title | ⊘ Blocked | — | blocked-by:#N |
+| # | Issue | Status | PR | Failure Class |
+|---|-------|--------|----|---------------|
+| N | title | ✓ Done | #PR | — |
+| M | title | ✗ Failed | — | `permanent` |
+| K | title | ○ Pending | — | — |
+| J | title | ◆ Running | — | — |
+| L | title | ⊘ Blocked | — | — |
 
 </details>
 ```
+
+The **Failure Class** column surfaces `last_failure_class` from the active issue state file.
+Values: `transient` (retried and exhausted), `permanent` (unrecoverable), `needs-info` (ambiguous issue), `unknown` (no state file or pre-retry issue), `—` (not failed).
 </step>
 
 <step name="post_loop">
@@ -915,6 +946,23 @@ Draft release created: ${RELEASE_TAG}
 
 **If some issues failed:**
 
+Build failure class lookup from `FAILED_ISSUES_WITH_CLASS` array for display:
+```bash
+# Build failure class map: { issue_number → failure_class }
+FAILURE_CLASS_MAP=$(python3 -c "
+import json, sys
+
+entries = '${FAILED_ISSUES_WITH_CLASS[@]}'.split()
+result = {}
+for entry in entries:
+    if ':' in entry:
+        num, cls = entry.split(':', 1)
+        result[num] = cls
+print(json.dumps(result))
+" 2>/dev/null || echo "{}")
+```
+
+Display results table including failure_class for each failed issue:
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  MGW ► MILESTONE ${MILESTONE_NUM} INCOMPLETE
@@ -922,15 +970,78 @@ Draft release created: ${RELEASE_TAG}
 
 ${MILESTONE_NAME}
 
-| # | Issue | Status | PR |
-|---|-------|--------|----|
-${results_table}
+| # | Issue | Status | PR | Failure Class |
+|---|-------|--------|----|---------------|
+${results_table_with_failure_class}
 
 Completed: ${TOTAL_DONE}/${TOTAL_ISSUES}
 Failed: ${TOTAL_FAILED}
 Blocked: ${TOTAL_BLOCKED}
+```
 
-Milestone NOT closed. Resolve failures and re-run:
+For each failed issue, present recovery options:
+```bash
+for ENTRY in "${FAILED_ISSUES_WITH_CLASS[@]}"; do
+  FAIL_NUM=$(echo "$ENTRY" | cut -d':' -f1)
+  FAIL_CLASS=$(echo "$ENTRY" | cut -d':' -f2)
+
+  echo ""
+  echo "  Failed: #${FAIL_NUM} (class: ${FAIL_CLASS})"
+  AskUserQuestion(
+    header: "Recovery — Issue #${FAIL_NUM}",
+    question: "Issue #${FAIL_NUM} failed (failure class: ${FAIL_CLASS}). What would you like to do?",
+    options: [
+      {
+        label: "Retry",
+        description: "Reset retry state via resetRetryState() and re-run /mgw:run #${FAIL_NUM} --retry"
+      },
+      {
+        label: "Skip",
+        description: "Mark as skipped and continue to next issue (dependents will remain blocked)"
+      },
+      {
+        label: "Abort",
+        description: "Stop milestone recovery here"
+      }
+    ]
+  )
+
+  case "$RECOVERY_CHOICE" in
+    Retry)
+      # Call resetRetryState() to clear retry_count, last_failure_class, dead_letter
+      node -e "
+const { resetRetryState } = require('./lib/retry.cjs');
+const fs = require('fs'), path = require('path');
+const activeDir = path.join(process.cwd(), '.mgw', 'active');
+const files = fs.readdirSync(activeDir);
+const file = files.find(f => f.startsWith('${FAIL_NUM}-') && f.endsWith('.json'));
+if (!file) { console.error('No state file for #${FAIL_NUM}'); process.exit(1); }
+const filePath = path.join(activeDir, file);
+const state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+const reset = resetRetryState(state);
+reset.pipeline_stage = 'triaged';
+fs.writeFileSync(filePath, JSON.stringify(reset, null, 2));
+console.log('Retry state cleared for #${FAIL_NUM}');
+"
+      # Remove pipeline-failed label before re-run
+      gh issue edit ${FAIL_NUM} --remove-label "pipeline-failed" 2>/dev/null || true
+      # Re-run the pipeline for this issue
+      /mgw:run ${FAIL_NUM} --retry
+      ;;
+    Skip)
+      echo "  ⊘ #${FAIL_NUM} — Skipped (will not retry)"
+      ;;
+    Abort)
+      echo "Milestone recovery aborted at #${FAIL_NUM}."
+      break
+      ;;
+  esac
+done
+```
+
+After recovery loop:
+```
+Milestone NOT closed. Re-run after resolving remaining failures:
   /mgw:milestone ${MILESTONE_NUM}
 ```
 
@@ -952,6 +1063,9 @@ gh issue comment ${FIRST_ISSUE_NUMBER} --body "$FINAL_RESULTS_COMMENT"
 - [ ] Sequential execution via /mgw:run Task() delegation (MLST-01)
 - [ ] Per-issue checkpoint to project.json after completion (MLST-05)
 - [ ] Failure handling: skip failed, label, comment, block dependents
+- [ ] failure_class surfaced in results table and failure comment for each failed issue
+- [ ] Retry option calls resetRetryState() then re-invokes /mgw:run --retry for failed issues
+- [ ] FAILED_ISSUES_WITH_CLASS tracks "number:class" for display in results table
 - [ ] Progress table in every GitHub comment
 - [ ] Milestone close + draft release on full completion
 - [ ] current_milestone pointer advanced on completion

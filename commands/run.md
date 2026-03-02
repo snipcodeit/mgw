@@ -57,13 +57,23 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 DEFAULT=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
 ```
 
-Parse $ARGUMENTS for issue number. If missing:
+Parse $ARGUMENTS for issue number and flags. If issue number missing:
 ```
 AskUserQuestion(
   header: "Issue Number Required",
   question: "Which issue number do you want to run the pipeline for?",
   followUp: null
 )
+```
+
+Extract flags from $ARGUMENTS:
+```bash
+RETRY_FLAG=false
+for ARG in $ARGUMENTS; do
+  case "$ARG" in
+    --retry) RETRY_FLAG=true ;;
+  esac
+done
 ```
 
 Check for existing state: `${REPO_ROOT}/.mgw/active/${ISSUE_NUMBER}-*.json`
@@ -73,11 +83,71 @@ If no state file exists → issue not triaged yet. Run triage inline:
   - Execute the mgw:issue triage flow (steps from issue.md) inline.
   - After triage, reload state file.
 
-If state file exists → load it. Check pipeline_stage:
+If state file exists → load it. **Run migrateProjectState() to ensure retry fields exist:**
+```bash
+node -e "
+const { migrateProjectState } = require('./lib/state.cjs');
+migrateProjectState();
+" 2>/dev/null || true
+```
+
+Check pipeline_stage:
   - "triaged" → proceed to GSD execution
   - "planning" / "executing" → resume from where we left off
   - "blocked" → "Pipeline for #${ISSUE_NUMBER} is blocked by a stakeholder comment. Review the issue comments, resolve the blocker, then re-run."
   - "pr-created" / "done" → "Pipeline already completed for #${ISSUE_NUMBER}. Run /mgw:sync to reconcile."
+  - "failed" → Check for --retry flag:
+    - If --retry NOT present:
+      ```
+      Pipeline for #${ISSUE_NUMBER} has failed (failure class: ${last_failure_class || "unknown"}).
+      dead_letter: ${dead_letter}
+
+      To retry:   /mgw:run ${ISSUE_NUMBER} --retry
+      To inspect: /mgw:issue ${ISSUE_NUMBER}
+      ```
+      STOP.
+    - If --retry present and dead_letter === true:
+      ```bash
+      # Clear dead_letter and reset retry state via resetRetryState()
+      node -e "
+      const { loadActiveIssue } = require('./lib/state.cjs');
+      const { resetRetryState } = require('./lib/retry.cjs');
+      const fs = require('fs'), path = require('path');
+      const activeDir = path.join(process.cwd(), '.mgw', 'active');
+      const files = fs.readdirSync(activeDir);
+      const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.json'));
+      if (!file) { console.error('No state file for #${ISSUE_NUMBER}'); process.exit(1); }
+      const filePath = path.join(activeDir, file);
+      const state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      const reset = resetRetryState(state);
+      reset.pipeline_stage = 'triaged';
+      fs.writeFileSync(filePath, JSON.stringify(reset, null, 2));
+      console.log('Retry state cleared for #${ISSUE_NUMBER}');
+      "
+      # Remove pipeline-failed label
+      gh issue edit ${ISSUE_NUMBER} --remove-label "pipeline-failed" 2>/dev/null || true
+      ```
+      Log: "MGW: dead_letter cleared for #${ISSUE_NUMBER} via --retry flag. Re-queuing."
+      Continue pipeline (treat as triaged).
+    - If --retry present and dead_letter !== true (manual retry of non-dead-lettered failure):
+      ```bash
+      node -e "
+      const { resetRetryState } = require('./lib/retry.cjs');
+      const fs = require('fs'), path = require('path');
+      const activeDir = path.join(process.cwd(), '.mgw', 'active');
+      const files = fs.readdirSync(activeDir);
+      const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.json'));
+      if (!file) { console.error('No state file'); process.exit(1); }
+      const filePath = path.join(activeDir, file);
+      const state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      const reset = resetRetryState(state);
+      reset.pipeline_stage = 'triaged';
+      fs.writeFileSync(filePath, JSON.stringify(reset, null, 2));
+      console.log('Retry state reset for #${ISSUE_NUMBER}');
+      "
+      gh issue edit ${ISSUE_NUMBER} --remove-label "pipeline-failed" 2>/dev/null || true
+      ```
+      Continue pipeline.
   - "needs-info" → Check for --force flag in $ARGUMENTS:
     If --force NOT present:
       ```
@@ -542,6 +612,24 @@ Log comment in state file (at `${REPO_ROOT}/.mgw/active/`).
 
 Only run this step if gsd_route is "gsd:quick" or "gsd:quick --full".
 
+**Retry loop initialization:**
+```bash
+# Load retry state from .mgw/active/ state file
+RETRY_COUNT=$(node -e "
+const { loadActiveIssue } = require('./lib/state.cjs');
+const state = loadActiveIssue(${ISSUE_NUMBER});
+console.log((state && typeof state.retry_count === 'number') ? state.retry_count : 0);
+" 2>/dev/null || echo "0")
+EXECUTION_SUCCEEDED=false
+```
+
+**Begin retry loop** — wraps the GSD quick execution (steps 1–11 below) with transient-failure retry:
+
+```
+RETRY_LOOP:
+  while canRetry(issue_state) AND NOT EXECUTION_SUCCEEDED:
+```
+
 Update pipeline_stage to "executing" in state file (at `${REPO_ROOT}/.mgw/active/`).
 
 Determine flags:
@@ -743,12 +831,95 @@ node ~/.claude/get-shit-done/bin/gsd-tools.cjs commit "docs(quick-${next_num}): 
 ```
 
 Update state (at `${REPO_ROOT}/.mgw/active/`): gsd_artifacts.path = $QUICK_DIR, pipeline_stage = "verifying".
+
+**Retry loop — on execution failure:**
+
+If any step above fails (executor or verifier agent returns error, summary missing, etc.), capture the error and apply retry logic:
+
+```bash
+# On failure — classify and decide whether to retry
+FAILURE_CLASS=$(node -e "
+const { classifyFailure, canRetry, incrementRetry, getBackoffMs } = require('./lib/retry.cjs');
+const { loadActiveIssue } = require('./lib/state.cjs');
+const fs = require('fs'), path = require('path');
+
+const activeDir = path.join(process.cwd(), '.mgw', 'active');
+const files = fs.readdirSync(activeDir);
+const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.json'));
+const filePath = path.join(activeDir, file);
+let issueState = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+
+// Classify the failure from the error context
+const error = { message: '${EXECUTION_ERROR_MESSAGE}' };
+const result = classifyFailure(error);
+console.error('Failure classified as: ' + result.class + ' — ' + result.reason);
+
+// Persist failure class to state
+issueState.last_failure_class = result.class;
+
+if (result.class === 'transient' && canRetry(issueState)) {
+  const backoff = getBackoffMs(issueState.retry_count || 0);
+  issueState = incrementRetry(issueState);
+  fs.writeFileSync(filePath, JSON.stringify(issueState, null, 2));
+  // Output: backoff ms so shell can sleep
+  console.log('retry:' + backoff + ':' + result.class);
+} else {
+  // Permanent failure or retries exhausted — dead-letter
+  issueState.dead_letter = true;
+  fs.writeFileSync(filePath, JSON.stringify(issueState, null, 2));
+  console.log('dead_letter:' + result.class);
+}
+")
+
+case "$FAILURE_CLASS" in
+  retry:*)
+    BACKOFF_MS=$(echo "$FAILURE_CLASS" | cut -d':' -f2)
+    BACKOFF_SEC=$(( (BACKOFF_MS + 999) / 1000 ))
+    echo "MGW: Transient failure detected — retrying in ${BACKOFF_SEC}s (retry ${RETRY_COUNT})..."
+    sleep "$BACKOFF_SEC"
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    # Loop back to retry
+    ;;
+  dead_letter:*)
+    FAILURE_CLASS_NAME=$(echo "$FAILURE_CLASS" | cut -d':' -f2)
+    EXECUTION_SUCCEEDED=false
+    # Break out of retry loop — handled in post_execution_update
+    break
+    ;;
+esac
+```
+
+On successful execution (EXECUTION_SUCCEEDED=true): break out of retry loop, clear last_failure_class:
+```bash
+node -e "
+const fs = require('fs'), path = require('path');
+const activeDir = path.join(process.cwd(), '.mgw', 'active');
+const files = fs.readdirSync(activeDir);
+const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.json'));
+const filePath = path.join(activeDir, file);
+const state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+state.last_failure_class = null;
+fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
+" 2>/dev/null || true
+```
 </step>
 
 <step name="execute_gsd_milestone">
 **Execute GSD pipeline (new-milestone route):**
 
 Only run this step if gsd_route is "gsd:new-milestone".
+
+**Retry loop initialization** (same pattern as execute_gsd_quick):
+```bash
+RETRY_COUNT=$(node -e "
+const { loadActiveIssue } = require('./lib/state.cjs');
+const state = loadActiveIssue(${ISSUE_NUMBER});
+console.log((state && typeof state.retry_count === 'number') ? state.retry_count : 0);
+" 2>/dev/null || echo "0")
+EXECUTION_SUCCEEDED=false
+```
+
+**Begin retry loop** — wraps the phase-execution loop (steps 2b–2e below) with transient-failure retry. Step 2 (milestone roadmap creation) is NOT wrapped in the retry loop — roadmap creation failures are always treated as permanent (require human intervention).
 
 This is the most complex path. The orchestrator needs to:
 
@@ -988,13 +1159,93 @@ COMMENTEOF
    gh issue comment ${ISSUE_NUMBER} --body "$PHASE_BODY" 2>/dev/null || true
    ```
 
+   **Retry loop — on phase execution failure** (apply same pattern as execute_gsd_quick):
+
+   If a phase's executor or verifier fails, capture the error and apply retry logic via `classifyFailure()`, `canRetry()`, `incrementRetry()`, and `getBackoffMs()` from `lib/retry.cjs`. Only the failing phase is retried (restart from step 2b for that phase). If the failure is transient and `canRetry()` is true: sleep backoff, call `incrementRetry()`, loop. If permanent or retries exhausted: set `dead_letter = true`, set `last_failure_class`, break the retry loop.
+
+   On successful completion of all phases: clear `last_failure_class`, set `EXECUTION_SUCCEEDED=true`.
+
    After ALL phases complete → update pipeline_stage to "verifying" (at `${REPO_ROOT}/.mgw/active/`).
 </step>
 
 <step name="post_execution_update">
-**Post execution-complete comment on issue:**
+**Post execution-complete comment on issue (or failure comment if dead_letter):**
 
-After GSD execution completes, post a structured update before creating the PR:
+Read `dead_letter` and `last_failure_class` from current issue state:
+```bash
+DEAD_LETTER=$(node -e "
+const { loadActiveIssue } = require('./lib/state.cjs');
+const state = loadActiveIssue(${ISSUE_NUMBER});
+console.log(state && state.dead_letter === true ? 'true' : 'false');
+" 2>/dev/null || echo "false")
+
+LAST_FAILURE_CLASS=$(node -e "
+const { loadActiveIssue } = require('./lib/state.cjs');
+const state = loadActiveIssue(${ISSUE_NUMBER});
+console.log((state && state.last_failure_class) ? state.last_failure_class : 'unknown');
+" 2>/dev/null || echo "unknown")
+```
+
+**If dead_letter === true — post failure comment and halt:**
+```bash
+if [ "$DEAD_LETTER" = "true" ]; then
+  FAIL_TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+  RETRY_COUNT_CURRENT=$(node -e "
+const { loadActiveIssue } = require('./lib/state.cjs');
+const state = loadActiveIssue(${ISSUE_NUMBER});
+console.log((state && typeof state.retry_count === 'number') ? state.retry_count : 0);
+" 2>/dev/null || echo "0")
+
+  FAIL_BODY=$(cat <<COMMENTEOF
+> **MGW** · \`pipeline-failed\` · ${FAIL_TIMESTAMP}
+> ${MILESTONE_CONTEXT}
+
+### Pipeline Failed
+
+Issue #${ISSUE_NUMBER} — ${issue_title}
+
+| | |
+|---|---|
+| **Failure class** | \`${LAST_FAILURE_CLASS}\` |
+| **Retries attempted** | ${RETRY_COUNT_CURRENT} of 3 |
+| **Status** | Dead-lettered — requires human intervention |
+
+**Failure class meaning:**
+- \`transient\` — retry exhausted (rate limit, network, or overload)
+- \`permanent\` — unrecoverable (auth, missing deps, bad config)
+- \`needs-info\` — issue is ambiguous or incomplete
+
+**To retry after resolving root cause:**
+\`\`\`
+/mgw:run ${ISSUE_NUMBER} --retry
+\`\`\`
+COMMENTEOF
+)
+
+  gh issue comment ${ISSUE_NUMBER} --body "$FAIL_BODY" 2>/dev/null || true
+  gh issue edit ${ISSUE_NUMBER} --add-label "pipeline-failed" 2>/dev/null || true
+  gh label create "pipeline-failed" --description "Pipeline execution failed" --color "d73a4a" --force 2>/dev/null || true
+
+  # Update pipeline_stage to failed
+  node -e "
+const fs = require('fs'), path = require('path');
+const activeDir = path.join(process.cwd(), '.mgw', 'active');
+const files = fs.readdirSync(activeDir);
+const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.json'));
+const filePath = path.join(activeDir, file);
+const state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+state.pipeline_stage = 'failed';
+fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
+" 2>/dev/null || true
+
+  echo "MGW: Pipeline dead-lettered for #${ISSUE_NUMBER} (class: ${LAST_FAILURE_CLASS}). Use --retry after fixing root cause."
+  exit 1
+fi
+```
+
+**Otherwise — post execution-complete comment:**
+
+After GSD execution completes successfully, post a structured update before creating the PR:
 
 ```bash
 COMMIT_COUNT=$(git rev-list ${DEFAULT_BRANCH}..HEAD --count 2>/dev/null || echo "0")
@@ -1283,12 +1534,17 @@ Next:
 - [ ] Issue number validated and state loaded (or triage run first)
 - [ ] Pipeline refuses needs-info without --force
 - [ ] Pipeline refuses needs-security-review without --security-ack
+- [ ] --retry flag clears dead_letter state, removes pipeline-failed label, and re-queues issue
+- [ ] migrateProjectState() called at load time to ensure retry fields exist on active issue files
 - [ ] Isolated worktree created (.worktrees/ gitignored)
 - [ ] mgw:in-progress label applied during execution
 - [ ] Pre-flight comment check performed (new comments classified before execution)
 - [ ] mgw:blocked label applied when blocking comments detected
 - [ ] Work-starting comment posted on issue (route, scope, branch)
 - [ ] GSD pipeline executed in worktree (quick or milestone route)
+- [ ] Transient execution failures retried up to 3 times with exponential backoff
+- [ ] Failure comment includes failure_class from classifyFailure()
+- [ ] dead_letter=true set when retries exhausted or failure is permanent
 - [ ] New-milestone route triggers discussion phase with mgw:discussing label
 - [ ] Execution-complete comment posted on issue (commits, changes, test status)
 - [ ] PR created with summary, milestone context, testing procedures, cross-refs
