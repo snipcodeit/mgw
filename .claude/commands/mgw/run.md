@@ -741,12 +741,26 @@ EXECUTOR_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gs
 VERIFIER_MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model gsd-verifier --raw)
 ```
 
-1. **Discussion phase trigger for large-scope issues:**
+1. **Self-contained check (bypass discussion gate if issue is fully specified):**
 
-If the issue was triaged with large scope and `gsd_route == "gsd:new-milestone"`, post
+```bash
+# Skip discussion if issue is self-contained (prior_context_complete + Done When section present)
+PRIOR_CONTEXT_COMPLETE=$(echo "$TRIAGE_RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('prior_context_complete', False))" 2>/dev/null || echo "false")
+BODY_HAS_DONE_WHEN=$(echo "$ISSUE_BODY" | grep -c "## Done When" 2>/dev/null || echo "0")
+
+if [ "$PRIOR_CONTEXT_COMPLETE" = "True" ] && [ "$BODY_HAS_DONE_WHEN" -gt "0" ]; then
+  echo "  Issue is self-contained — skipping discussion phase, advancing to planning"
+  NEW_STAGE="planning"
+fi
+```
+
+2. **Discussion phase trigger for large-scope issues:**
+
+If `${NEW_STAGE:-}` is not already set to "planning" and the issue was triaged with large scope and `gsd_route == "gsd:new-milestone"`, post
 a scope proposal comment and set the discussing stage before proceeding to phase execution:
 
 ```bash
+if [ "${NEW_STAGE:-}" != "planning" ]; then
 DISCUSS_TIMESTAMP=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Build scope breakdown from triage data
@@ -778,6 +792,10 @@ AskUserQuestion(
 
 If wait: stop here. User will re-run /mgw:run after scope is approved.
 If proceed: apply "mgw:approved" label and continue.
+
+```bash
+fi  # end: [ "${NEW_STAGE:-}" != "planning" ]
+```
 
 2. **Create milestone:** Use `gsd-tools init new-milestone` to gather context, then attempt autonomous roadmap creation from issue data:
 

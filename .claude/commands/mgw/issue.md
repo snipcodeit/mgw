@@ -113,6 +113,13 @@ Gather GSD project history for context (if available):
 HISTORY=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs history-digest 2>/dev/null || echo "")
 ```
 
+# Fetch full comment history for triage context
+```bash
+COMMENT_HISTORY=$(gh issue view "$ISSUE_NUMBER" \
+  --json comments \
+  --jq '[.comments[] | {author: .author.login, body: .body, created: .createdAt}]' 2>/dev/null || echo "[]")
+```
+
 Build analysis prompt from issue data and spawn:
 
 ```
@@ -131,6 +138,22 @@ Body: ${body}
 Labels: ${labels}
 Comments: ${comments_summary}
 </issue>
+
+<comment_history>
+${COMMENT_HISTORY}
+</comment_history>
+
+<comment_analysis_instructions>
+Review all comments (AI and human). Identify:
+- Decisions already made (confirmed choices, architecture decisions, scope confirmations)
+- Blockers already cleared (raised and resolved issues)
+- Implementation hints from human contributors
+
+Set prior_context_complete=true in your JSON output if ALL of:
+- The issue body contains a ## Done When section with specific success criteria
+- No ambiguous scope or requirements questions remain unanswered
+- All major implementation decisions are documented in the body or comments
+</comment_analysis_instructions>
 
 <project_history>
 ${HISTORY}
@@ -199,6 +222,10 @@ Route selection guide:
 - gsd:quick --full -- Medium task needing plan verification (3-8 files, some complexity)
 - gsd:new-milestone -- Large feature or multi-system change (9+ files or new system)
 - gsd:diagnose-issues -- Bug report where root cause is unclear; symptoms are known but the fix is not obvious; needs investigation before planning
+
+### Self-Contained Check
+- prior_context_complete: true|false
+  (true only if: ## Done When section exists in body AND all scope/requirements questions are resolved in body or comments)
 </output_format>
 ",
   subagent_type="general-purpose",
