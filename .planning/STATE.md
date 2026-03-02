@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-03-01)
 Phase: 32 of 36 (Test Coverage)
 Plan: 0 of TBD in current phase
 Status: Ready to plan
-Last activity: 2026-03-02 - Completed quick task 7: Add install-time command injection for npm postinstall
+Last activity: 2026-03-02 - Completed quick task 8: Review and merge PR #156 docs audit and sync
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -35,3 +35,4 @@ Progress: [░░░░░░░░░░] 0%
 | 4 | Enrich MGW issue scaffolding and triage comment leverage | 2026-03-02 | fb290e4 | | [4-enrich-mgw-issue-scaffolding-and-triage-](./quick/4-enrich-mgw-issue-scaffolding-and-triage-/) |
 | 6 | Patch v3.5 GitHub issues #133-141 with rich execution briefs | 2026-03-02 | f260608 | | [6-patch-v3-5-github-issues-133-141-with-ri](./quick/6-patch-v3-5-github-issues-133-141-with-ri/) |
 | 7 | Add install-time command injection for npm postinstall | 2026-03-02 | 027e3df | Verified | [7-add-install-time-command-injection-for-n](./quick/7-add-install-time-command-injection-for-n/) |
+| 8 | Review and merge PR #156 docs audit and sync | 2026-03-02 | 04de06d | Verified | [8-review-and-merge-pr-156-docs-audit-and-s](./quick/8-review-and-merge-pr-156-docs-audit-and-s/) |
