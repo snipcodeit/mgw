@@ -1,7 +1,7 @@
 ---
 name: mgw:issues
 description: List and filter GitHub issues, pick one to triage
-argument-hint: "[--label &lt;label&gt;] [--milestone &lt;name&gt;] [--assignee &lt;user&gt;] [--state open|closed|all]"
+argument-hint: "[--label &lt;label&gt;] [--milestone &lt;name&gt;] [--assignee &lt;user&gt;] [--state open|closed|all] [--search &lt;query&gt;]"
 allowed-tools:
   - Bash
   - Read
@@ -13,6 +13,10 @@ allowed-tools:
 Browse GitHub issues for the current repo. Presents a scannable table filtered by
 assignment (defaults to @me), labels, milestone, or state. Pick an issue to route
 into triage via /mgw:issue.
+
+This is the Claude Code slash-command variant (table + AskUserQuestion). When running
+from the CLI (`mgw issues`), an interactive TUI browser launches instead — see
+`docs/TUI-DESIGN.md` and `lib/tui/index.cjs` for the TUI implementation.
 
 No side effects — read-only GitHub access. Safe to run anytime.
 </objective>
@@ -107,3 +111,61 @@ If invalid → re-prompt.
 - [ ] User can pick an issue number
 - [ ] Routes to /mgw:issue <number>
 </success_criteria>
+
+## TUI Mode (CLI only)
+
+When `mgw issues` runs from the CLI entry point (`bin/mgw.cjs`) in an interactive
+terminal, it launches a full TUI browser instead of a static table.
+
+**Entry point:** `lib/tui/index.cjs` — `createIssuesBrowser(options)`
+
+**CLI options:**
+```
+mgw issues [options]
+  -l, --label <label>        Filter by label
+  -m, --milestone <name>     Filter by milestone
+  -a, --assignee <user>      Assignee filter (default: @me, 'all' = no filter)
+  -s, --search <query>       Pre-populate the fuzzy search input
+  --state <state>            Issue state: open|closed|all (default: open)
+  --limit <n>                Max issues to load (default: 50)
+```
+
+**TUI keyboard shortcuts:**
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Scroll down |
+| `k` / `↑` | Scroll up |
+| `/` | Focus search input |
+| `Enter` | Select issue → prints `#N — Title` and exits |
+| `q` / `Esc` | Quit |
+| `Tab` | Cycle focus (list → detail → filter) |
+| `g` / `Home` | Jump to top |
+| `G` / `End` | Jump to bottom |
+| `?` | Toggle keyboard help |
+
+**Non-interactive fallback:**
+When stdout is not a TTY (piped, CI, `MGW_NO_TUI=1`), the static table is printed
+to stdout. Pipe-friendly — no ANSI codes, no interactive elements.
+
+```bash
+mgw issues | grep "auth"
+```
+
+**Implementation modules:**
+```
+lib/tui/
+  index.cjs      — createIssuesBrowser(options) — entry point
+  search.cjs     — FuzzySearch class — pure, no UI dependency
+  keyboard.cjs   — KeyboardHandler (EventEmitter)
+  renderer.cjs   — createRenderer() — blessed/neo-blessed adapter
+  graceful.cjs   — isInteractive(), renderStaticTable()
+```
+
+**Design document:** `docs/TUI-DESIGN.md` — library selection rationale, wireframe, full interface contracts.
+
+**Rendering library:** `neo-blessed` (optional dependency). Renderer is swappable via `lib/tui/renderer.cjs`.
+
+**Slash command vs CLI:**
+This slash command (`/mgw:issues`) uses the static table + `AskUserQuestion` pattern
+because Claude Code sessions don't have raw TTY access. The TUI is CLI-only (`mgw issues`).
+Both paths route to `/mgw:issue <number>` for triage.

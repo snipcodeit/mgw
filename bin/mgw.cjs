@@ -24,6 +24,7 @@ const { assertClaudeAvailable, invokeClaude, getCommandsDir } = require('../lib/
 const { log, error, formatJson, verbose } = require('../lib/output.cjs');
 const { getActiveDir, getCompletedDir, getMgwDir } = require('../lib/state.cjs');
 const { getIssue, listIssues } = require('../lib/github.cjs');
+const { createIssuesBrowser } = require('../lib/tui/index.cjs');
 
 const pkg = require('../package.json');
 
@@ -258,18 +259,25 @@ program
 // issues [filters...]
 program
   .command('issues [filters...]')
-  .description('List open issues')
+  .description('Browse open issues — interactive TUI in TTY, static table otherwise')
   .option('--label <label>', 'filter by label')
   .option('--milestone <name>', 'filter by milestone')
-  .option('--assignee <user>', 'filter by assignee (default: @me)', '@me')
+  .option('--assignee <user>', 'filter by assignee (default: @me, "all" = no filter)', '@me')
   .option('--state <state>', 'issue state: open, closed, all (default: open)', 'open')
+  .option('-s, --search <query>', 'pre-populate fuzzy search input')
+  .option('--limit <n>', 'max issues to load (default: 50)', '50')
   .action(async function() {
     const opts = this.optsWithGlobals();
 
     const ghFilters = {
-      assignee: opts.assignee || '@me',
       state: opts.state || 'open',
+      limit: parseInt(opts.limit, 10) || 50,
     };
+
+    // Assignee filter — 'all' skips the filter entirely
+    if (opts.assignee && opts.assignee !== 'all') {
+      ghFilters.assignee = opts.assignee;
+    }
     if (opts.label) ghFilters.label = opts.label;
     if (opts.milestone) ghFilters.milestone = opts.milestone;
 
@@ -282,6 +290,7 @@ program
       return;
     }
 
+    // JSON output — always static, no TUI
     if (opts.json) {
       log(formatJson(issues));
       return;
@@ -292,20 +301,24 @@ program
       return;
     }
 
-    // Table output
-    const pad = (s, n) => String(s).padEnd(n);
-    log(pad('#', 6) + pad('Title', 60) + pad('State', 10) + 'Labels');
-    log('-'.repeat(90));
-    for (const issue of issues) {
-      const labels = (issue.labels || []).map(l => l.name || l).join(', ');
-      log(
-        pad(issue.number, 6) +
-        pad((issue.title || '').substring(0, 58), 60) +
-        pad(issue.state || '', 10) +
-        labels
-      );
-    }
-    log('\n' + issues.length + ' issue(s)');
+    // TUI mode: createIssuesBrowser detects TTY and falls back to static table
+    await createIssuesBrowser({
+      issues,
+      onSelect: function(issue) {
+        log('\nSelected: #' + issue.number + ' \u2014 ' + issue.title);
+        log('Run: mgw issue ' + issue.number);
+        process.exit(0);
+      },
+      onQuit: function() {
+        process.exit(0);
+      },
+      initialQuery: opts.search || '',
+      initialFilter: {
+        label: opts.label,
+        milestone: opts.milestone,
+        assignee: opts.assignee || '@me',
+      },
+    });
   });
 
 // link <ref-a> <ref-b>
