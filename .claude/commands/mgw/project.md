@@ -987,6 +987,111 @@ ${MILESTONE_HISTORY}
 GSD build history (phases and decisions already made):
 ${GSD_DIGEST:-No GSD history available.}"
 
+  # ── Growth Analytics ────────────────────────────────────────────────────────
+  # Compute milestone completion stats and issue velocity from project.json.
+  # Query open blockers from GitHub API. Spawn an AI suggester agent.
+  # Display a summary banner BEFORE asking for the extension description.
+
+  ANALYTICS=$(python3 -c "
+import json, sys
+
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+milestones = p.get('milestones', [])
+total_milestones = len(milestones)
+completed_milestones = sum(1 for m in milestones if m.get('gsd_state') == 'completed')
+
+# Issue velocity: avg closed issues per completed milestone
+total_closed = sum(
+    sum(1 for i in m.get('issues', []) if i.get('pipeline_stage') in ('done', 'pr-created'))
+    for m in milestones if m.get('gsd_state') == 'completed'
+)
+velocity = round(total_closed / completed_milestones, 1) if completed_milestones > 0 else 0
+
+print(f'{completed_milestones}|{total_milestones}|{velocity}|{total_closed}')
+")
+
+  COMPLETED_COUNT=$(echo "$ANALYTICS" | cut -d'|' -f1)
+  TOTAL_COUNT=$(echo "$ANALYTICS"    | cut -d'|' -f2)
+  VELOCITY=$(echo "$ANALYTICS"       | cut -d'|' -f3)
+  TOTAL_CLOSED=$(echo "$ANALYTICS"   | cut -d'|' -f4)
+
+  # Count open issues labeled blocked-by:* or with a "blocked" status
+  OPEN_BLOCKERS=$(gh api "repos/${REPO}/issues" \
+    --jq '[.[] | select(.state=="open") | select(.labels[].name | test("^blocked-by:"))] | length' \
+    2>/dev/null || echo "0")
+
+  # Spawn growth-suggester agent — reads milestone names + completed issue titles
+  # and produces natural next-area suggestions. No application code reads.
+  COMPLETED_ISSUE_TITLES=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+titles = []
+for m in p.get('milestones', []):
+    if m.get('gsd_state') == 'completed':
+        for i in m.get('issues', []):
+            if i.get('pipeline_stage') in ('done', 'pr-created'):
+                titles.append(f\"  - [{m['name']}] {i['title']}\")
+print('\n'.join(titles) if titles else '  (no completed issues recorded)')
+")
+
+  MILESTONE_LIST=$(python3 -c "
+import json
+p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+for m in p.get('milestones', []):
+    state = m.get('gsd_state', 'unknown')
+    print(f\"  {m['name']} ({state})\")
+")
+
+  MODEL=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs resolve-model general-purpose 2>/dev/null || echo "claude-sonnet-4-5")
+
+  SUGGESTER_OUTPUT=$(Task(
+    description="Suggest natural next milestone areas for project extension",
+    subagent_type="general-purpose",
+    prompt="
+You are a growth-suggester agent for a software project planning tool.
+
+Project: ${PROJECT_NAME}
+Repo: ${REPO}
+
+Milestones built so far:
+${MILESTONE_LIST}
+
+Completed issues (represents what has been built):
+${COMPLETED_ISSUE_TITLES}
+
+Based ONLY on the above context — what has been built and what the project does —
+suggest 3-5 natural next areas for extension milestones. Each suggestion should:
+- Build on or complement existing milestones (no overlap)
+- Be a coherent milestone-sized body of work (not a single feature)
+- Be expressed as a short label (5-10 words) with a 1-sentence rationale
+
+Output format — plain text only, one suggestion per line:
+  1. {Milestone Area Name}: {one-sentence rationale}
+  2. ...
+
+Do not add preamble, headers, or closing text. Output ONLY the numbered list.
+"
+  ))
+
+  AI_SUGGESTIONS="${SUGGESTER_OUTPUT:-  (AI suggestions unavailable)}"
+
+  # Display growth analytics banner
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " ${PROJECT_NAME} — Growth Analytics"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "  Milestones completed : ${COMPLETED_COUNT} of ${TOTAL_COUNT}"
+  echo "  Issue velocity       : ${VELOCITY} issues/milestone avg (${TOTAL_CLOSED} total closed)"
+  echo "  Open blockers        : ${OPEN_BLOCKERS}"
+  echo ""
+  echo "  AI-suggested next areas:"
+  echo "${AI_SUGGESTIONS}" | sed 's/^/  /'
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  # ── End Growth Analytics ────────────────────────────────────────────────────
+
   # Ask only for the new work — different question for extend mode
   # Ask: "What new milestones should we add to ${PROJECT_NAME}?"
   # Capture as EXTENSION_DESCRIPTION
@@ -1022,6 +1127,11 @@ Now, as the AI executing this command, generate a complete project template JSON
 9. Set `version` to "1.0.0"
 10. Include the standard `parameters` section with `project_name` and `description` as required params, and `repo`, `stack`, `prefix` as optional params
 11. Include a `project` object with `name`, `description`, `repo`, `stack`, and `prefix` fields filled from the gathered inputs
+12. For each issue object, include these optional fields when the information is known for this project:
+    - `context` (string): 1-2 sentences connecting this issue to the milestone goal and any prior work it builds on
+    - `what_exists` (string): Relevant files, functions, patterns already in codebase that the executor needs to know about. Formatted as a bullet list starting with `-`.
+    - `technical_approach` (string): Key implementation decisions, patterns, and libraries to use. 1-3 sentences.
+    - `done_when` (array of strings): 2-5 specific, verifiable success criteria. Each entry becomes a checkbox in the GitHub issue. Prefer concrete, testable conditions over restatements of the title.
 
 Output the generated JSON as a fenced code block (```json ... ```).
 
@@ -1211,20 +1321,46 @@ print(','.join(deps))
         ISSUE_SLUG=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-' | cut -c1-40)
       fi
 
-      # Build structured issue body (heredoc — preserves newlines)
+      ISSUE_CONTEXT=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}].get('context',''))
+")
+      ISSUE_WHAT_EXISTS=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}].get('what_exists',''))
+")
+      ISSUE_TECH_APPROACH=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}].get('technical_approach',''))
+")
+      ISSUE_DONE_WHEN=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+items=d['milestones'][${MILESTONE_INDEX}]['phases'][${PHASE_INDEX}]['issues'][${ISSUE_INDEX}].get('done_when',[])
+if items:
+    print('\n'.join(f'- [ ] {item}' for item in items))
+else:
+    print(f'- [ ] ${ISSUE_TITLE}')
+")
+
+      # Build structured issue body (conditional — only include sections with content)
       DEPENDS_DISPLAY="${DEPENDS_ON_JSON:-_none_}"
       if [ -z "$DEPENDS_ON_JSON" ]; then
         DEPENDS_DISPLAY="_none_"
       fi
 
-      ISSUE_BODY=$(printf '## Description\n%s\n\n## Acceptance Criteria\n- [ ] %s\n\n## GSD Route\n%s\n\n## Phase Context\nPhase %s: %s of %s\n\n## Depends on\n%s' \
-        "$ISSUE_DESC" \
-        "$ISSUE_TITLE" \
-        "$GSD_ROUTE" \
-        "$GLOBAL_PHASE_NUM" \
-        "$PHASE_NAME" \
-        "$MILESTONE_NAME" \
-        "$DEPENDS_DISPLAY")
+      ISSUE_BODY=""
+      [ -n "$ISSUE_CONTEXT" ]       && ISSUE_BODY+=$'## Context\n'"$ISSUE_CONTEXT"$'\n\n'
+      [ -n "$ISSUE_WHAT_EXISTS" ]   && ISSUE_BODY+=$'## What Already Exists\n'"$ISSUE_WHAT_EXISTS"$'\n\n'
+      ISSUE_BODY+=$'## Description\n'"$ISSUE_DESC"$'\n\n'
+      [ -n "$ISSUE_TECH_APPROACH" ] && ISSUE_BODY+=$'## Technical Approach\n'"$ISSUE_TECH_APPROACH"$'\n\n'
+      ISSUE_BODY+=$'## Done When\n'"$ISSUE_DONE_WHEN"$'\n\n'
+      ISSUE_BODY+=$'## GSD Route\n'"$GSD_ROUTE"$'\n\n'
+      ISSUE_BODY+=$'## Phase Context\nPhase '"$GLOBAL_PHASE_NUM"': '"$PHASE_NAME"' of '"$MILESTONE_NAME"$'\n\n'
+      ISSUE_BODY+=$'## Depends on\n'"$DEPENDS_DISPLAY"
 
       # Build label args
       LABEL_ARGS=(-f "labels[]=phase:${GLOBAL_PHASE_NUM}-${PHASE_SLUG}")
