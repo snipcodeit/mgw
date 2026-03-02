@@ -417,6 +417,7 @@ FAILED_ISSUES=()
 FAILED_ISSUES_WITH_CLASS=()  # Entries: "issue_number:failure_class" for results display
 BLOCKED_ISSUES=()
 SKIPPED_ISSUES=()
+LABEL_DRIFT_ISSUES=()         # Issues where label reconciliation detected drift
 ISSUES_RUN=0
 ```
 
@@ -561,6 +562,43 @@ COMMENTEOF
     subagent_type="general-purpose",
     description="Run pipeline for #${ISSUE_NUMBER}"
   )
+
+  # ── POST-WORK: Post-subagent label verification ──
+  # Read the pipeline_stage from the issue's active state file after Task() returns
+  ISSUE_STAGE=$(node -e "
+const { loadActiveIssue } = require('./lib/state.cjs');
+const state = loadActiveIssue(${ISSUE_NUMBER});
+console.log((state && state.pipeline_stage) ? state.pipeline_stage : 'unknown');
+" 2>/dev/null || echo "unknown")
+
+  # Determine the expected MGW label for this pipeline stage
+  EXPECTED_LABEL=$(python3 -c "
+stage_to_label = {
+  'done': '',
+  'pr-created': '',
+  'verifying': 'mgw:in-progress',
+  'executing': 'mgw:in-progress',
+  'planning': 'mgw:in-progress',
+  'blocked': 'mgw:blocked',
+  'failed': '',
+}
+print(stage_to_label.get('${ISSUE_STAGE}', ''))
+")
+
+  # Compare expected label against live GitHub labels
+  LIVE_LABELS=$(gh issue view ${ISSUE_NUMBER} --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+
+  if [ -n "$EXPECTED_LABEL" ] && ! echo "$LIVE_LABELS" | grep -q "$EXPECTED_LABEL"; then
+    echo "MGW WARNING: label drift on #${ISSUE_NUMBER} — expected $EXPECTED_LABEL, live: $LIVE_LABELS" >&2
+    LABEL_DRIFT="drift"
+  else
+    LABEL_DRIFT="ok"
+  fi
+
+  # Track drifted issues for milestone summary
+  if [ "$LABEL_DRIFT" = "drift" ]; then
+    LABEL_DRIFT_ISSUES+=("$ISSUE_NUMBER")
+  fi
 
   # ── POST-WORK: Detect result and post completion comment ──
   # Check if PR was created by looking for state file or PR
@@ -712,18 +750,19 @@ Every comment posted during milestone orchestration includes:
 <details>
 <summary>Milestone Progress ({done}/{total} complete)</summary>
 
-| # | Issue | Status | PR | Failure Class |
-|---|-------|--------|----|---------------|
-| N | title | ✓ Done | #PR | — |
-| M | title | ✗ Failed | — | `permanent` |
-| K | title | ○ Pending | — | — |
-| J | title | ◆ Running | — | — |
-| L | title | ⊘ Blocked | — | — |
+| # | Issue | Status | PR | Failure Class | Label Drift |
+|---|-------|--------|----|---------------|-------------|
+| N | title | ✓ Done | #PR | — | ok |
+| M | title | ✗ Failed | — | `permanent` | — |
+| K | title | ○ Pending | — | — | — |
+| J | title | ◆ Running | — | — | ok |
+| L | title | ⊘ Blocked | — | — | — |
 
 </details>
 ```
 
 The **Failure Class** column surfaces `last_failure_class` from the active issue state file.
+The **Label Drift** column shows the result of post-subagent label reconciliation: `ok` (labels matched expected), `drift` (label mismatch detected — MGW WARNING logged), or `—` (not checked / issue not run).
 Values: `transient` (retried and exhausted), `permanent` (unrecoverable), `needs-info` (ambiguous issue), `unknown` (no state file or pre-retry issue), `—` (not failed).
 </step>
 
@@ -1067,6 +1106,9 @@ gh issue comment ${FIRST_ISSUE_NUMBER} --body "$FINAL_RESULTS_COMMENT"
 - [ ] Retry option calls resetRetryState() then re-invokes /mgw:run --retry for failed issues
 - [ ] FAILED_ISSUES_WITH_CLASS tracks "number:class" for display in results table
 - [ ] Progress table in every GitHub comment
+- [ ] Post-subagent label reconciliation run per issue after Task() returns
+- [ ] LABEL_DRIFT tracked per issue (ok/drift) and shown in progress table Label Drift column
+- [ ] Label drift issues logged as MGW WARNING to stderr
 - [ ] Milestone close + draft release on full completion
 - [ ] current_milestone pointer advanced on completion
 - [ ] --interactive flag pauses between issues

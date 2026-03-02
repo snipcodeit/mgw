@@ -464,6 +464,81 @@ Classify each issue into:
 - **Unreviewed comments:** COMMENT_DELTA > 0 — new comments posted since triage that haven't been classified
 </step>
 
+<step name="label_drift_detection">
+**Label Drift Detection:**
+
+For each active issue state file in `.mgw/active/`, compare the stored `labels` field
+against the live GitHub labels to detect MGW pipeline label drift:
+
+```python
+label_drift = []
+
+for each state_file in .mgw/active/*.json:
+  stored_labels = state['labels']  # list stored at last pipeline write
+  live_labels_json = subprocess.run(
+    ['gh', 'issue', 'view', str(issue_number), '--json', 'labels', '--jq', '[.labels[].name]'],
+    capture_output=True, text=True
+  ).stdout.strip()
+  live_labels = json.loads(live_labels_json or '[]')
+
+  # Find MGW labels in stored vs live
+  stored_mgw = [l for l in stored_labels if l.startswith('mgw:')]
+  live_mgw = [l for l in live_labels if l.startswith('mgw:')]
+
+  if set(stored_mgw) != set(live_mgw):
+    label_drift.append({
+      'issue': issue_number,
+      'stored': stored_mgw,
+      'live': live_mgw,
+      'pipeline_stage': state['pipeline_stage']
+    })
+```
+
+If label drift detected, include in the drift report output:
+
+```
+Label drift detected for ${COUNT} issue(s):
+  #N: stored=[mgw:in-progress], live=[] — pipeline_stage=${STAGE}
+```
+
+**Offer repair:**
+```
+AskUserQuestion(
+  header: "Label Drift Detected",
+  question: "Live GitHub labels don't match .mgw state for ${COUNT} issue(s). Repair?",
+  options: [
+    { label: "Repair all", description: "Re-apply correct label for each issue's pipeline_stage via remove_mgw_labels_and_apply" },
+    { label: "Skip", description: "Log drift only — no changes" }
+  ]
+)
+```
+
+If "Repair all":
+```bash
+# For each drifted issue, determine correct label from pipeline_stage and re-apply
+CORRECT_LABEL=$(python3 -c "
+stage_to_label = {
+  'triaged': 'mgw:triaged',
+  'needs-info': 'mgw:needs-info',
+  'needs-security-review': 'mgw:needs-security-review',
+  'discussing': 'mgw:discussing',
+  'approved': 'mgw:approved',
+  'planning': 'mgw:in-progress',
+  'executing': 'mgw:in-progress',
+  'verifying': 'mgw:in-progress',
+  'blocked': 'mgw:blocked',
+  'done': '',
+  'pr-created': '',
+  'failed': '',
+}
+print(stage_to_label.get('${PIPELINE_STAGE}', ''))
+")
+remove_mgw_labels_and_apply ${ISSUE_NUMBER} "${CORRECT_LABEL}"
+```
+
+Log repair actions: "Repaired label for #N: applied ${CORRECT_LABEL} (pipeline_stage=${STAGE})"
+</step>
+
 <step name="health_check">
 **GSD health check (if .planning/ exists):**
 
@@ -570,5 +645,7 @@ ${gsd_milestone_consistency ? 'GSD Milestone Links:\n' + gsd_milestone_consisten
 - [ ] Lingering worktrees cleaned up for completed items
 - [ ] Branch deletion offered for completed items
 - [ ] Stale/orphaned/drift items flagged (including comment drift and milestone inconsistencies)
+- [ ] Label drift detected between .mgw/active labels field and live GitHub labels
+- [ ] Repair offered for drifted issues via remove_mgw_labels_and_apply
 - [ ] Summary presented
 </success_criteria>
