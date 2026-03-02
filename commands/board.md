@@ -176,6 +176,81 @@ for name, data in fields.items():
   fi
 ```
 
+**Board discovery: check GitHub for an existing board before creating a new one:**
+
+One lightweight GraphQL list call. Searches the first 20 user/org projects for a title
+containing the project name. If found, registers it in project.json and exits — no fields
+created, no board duplicated. Only runs when `BOARD_CONFIGURED = false`.
+
+```bash
+  echo "Checking GitHub for existing boards..."
+  DISCOVERED=$(node -e "
+const { findExistingBoard, getProjectFields } = require('./lib/github.cjs');
+const board = findExistingBoard('${OWNER}', '${PROJECT_NAME}');
+if (!board) { process.stdout.write(''); process.exit(0); }
+const fields = getProjectFields('${OWNER}', board.number) || {};
+console.log(JSON.stringify({ ...board, fields }));
+" 2>/dev/null || echo "")
+
+  if [ -n "$DISCOVERED" ]; then
+    DISC_NUMBER=$(echo "$DISCOVERED" | python3 -c "import json,sys; print(json.load(sys.stdin)['number'])")
+    DISC_URL=$(echo "$DISCOVERED" | python3 -c "import json,sys; print(json.load(sys.stdin)['url'])")
+    DISC_NODE_ID=$(echo "$DISCOVERED" | python3 -c "import json,sys; print(json.load(sys.stdin)['nodeId'])")
+    DISC_TITLE=$(echo "$DISCOVERED" | python3 -c "import json,sys; print(json.load(sys.stdin)['title'])")
+    DISC_FIELDS=$(echo "$DISCOVERED" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('fields', {})))")
+
+    echo "  Found existing board: #${DISC_NUMBER} \"${DISC_TITLE}\" — ${DISC_URL}"
+
+    python3 << PYEOF
+import json
+
+with open('${MGW_DIR}/project.json') as f:
+    project = json.load(f)
+
+fields = json.loads('''${DISC_FIELDS}''') if '${DISC_FIELDS}' not in ('', '{}') else {}
+
+project['project']['project_board'] = {
+    'number': int('${DISC_NUMBER}'),
+    'url': '${DISC_URL}',
+    'node_id': '${DISC_NODE_ID}',
+    'fields': fields
+}
+
+with open('${MGW_DIR}/project.json', 'w') as f:
+    json.dump(project, f, indent=2)
+
+print('project.json updated')
+PYEOF
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo " MGW ► EXISTING BOARD REGISTERED"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Board:    #${DISC_NUMBER} — ${DISC_URL}"
+    echo "Node ID:  ${DISC_NODE_ID}"
+    echo ""
+    if [ "$DISC_FIELDS" != "{}" ] && [ -n "$DISC_FIELDS" ]; then
+      echo "Fields registered:"
+      echo "$DISC_FIELDS" | python3 -c "
+import json,sys
+fields = json.load(sys.stdin)
+for name, data in fields.items():
+    ftype = data.get('type', '?')
+    print(f'  {name}: {data.get(\"field_id\",\"?\")} ({ftype})')
+" 2>/dev/null
+    else
+      echo "  (no custom fields found — run /mgw:board configure to add them)"
+    fi
+    echo ""
+    echo "To see board items: /mgw:board show"
+    exit 0
+  fi
+
+  echo "  No existing board found — creating new board..."
+  echo ""
+```
+
 **Get owner and repo node IDs (required for GraphQL mutations):**
 
 ```bash
