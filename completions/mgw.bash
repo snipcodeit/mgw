@@ -5,7 +5,11 @@
 
 _mgw() {
   local cur prev words cword
-  _init_completion || return
+  _init_completion 2>/dev/null || {
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+  }
 
   local subcommands="run init project milestone next issue update pr sync issues link help"
 

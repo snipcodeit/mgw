@@ -10,6 +10,7 @@
     "dist/",
     "bin/mgw-install.cjs",
     "commands/",
+    "completions/",
     "templates/"
   ],
   "scripts": {
@@ -17,6 +18,7 @@
     "dev": "pkgroll --watch --src .",
     "test": "node --test 'test/**/*.test.cjs'",
     "prepublishOnly": "npm run build",
+    "completions": "node bin/generate-completions.cjs",
     "postinstall": "node ./bin/mgw-install.cjs"
   },
   "dependencies": {
