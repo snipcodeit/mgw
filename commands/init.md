@@ -215,6 +215,8 @@ gh label create "mgw:blocked" --description "Pipeline blocked by stakeholder com
 </step>
 
 <step name="run_config_wizard">
+<!-- MERGE NOTE: PR #124 (completion install) also modifies commands/init.md.
+     Resolve conflict when merging — include both run_config_wizard and install_completions steps. -->
 **Run interactive config wizard for first-time setup (skip if --no-config or config already exists):**
 
 Check whether the wizard should run:
