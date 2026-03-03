@@ -1,7 +1,7 @@
 ---
 name: mgw:init
-description: Bootstrap current repo for MGW integration — creates .mgw/ state, GitHub templates, gitignore entries, and optionally installs shell completions
-argument-hint: ""
+description: Bootstrap current repo for MGW integration — creates .mgw/ state, GitHub templates, gitignore entries, installs shell completions, and runs config wizard
+argument-hint: "[--no-config]"
 allowed-tools:
   - Bash
   - Read
@@ -12,8 +12,9 @@ allowed-tools:
 
 <objective>
 One-time setup for a repo to work with MGW. Creates the .mgw/ state directory,
-GitHub issue/PR templates, and ensures gitignore entries. Safe to re-run — skips
-anything that already exists.
+GitHub issue/PR templates, ensures gitignore entries, and runs an interactive
+config wizard for first-time setup preferences. Safe to re-run — skips anything
+that already exists. Pass --no-config to skip the wizard.
 </objective>
 
 <execution_context>
@@ -214,8 +215,6 @@ gh label create "mgw:blocked" --description "Pipeline blocked by stakeholder com
 </step>
 
 <step name="install_completions">
-<!-- MERGE NOTE: PR #125 (config wizard) also modifies commands/init.md.
-     Resolve conflict when merging — include both install_completions and run_config_wizard steps. -->
 **Offer to install shell completions (opt-in):**
 
 Locate the completions directory bundled with the MGW package:
@@ -274,6 +273,50 @@ If the completion file already exists at the target → overwrite (idempotent re
 ```
 </step>
 
+<step name="run_config_wizard">
+**Run interactive config wizard for first-time setup (skip if --no-config or config already exists):**
+
+Check whether the wizard should run:
+```bash
+# Skip if --no-config flag is present
+# Skip if stdin is not a TTY (CI/piped context)
+# Skip if .mgw/config.json already exists
+```
+
+Use `lib/config-wizard.cjs` to determine and execute:
+```javascript
+const { runWizard, shouldRunWizard } = require('./lib/config-wizard.cjs');
+const mgwDir = path.join(REPO_ROOT, '.mgw');
+
+if (shouldRunWizard(mgwDir, process.argv)) {
+  await runWizard(mgwDir);
+} else if (fs.existsSync(path.join(mgwDir, 'config.json'))) {
+  // report: ".mgw/config.json   exists, skipping wizard"
+} else {
+  // report: ".mgw/config.json   skipped (--no-config)"
+}
+```
+
+The wizard asks the user four questions in order:
+1. **GitHub username** — auto-detected from `gh api user -q .login`; user may accept or override
+2. **Default issue state filter** — `open` (default) or `all`
+3. **Default issue limit** — `10`, `25` (default), or `50`
+4. **Default assignee filter** — `me` (default) or `all`
+
+Answers are written to `${REPO_ROOT}/.mgw/config.json`:
+```json
+{
+  "github_username": "...",
+  "default_issue_state": "open",
+  "default_issue_limit": 25,
+  "default_assignee": "me",
+  "created_at": "<ISO timestamp>"
+}
+```
+
+If the wizard errors or is interrupted, report the failure but do not abort the overall init — config is optional.
+</step>
+
 <step name="report">
 **Report setup status:**
 
@@ -284,6 +327,7 @@ If the completion file already exists at the target → overwrite (idempotent re
 
   .mgw/                  ${created|exists}
   .mgw/cross-refs.json   ${created|exists}
+  .mgw/config.json       ${written|exists|skipped}
   .gitignore entries     ${added|exists}
   Issue templates        ${created|exists}
   PR template            ${created|exists}
@@ -304,6 +348,8 @@ Ready to use:
 - [ ] .mgw/ directory structure created
 - [ ] .mgw/ and .worktrees/ in .gitignore
 - [ ] cross-refs.json initialized
+- [ ] Config wizard run (or skipped via --no-config / pre-existing config.json)
+- [ ] .mgw/config.json written with user preferences (unless skipped)
 - [ ] Issue templates created (bug + enhancement)
 - [ ] PR template created
 - [ ] GitHub labels ensured (bug, enhancement)
