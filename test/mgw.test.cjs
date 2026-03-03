@@ -49,6 +49,7 @@ describe('mgw', () => {
       'claude.cjs',
       'template-loader.cjs',
       'templates.cjs',
+      'spinner.cjs',
     ];
 
     for (const mod of expectedModules) {
