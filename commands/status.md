@@ -1,7 +1,7 @@
 ---
 name: mgw:status
 description: Project status dashboard — milestone progress, issue pipeline stages, open PRs
-argument-hint: "[milestone_number] [--json] [--board]"
+argument-hint: "[milestone_number] [--json] [--board] [--watch [--interval N]]"
 allowed-tools:
   - Bash
   - Read
@@ -13,6 +13,11 @@ pipeline stages, open PRs, and next milestone preview. Pure read-only — no sta
 mutations, no agent spawns, no GitHub writes.
 
 Falls back gracefully when no project.json exists (lists active issues only via GitHub API).
+
+When `--watch` is passed, enters live-refresh mode: clears the terminal and redraws the
+dashboard every N seconds (default 30). Displays a "Last refreshed" timestamp. User exits
+by pressing 'q' or Ctrl+C. If both `--watch` and `--json` are supplied, print an error and
+exit 1.
 </objective>
 
 <execution_context>
@@ -35,11 +40,21 @@ Repo detected via: gh repo view --json nameWithOwner -q .nameWithOwner
 MILESTONE_NUM=""
 JSON_OUTPUT=false
 OPEN_BOARD=false
+WATCH_MODE=false
+WATCH_INTERVAL=30
+NEXT_IS_INTERVAL=false
 
 for ARG in $ARGUMENTS; do
+  if [ "$NEXT_IS_INTERVAL" = true ]; then
+    WATCH_INTERVAL="$ARG"
+    NEXT_IS_INTERVAL=false
+    continue
+  fi
   case "$ARG" in
     --json) JSON_OUTPUT=true ;;
     --board) OPEN_BOARD=true ;;
+    --watch) WATCH_MODE=true ;;
+    --interval) NEXT_IS_INTERVAL=true ;;
     [0-9]*) MILESTONE_NUM="$ARG" ;;
   esac
 done
@@ -418,6 +433,77 @@ Rendering rules:
 - If no open PRs matched to milestone, show "No open PRs for this milestone."
 - If no next milestone, show "No more milestones planned."
 - If `TARGET_MILESTONE != CURRENT_MILESTONE`, add "(viewing milestone ${TARGET_MILESTONE})" to header
+- In watch mode, append the footer: `[ Refreshing every ${WATCH_INTERVAL}s — last refreshed HH:MM:SS | press q to quit ]`
+</step>
+
+<step name="watch_mode">
+**If --watch flag: enter live-refresh loop:**
+
+`--watch` is incompatible with `--json`. If both are passed, print an error and exit 1.
+
+The watch loop is implemented as a Node.js one-shot script executed via `node -e` (or saved
+to a temp file). It wraps the full dashboard render cycle with `setInterval`, clears the
+terminal before each redraw, and uses `process.stdin.setRawMode(true)` to detect a 'q'
+keypress for clean exit.
+
+```javascript
+// watch-mode runner (pseudocode — shows the pattern)
+const { execSync } = require('child_process');
+const INTERVAL = parseInt(process.env.WATCH_INTERVAL || '30', 10) * 1000;
+const REPO_ROOT = process.env.REPO_ROOT;
+
+function renderDashboard() {
+  // Re-run all data collection and dashboard build steps synchronously
+  // (same logic as the non-watch single-shot path above, but called in a loop)
+  const output = buildDashboardOutput();  // all the python/gh calls assembled into a string
+  // Implementation note: buildDashboardOutput() is a pseudocode placeholder.
+  // The executor must refactor the full `display_dashboard` step into a reusable
+  // function that collects all GitHub and project.json data and returns the rendered
+  // dashboard string, then call it from both the single-shot path and the watch loop.
+  const now = new Date().toLocaleTimeString();
+  process.stdout.write('\x1B[2J\x1B[H');  // clear terminal, cursor home
+  process.stdout.write(output);
+  process.stdout.write(`\n[ Refreshing every ${INTERVAL / 1000}s — last refreshed ${now} | press q to quit ]\n`);
+}
+
+// Initial render
+renderDashboard();
+
+// Poll on interval
+const timer = setInterval(renderDashboard, INTERVAL);
+
+// Detect 'q' to exit
+if (process.stdin.isTTY) {
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (key) => {
+    if (key === 'q' || key === '\u0003') {  // 'q' or Ctrl+C
+      clearInterval(timer);
+      process.stdin.setRawMode(false);
+      process.stdout.write('\nWatch mode exited.\n');
+      process.exit(0);
+    }
+  });
+}
+```
+
+Implementation notes for the executor:
+- The watch runner re-executes the full data fetch on each interval tick (re-reads
+  project.json, re-calls `gh pr list`, etc.) so the display reflects live GitHub state.
+- `process.stdout.write('\x1B[2J\x1B[H')` clears the screen without spawning `clear`.
+- The footer line shows "last refreshed HH:MM:SS" only. No countdown timer.
+- SIGINT (Ctrl+C) should also trigger clean exit — the `'\u0003'` check above handles it,
+  but also register `process.on('SIGINT', ...)` as a fallback when `setRawMode` is false
+  (non-TTY or piped stdin).
+- If `--watch` and `--json` are both supplied, print the error message and exit 1 before
+  entering the watch loop.
+
+If both flags are supplied, emit:
+```
+Error: --watch and --json cannot be used together.
+```
+and exit 1.
 </step>
 
 <step name="json_output">
@@ -523,4 +609,12 @@ The JSON structure:
 - [ ] Velocity computed from .mgw/active/ and .mgw/completed/ file mtimes
 - [ ] --json output includes board_url and milestone.health object
 - [ ] Board URL line omitted when board_url is not set in project.json
+- [ ] --watch flag enters live-refresh loop, refreshing every N seconds (default 30)
+- [ ] --interval N overrides the default 30s refresh interval
+- [ ] Watch mode clears terminal before each redraw
+- [ ] Watch mode footer shows last refresh time
+- [ ] 'q' keypress exits watch mode cleanly (stdin raw mode)
+- [ ] Ctrl+C (SIGINT) exits watch mode cleanly
+- [ ] --watch and --json are mutually exclusive — error + exit 1 if both supplied
+- [ ] Watch mode re-fetches all data on each tick (live GitHub state)
 </success_criteria>
