@@ -364,12 +364,70 @@ and codebase to classify, then MGW presents the result and offers follow-up acti
 - **NEVER** let MGW read application source code directly — spawn an analysis agent
 - **NEVER** omit `subagent_type` from a Task() call — always specify the agent type
 
+## PR Review Pattern
+
+MGW:review has two modes:
+1. **Issue Comment Review** (default) — Classifies new comments on an issue since triage
+2. **PR Deep Review** (with --pr flag or PR URL) — Comprehensive senior engineer review
+
+Used by `/mgw:review` for deep PR analysis. This is problem-solving orchestration
+(not execution orchestration) — the reviewer has high autonomy to analyze, question
+assumptions, and provide architectural guidance.
+
+```bash
+# 1. Prepare review context
+REVIEW_DIR=".mgw/reviews"
+mkdir -p "$REVIEW_DIR"
+REVIEW_ID="pr-${PR_NUMBER}-$(date +%Y%m%d-%H%M%S)"
+
+# 2. Create context file with PR details, diff, linked issue
+cat > "${REVIEW_DIR}/${REVIEW_ID}-context.md" << EOF
+# PR Review Context
+
+## PR Information
+- Number: #${PR_NUMBER}
+- Title: ${PR_TITLE}
+...
+EOF
+
+# 3. Spawn deep review agent
+Task(
+  prompt="
+    <files_to_read>
+    - ./CLAUDE.md
+    - ${REVIEW_CONTEXT_FILE}
+    </files_to_read>
+
+    You are a senior code reviewer performing comprehensive PR review.
+    Analyze across five dimensions: test, rationale, intent vs implementation,
+    impact analysis, and architectural review.
+
+    Return structured JSON with test_results, rationale, intent_vs_implementation,
+    impact_analysis, architectural_review, and overall_verdict.
+  ",
+  subagent_type="general-purpose",
+  model="sonnet",
+  description="Deep review PR #${PR_NUMBER}"
+)
+
+# 4. Store results in .mgw/reviews/
+```
+
+**State separation:**
+- `.mgw/active/` — MGW pipeline state
+- `.mgw/reviews/` — PR review state (think tank context)
+- `.planning/` — GSD execution state
+
+This separation gives the reviewer space to handle larger context for
+mission-critical review processes without polluting pipeline or execution state.
+
 ## Consumers
 
 | Pattern | Referenced By |
-|---------|-------------|
+|---------|---------------|
 | Standard spawn template | run.md, issue.md, pr.md, ask.md, review.md |
-| Comment classification | run.md (pre-flight), review.md (standalone) |
+| PR deep review | review.md (new) |
+| Comment classification | run.md (pre-flight) |
 | Quick pipeline | run.md |
 | Milestone pipeline | run.md, milestone.md |
 | Question classification | ask.md |
