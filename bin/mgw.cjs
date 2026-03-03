@@ -191,6 +191,28 @@ program
     await runAiCommand('next', '', opts);
   });
 
+// status [milestone]
+program
+  .command('status [milestone]')
+  .description('Project status dashboard — milestone progress, issue pipeline stages, open PRs')
+  .option('--board', 'open GitHub Projects board URL')
+  .option('--watch', 'live-refresh mode — redraws dashboard every N seconds')
+  .option('--interval <seconds>', 'refresh interval for --watch (default: 30)')
+  .action(async function(milestone) {
+    const opts = this.optsWithGlobals();
+    if (opts.watch && opts.json) {
+      error('Error: --watch and --json cannot be used together.');
+      process.exit(1);
+    }
+    const args = [
+      milestone || '',
+      opts.board    ? '--board'                     : '',
+      opts.watch    ? '--watch'                     : '',
+      opts.interval ? `--interval ${opts.interval}` : '',
+    ].filter(Boolean).join(' ');
+    await runAiCommand('status', args, opts);
+  });
+
 // issue <number>
 program
   .command('issue <number>')
