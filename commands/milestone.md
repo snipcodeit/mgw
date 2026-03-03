@@ -141,6 +141,28 @@ Display:
 Issues: ${TOTAL_ISSUES}
 Mode: ${INTERACTIVE ? "Interactive" : "Autonomous"}
 ```
+
+Then print the initial milestone progress bar (0 done, TOTAL_ISSUES total):
+```bash
+ISSUES_WITH_STAGES=$(echo "$ISSUES_JSON" | python3 -c "
+import json,sys
+issues = json.load(sys.stdin)
+result = [{'number': i['github_number'], 'pipeline_stage': i.get('pipeline_stage', 'new')} for i in issues]
+print(json.dumps(result))
+")
+
+node -e "
+const { printMilestoneProgress } = require('./lib/progress.cjs');
+const issues = JSON.parse(process.env.ISSUES_WITH_STAGES || '[]');
+const doneCount = issues.filter(i => i.pipeline_stage === 'done' || i.pipeline_stage === 'pr-created').length;
+printMilestoneProgress({
+  done: doneCount,
+  total: issues.length,
+  label: process.env.MILESTONE_NAME,
+  issues
+});
+" MILESTONE_NAME="$MILESTONE_NAME" ISSUES_WITH_STAGES="$ISSUES_WITH_STAGES"
+```
 </step>
 
 <step name="resolve_execution_order">
@@ -722,6 +744,27 @@ writeProjectState(state);
 "
 
   ISSUES_RUN=$((ISSUES_RUN + 1))
+
+  # Update and print milestone progress bar after each issue completes
+  ISSUES_WITH_STAGES=$(node -e "
+const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
+const state = loadProjectState();
+const idx = resolveActiveMilestoneIndex(state);
+if (idx < 0) { console.log('[]'); process.exit(0); }
+const issues = state.milestones[idx].issues || [];
+console.log(JSON.stringify(issues.map(i => ({ number: i.github_number, pipeline_stage: i.pipeline_stage || 'new' }))));
+" 2>/dev/null || echo "[]")
+
+  node -e "
+const { printMilestoneProgress } = require('./lib/progress.cjs');
+const issues = JSON.parse(process.env.ISSUES_WITH_STAGES || '[]');
+const doneCount = issues.filter(i => i.pipeline_stage === 'done' || i.pipeline_stage === 'pr-created').length;
+printMilestoneProgress({
+  done: doneCount,
+  total: issues.length,
+  issues
+});
+" ISSUES_WITH_STAGES="$ISSUES_WITH_STAGES"
 
   # If --interactive: pause between issues
   if [ "$INTERACTIVE" = true ]; then
