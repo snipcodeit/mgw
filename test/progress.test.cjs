@@ -89,6 +89,15 @@ describe('stageIcon', () => {
     const { icon } = stageIcon('triaged');
     assert.equal(icon, '○');
   });
+
+  // should map all intermediate/unknown stages to pending icon
+  it('maps intermediate pipeline stages to ○ (pending)', () => {
+    const intermediatestages = ['needs-info', 'discussing', 'approved', 'diagnosing'];
+    for (const stage of intermediatestages) {
+      const { icon } = stageIcon(stage);
+      assert.equal(icon, '○', `stage '${stage}' should map to ○`);
+    }
+  });
 });
 
 describe('progress.cjs module exports', () => {

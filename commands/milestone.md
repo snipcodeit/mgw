@@ -746,7 +746,6 @@ writeProjectState(state);
   ISSUES_RUN=$((ISSUES_RUN + 1))
 
   # Update and print milestone progress bar after each issue completes
-  DONE_SO_FAR=$((DONE_COUNT + ${#COMPLETED_ISSUES[@]}))
   ISSUES_WITH_STAGES=$(node -e "
 const { loadProjectState, resolveActiveMilestoneIndex } = require('./lib/state.cjs');
 const state = loadProjectState();
