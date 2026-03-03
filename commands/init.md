@@ -214,11 +214,13 @@ gh label create "mgw:blocked" --description "Pipeline blocked by stakeholder com
 </step>
 
 <step name="install_completions">
+<!-- MERGE NOTE: PR #125 (config wizard) also modifies commands/init.md.
+     Resolve conflict when merging — include both install_completions and run_config_wizard steps. -->
 **Offer to install shell completions (opt-in):**
 
 Locate the completions directory bundled with the MGW package:
 ```bash
-MGW_PKG_DIR=$(node -e "require.resolve('mgw/package.json')" 2>/dev/null | xargs dirname 2>/dev/null || echo "")
+MGW_PKG_DIR=$(node -e "const path = require('path'); console.log(path.resolve(__dirname, '..', '..'))" 2>/dev/null || echo "")
 COMPLETIONS_DIR="${MGW_PKG_DIR}/completions"
 ```
 
@@ -252,8 +254,13 @@ cp "${COMPLETIONS_DIR}/mgw.${SHELL_EXT}" "${COMPLETION_TARGET_DIR}/mgw.${SHELL_E
 Then show the source/activation line appropriate for the shell:
 - bash: `# Reload with: source ~/.local/share/bash-completion/completions/mgw.bash`
   (or add to ~/.bashrc: `source ~/.local/share/bash-completion/completions/mgw.bash`)
-- zsh: `# Reload with: fpath=(~/.zsh/completions $fpath) && autoload -U compinit && compinit`
-  (or add to ~/.zshrc if not already present)
+- zsh: Add to ~/.zshrc (required — ~/.zsh/completions is not in default $fpath):
+  ```
+  fpath=(~/.zsh/completions $fpath)
+  autoload -Uz compinit
+  compinit
+  ```
+  Then reload: `source ~/.zshrc`
 - fish: `# Completions loaded automatically from ~/.config/fish/completions/`
 
 If user answers no → skip, note "Shell completions: skipped" in report.
