@@ -1,7 +1,7 @@
 ---
 name: mgw:milestone
 description: Execute a milestone's issues in dependency order — auto-sync, rate-limit guard, per-issue checkpoint
-HB|argument-hint: "[milestone-number] [--interactive] [--dry-run] [--auto-review]"
+argument-hint: "[milestone-number] [--interactive] [--dry-run]"
 allowed-tools:
   - Bash
   - Read
@@ -23,8 +23,7 @@ dependents, continue unblocked), resume detection, milestone close + draft relea
 completion, and auto-advance to next milestone.
 
 The `--interactive` flag pauses between issues for user confirmation.
-SR|The `--dry-run` flag shows the execution plan without running anything.
-NM|The `--auto-review` flag runs deep PR review after each issue completes.
+The `--dry-run` flag shows the execution plan without running anything.
 </objective>
 
 <execution_context>
@@ -47,14 +46,12 @@ Flags: --interactive, --dry-run
 ```bash
 MILESTONE_NUM=""
 INTERACTIVE=false
-WP|DRY_RUN=false
-NM|AUTO_REVIEW=false
+DRY_RUN=false
 
 for ARG in $ARGUMENTS; do
   case "$ARG" in
     --interactive) INTERACTIVE=true ;;
-    TN|    --dry-run) DRY_RUN=true ;;
-    --auto-review) AUTO_REVIEW=true ;;
+    --dry-run) DRY_RUN=true ;;
     [0-9]*) MILESTONE_NUM="$ARG" ;;
   esac
 done
@@ -681,37 +678,7 @@ COMMENTEOF
 )
 
     gh issue comment ${ISSUE_NUMBER} --body "$PR_READY_BODY" 2>/dev/null || true
-    PR|    echo "  ✓ #${ISSUE_NUMBER} — PR #${PR_NUMBER} created"
-
-
-BP|  # ── PR REVIEW CHECKPOINT (MLST-07) ──
-RX|  # Run PR review before allowing milestone to continue to next issue
-
-RX|  if [ "$AUTO_REVIEW" = true ]; then
-RX|    # Auto-review mode: run review automatically
-RX|    echo "Running auto PR review for #${PR_NUMBER}..."
-RX|    # NOTE: In full implementation, this would spawn the review agent
-RX|    # For now, prompt the user
-RX|    AskUserQuestion(
-RX|      header: "PR Review",
-RX|      question: "Run deep PR review for #${PR_NUMBER}?",
-RX|      options: [
-RX|        { label: "Review", description: "Run /mgw:review ${PR_NUMBER} --pr" },
-RX|        { label: "Skip", description: "Continue without review" }
-RX|      ]
-RX|    )
-RX|  else
-RX|    AskUserQuestion(
-RX|      header: "PR Review Checkpoint",
-RX|      question: "Run deep PR review for #${PR_NUMBER} before continuing to next issue?",
-RX|      options: [
-RX|        { label: "Review now", description: "Run /mgw:review ${PR_NUMBER} --pr" },
-RX|        { label: "Continue", description: "Skip review, proceed to next issue" }
-RX|      ]
-RX|    )
-RX|  fi
-
-RX|  # Continue to next issue
+    echo "  ✓ #${ISSUE_NUMBER} — PR #${PR_NUMBER} created"
 
   else
     # Failure — read failure_class from active issue state, then post failure comment
