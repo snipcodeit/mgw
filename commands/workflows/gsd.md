@@ -374,7 +374,13 @@ and codebase to classify, then MGW presents the result and offers follow-up acti
 | Milestone pipeline | run.md, milestone.md |
 | Question classification | ask.md |
 | Model resolution | run.md |
-## PR Review Pattern
+TB|## PR Review Pattern
+
+MGW:review has two modes:
+1. **Issue Comment Review** (default) — Classifies new comments on an issue since triage
+2. **PR Deep Review** (with --pr flag or PR URL) — Comprehensive senior engineer review
+
+The PR Deep Review pattern below is for Mode 2. This is problem-solving orchestration
 
 Used by `/mgw:review` for deep PR analysis. This is problem-solving orchestration
 (not execution orchestration) — the reviewer has high autonomy to analyze, question
