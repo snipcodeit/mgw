@@ -1444,7 +1444,57 @@ Update state (at `${REPO_ROOT}/.mgw/active/`):
 - pipeline_stage = "pr-created"
 
 Add cross-ref (at `${REPO_ROOT}/.mgw/cross-refs.json`): issue → PR.
-</step>
+SJ|</step>
+
+KV|<step name="pr_review_checkpoint">
+VR|**PR Review Checkpoint (MLST-07):**
+
+NP|Before considering this issue complete, run PR deep review to ensure quality.
+This prevents advancing with a subpar PR.
+
+NM|Ask the user:
+VB|```
+VB|AskUserQuestion(
+VR|  header: "PR Review",
+VB|  question: "Run deep PR review for #${PR_NUMBER} before completing?",
+VT|  options: [
+VH|    { label: "Review PR", description: "Run comprehensive PR analysis" },
+VQ|    { label: "Skip", description: "Skip review, mark complete" },
+VT|    { label: "Postpone", description: "Review later, mark complete for now" }
+VT|  ]
+VB|)
+VB|```
+
+NR|If "Review PR":
+VM|1. Run mgw:review in PR mode: `/mgw:review ${PR_NUMBER} --pr`
+RM|2. After review completes, check verdict:
+   - If approve: Continue to completion
+   - If request_changes: Present blockers to user, offer to address or abort
+   - If needs_discussion: Prompt for discussion before proceeding
+
+NM|If "Skip": Continue without review.
+
+NM|If "Postpone":
+XB|- Mark pipeline_stage = "pr-created" (review can be run later manually)
+XZ|- Note in issue comment: "PR created. Deep review postponed - run /mgw:review ${PR_NUMBER} --pr when ready"
+
+VR|**Auto-review option:**
+
+RV|If `--auto-review` flag is passed to run.md, skip the prompt and run review automatically.
+Parse the flag:
+VB|```bash
+QX|AUTO_REVIEW=false
+VT|for ARG in $ARGUMENTS; do
+VM|  case "$ARG" in
+    --auto-review) AUTO_REVIEW=true ;;
+  esac
+VT|done
+
+QK|if [ "$AUTO_REVIEW" = true ]; then
+  # Run review automatically
+  /mgw:review ${PR_NUMBER} --pr
+VT|fi
+VB|```
 
 <step name="cleanup_and_complete">
 **Clean up worktree, post completion, and prompt sync:**
