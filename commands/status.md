@@ -15,8 +15,9 @@ mutations, no agent spawns, no GitHub writes.
 Falls back gracefully when no project.json exists (lists active issues only via GitHub API).
 
 When `--watch` is passed, enters live-refresh mode: clears the terminal and redraws the
-dashboard every N seconds (default 30). Displays a "Last refreshed" timestamp and a
-countdown to next refresh. User exits by pressing 'q' or Ctrl+C.
+dashboard every N seconds (default 30). Displays a "Last refreshed" timestamp. User exits
+by pressing 'q' or Ctrl+C. If both `--watch` and `--json` are supplied, print an error and
+exit 1.
 </objective>
 
 <execution_context>
@@ -432,7 +433,7 @@ Rendering rules:
 - If no open PRs matched to milestone, show "No open PRs for this milestone."
 - If no next milestone, show "No more milestones planned."
 - If `TARGET_MILESTONE != CURRENT_MILESTONE`, add "(viewing milestone ${TARGET_MILESTONE})" to header
-- In watch mode, append the footer: `[ Refreshing every ${WATCH_INTERVAL}s — next in Xs | press q to quit ]`
+- In watch mode, append the footer: `[ Refreshing every ${WATCH_INTERVAL}s — last refreshed HH:MM:SS | press q to quit ]`
 </step>
 
 <step name="watch_mode">
@@ -455,6 +456,10 @@ function renderDashboard() {
   // Re-run all data collection and dashboard build steps synchronously
   // (same logic as the non-watch single-shot path above, but called in a loop)
   const output = buildDashboardOutput();  // all the python/gh calls assembled into a string
+  // Implementation note: buildDashboardOutput() is a pseudocode placeholder.
+  // The executor must refactor the full `display_dashboard` step into a reusable
+  // function that collects all GitHub and project.json data and returns the rendered
+  // dashboard string, then call it from both the single-shot path and the watch loop.
   const now = new Date().toLocaleTimeString();
   process.stdout.write('\x1B[2J\x1B[H');  // clear terminal, cursor home
   process.stdout.write(output);
@@ -487,19 +492,16 @@ Implementation notes for the executor:
 - The watch runner re-executes the full data fetch on each interval tick (re-reads
   project.json, re-calls `gh pr list`, etc.) so the display reflects live GitHub state.
 - `process.stdout.write('\x1B[2J\x1B[H')` clears the screen without spawning `clear`.
-- The footer line replaces "next in Xs" with a live countdown: update it on each second
-  using a secondary `setInterval` (1000ms) that only updates the footer line, not the
-  full dashboard. Alternatively, show only "last refreshed HH:MM:SS" without a countdown
-  if a countdown adds excessive complexity.
+- The footer line shows "last refreshed HH:MM:SS" only. No countdown timer.
 - SIGINT (Ctrl+C) should also trigger clean exit — the `'\u0003'` check above handles it,
   but also register `process.on('SIGINT', ...)` as a fallback when `setRawMode` is false
   (non-TTY or piped stdin).
-- `--watch` is silently ignored when `--json` is also present; `--json` takes precedence
-  and produces single-shot JSON output (no loop).
+- If `--watch` and `--json` are both supplied, print the error message and exit 1 before
+  entering the watch loop.
 
-Watch mode is not available in `--json` mode. If both flags are supplied, emit:
+If both flags are supplied, emit:
 ```
-Error: --watch and --json are mutually exclusive.
+Error: --watch and --json cannot be used together.
 ```
 and exit 1.
 </step>
