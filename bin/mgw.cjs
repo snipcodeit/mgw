@@ -20,7 +20,7 @@ const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
 
-const { assertClaudeAvailable, invokeClaude, getCommandsDir } = require('../lib/claude.cjs');
+const { ProviderManager } = require('../lib/provider-manager.cjs');
 const { log, error, formatJson, verbose } = require('../lib/output.cjs');
 const { getActiveDir, getCompletedDir, getMgwDir } = require('../lib/state.cjs');
 const { getIssue, listIssues } = require('../lib/github.cjs');
@@ -43,7 +43,8 @@ program
   .option('--json', 'output structured JSON')
   .option('-v, --verbose', 'show API calls and file writes')
   .option('--debug', 'full payloads and timings')
-  .option('--model <model>', 'Claude model override');
+  .option('--model <model>', 'Claude model override')
+  .option('--provider <provider>', 'AI provider override (default: claude)');
 
 // ---------------------------------------------------------------------------
 // Helper: run an AI command via claude -p
@@ -70,8 +71,9 @@ const STAGE_LABELS = {
  * @param {object} opts - Merged options from this.optsWithGlobals()
  */
 async function runAiCommand(commandName, userPrompt, opts) {
-  assertClaudeAvailable();
-  const cmdFile = path.join(getCommandsDir(), `${commandName}.md`);
+  const provider = ProviderManager.getProvider(opts.provider);
+  provider.assertAvailable();
+  const cmdFile = path.join(provider.getCommandsDir(), `${commandName}.md`);
   const stageLabel = STAGE_LABELS[commandName] || commandName;
 
   if (opts.quiet) {
@@ -81,7 +83,7 @@ async function runAiCommand(commandName, userPrompt, opts) {
     spinner.start();
     let result;
     try {
-      result = await invokeClaude(cmdFile, userPrompt, {
+      result = await provider.invoke(cmdFile, userPrompt, {
         model: opts.model,
         quiet: true,
         dryRun: opts.dryRun,
@@ -109,7 +111,7 @@ async function runAiCommand(commandName, userPrompt, opts) {
     await new Promise(r => setTimeout(r, 80));
     spinner.stop();
 
-    const result = await invokeClaude(cmdFile, userPrompt, {
+    const result = await provider.invoke(cmdFile, userPrompt, {
       model: opts.model,
       quiet: false,
       dryRun: opts.dryRun,
@@ -506,7 +508,7 @@ program
   .action(function() {
     // Parse bundled help.md and extract text between triple-backtick fences
     // in the <process> section. Print directly without calling claude.
-    const helpMdPath = path.join(getCommandsDir(), 'help.md');
+    const helpMdPath = path.join(ProviderManager.getProvider().getCommandsDir(), 'help.md');
 
     let helpText;
     try {
