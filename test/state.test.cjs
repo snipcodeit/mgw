@@ -368,30 +368,33 @@ describe('migrateProjectState', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('returns null when no project.json exists', () => {
+  it('returns { state: null, warnings: [] } when no project.json exists', () => {
     const state = loadState();
-    assert.equal(state.migrateProjectState(), null);
+    const result = state.migrateProjectState();
+    assert.equal(result.state, null);
+    assert.deepEqual(result.warnings, []);
   });
 
   it('adds active_gsd_milestone: null when field is missing', () => {
     const state = loadState();
     state.writeProjectState({ milestones: [] });
-    const result = state.migrateProjectState();
+    const { state: result, warnings } = state.migrateProjectState();
     assert.ok(result.hasOwnProperty('active_gsd_milestone'));
     assert.equal(result.active_gsd_milestone, null);
+    assert.ok(warnings.length > 0, 'should report migration warning');
   });
 
   it('does NOT overwrite active_gsd_milestone when it already exists', () => {
     const state = loadState();
     state.writeProjectState({ active_gsd_milestone: 'v1.0', milestones: [] });
-    const result = state.migrateProjectState();
+    const { state: result } = state.migrateProjectState();
     assert.equal(result.active_gsd_milestone, 'v1.0');
   });
 
   it('adds gsd_milestone_id, gsd_state, roadmap_archived_at to milestones missing those fields', () => {
     const state = loadState();
     state.writeProjectState({ milestones: [{ title: 'v1.0' }] });
-    const result = state.migrateProjectState();
+    const { state: result } = state.migrateProjectState();
     const m = result.milestones[0];
     assert.ok(m.hasOwnProperty('gsd_milestone_id'));
     assert.ok(m.hasOwnProperty('gsd_state'));
@@ -411,19 +414,19 @@ describe('migrateProjectState', () => {
         roadmap_archived_at: '2025-01-01T00:00:00Z'
       }]
     });
-    const result = state.migrateProjectState();
+    const { state: result } = state.migrateProjectState();
     const m = result.milestones[0];
     assert.equal(m.gsd_milestone_id, 'v1.0');
     assert.equal(m.gsd_state, 'completed');
     assert.equal(m.roadmap_archived_at, '2025-01-01T00:00:00Z');
   });
 
-  it('is idempotent — running twice yields the same result', () => {
+  it('is idempotent — running twice yields the same state', () => {
     const state = loadState();
     state.writeProjectState({ milestones: [{ title: 'v1.0' }] });
     const first = state.migrateProjectState();
     const second = state.migrateProjectState();
-    assert.deepEqual(first, second);
+    assert.deepEqual(first.state, second.state);
   });
 
   it('persists migration changes to disk', () => {
@@ -438,7 +441,7 @@ describe('migrateProjectState', () => {
   it('handles state with no milestones array gracefully', () => {
     const state = loadState();
     state.writeProjectState({ name: 'test' });
-    const result = state.migrateProjectState();
+    const { state: result } = state.migrateProjectState();
     assert.ok(result.hasOwnProperty('active_gsd_milestone'));
   });
 });

@@ -6,11 +6,15 @@
  * Strategy: module cache invalidation + mock.method on childProcess.execSync.
  *
  * Before each test:
- *   1. Evict lib/github.cjs from require.cache
+ *   1. Evict lib/github.cjs (and dependencies) from require.cache
  *   2. mock.method(childProcess, 'execSync', () => fixture)
  *   3. Re-require lib/github.cjs so it captures the mock at bind time
  *
  * This avoids real gh CLI calls entirely.
+ *
+ * All public functions in github.cjs are async (return Promises).
+ * Critical-path functions use runWithRetry (withRetry from retry.cjs).
+ * Non-blocking functions use run() directly but are declared async.
  */
 
 const { describe, it, beforeEach, mock } = require('node:test');
@@ -19,10 +23,22 @@ const childProcess = require('child_process');
 const path = require('path');
 
 const GITHUB_MODULE = path.resolve(__dirname, '..', 'lib', 'github.cjs');
+const ERRORS_MODULE = path.resolve(__dirname, '..', 'lib', 'errors.cjs');
+const RETRY_MODULE = path.resolve(__dirname, '..', 'lib', 'retry.cjs');
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Evict github.cjs and its dependencies (errors.cjs, retry.cjs) from the
+ * require cache so re-require picks up fresh mocks.
+ */
+function evictModules() {
+  delete require.cache[GITHUB_MODULE];
+  delete require.cache[ERRORS_MODULE];
+  delete require.cache[RETRY_MODULE];
+}
 
 /**
  * Reload lib/github.cjs with execSync replaced by a fake that returns
@@ -33,8 +49,8 @@ const GITHUB_MODULE = path.resolve(__dirname, '..', 'lib', 'github.cjs');
  * @returns {{ github: object, spy: import('node:test').MockFunctionContext }}
  */
 function loadWithMock(returnValue) {
-  // 1. Evict cached module so the re-require picks up the fresh mock
-  delete require.cache[GITHUB_MODULE];
+  // 1. Evict cached modules so the re-require picks up the fresh mock
+  evictModules();
 
   // 2. Install mock — mock.method replaces the property on the live object
   const spy = mock.method(childProcess, 'execSync', (_cmd, _opts) => returnValue);
@@ -51,7 +67,7 @@ function loadWithMock(returnValue) {
  * Reload lib/github.cjs with execSync replaced by a fake that throws `error`.
  */
 function loadWithThrow(error) {
-  delete require.cache[GITHUB_MODULE];
+  evictModules();
   mock.method(childProcess, 'execSync', () => { throw error; });
   return require(GITHUB_MODULE);
 }
@@ -61,7 +77,7 @@ function loadWithThrow(error) {
  */
 function restoreMocks() {
   mock.restoreAll();
-  delete require.cache[GITHUB_MODULE];
+  evictModules();
 }
 
 // ---------------------------------------------------------------------------
@@ -136,9 +152,9 @@ const FX = {
 describe('getRepo', () => {
   beforeEach(restoreMocks);
 
-  it('returns the repo nameWithOwner string', () => {
+  it('returns the repo nameWithOwner string', async () => {
     const { github, spy } = loadWithMock(FX.repo);
-    const result = github.getRepo();
+    const result = await github.getRepo();
 
     assert.equal(result, 'snipcodeit/mgw');
     assert.equal(spy.mock.calls.length, 1);
@@ -152,9 +168,9 @@ describe('getRepo', () => {
     );
   });
 
-  it('propagates execSync errors', () => {
+  it('propagates execSync errors', async () => {
     const github = loadWithThrow(new Error('gh: not found'));
-    assert.throws(() => github.getRepo(), /gh: not found/);
+    await assert.rejects(github.getRepo(), /gh: not found/);
   });
 });
 
@@ -165,9 +181,9 @@ describe('getRepo', () => {
 describe('getIssue', () => {
   beforeEach(restoreMocks);
 
-  it('returns parsed issue object', () => {
-    const { github, spy } = loadWithMock(FX.issue);
-    const result = github.getIssue(42);
+  it('returns parsed issue object', async () => {
+    const { github } = loadWithMock(FX.issue);
+    const result = await github.getIssue(42);
 
     assert.equal(result.number, 42);
     assert.equal(result.title, 'Fix everything');
@@ -175,24 +191,24 @@ describe('getIssue', () => {
     assert.deepEqual(result.labels, [{ name: 'bug' }]);
   });
 
-  it('constructs correct gh issue view command', () => {
+  it('constructs correct gh issue view command', async () => {
     const { github, spy } = loadWithMock(FX.issue);
-    github.getIssue(42);
+    await github.getIssue(42);
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('gh issue view 42'), 'should include issue number');
     assert.ok(cmd.includes('number,title,state,labels,milestone,assignees,body'), 'should request all fields');
   });
 
-  it('works with string issue number', () => {
+  it('works with string issue number', async () => {
     const { github } = loadWithMock(FX.issue);
-    const result = github.getIssue('42');
+    const result = await github.getIssue('42');
     assert.equal(result.number, 42);
   });
 
-  it('propagates execSync errors', () => {
+  it('propagates execSync errors', async () => {
     const github = loadWithThrow(new Error('issue not found'));
-    assert.throws(() => github.getIssue(99), /issue not found/);
+    await assert.rejects(github.getIssue(99), /issue not found/);
   });
 });
 
@@ -203,9 +219,9 @@ describe('getIssue', () => {
 describe('listIssues', () => {
   beforeEach(restoreMocks);
 
-  it('returns parsed array of issues with no filters', () => {
-    const { github, spy } = loadWithMock(FX.issueList);
-    const result = github.listIssues();
+  it('returns parsed array of issues with no filters', async () => {
+    const { github } = loadWithMock(FX.issueList);
+    const result = await github.listIssues();
 
     assert.ok(Array.isArray(result), 'should return array');
     assert.equal(result.length, 2);
@@ -213,59 +229,59 @@ describe('listIssues', () => {
     assert.equal(result[1].title, 'Second');
   });
 
-  it('builds base command correctly', () => {
+  it('builds base command correctly', async () => {
     const { github, spy } = loadWithMock(FX.issueList);
-    github.listIssues();
+    await github.listIssues();
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('gh issue list'), 'should start with gh issue list');
     assert.ok(cmd.includes('--json number,title,state,labels,milestone,assignees'), 'should request correct fields');
   });
 
-  it('appends --label flag when filter.label is set', () => {
+  it('appends --label flag when filter.label is set', async () => {
     const { github, spy } = loadWithMock(FX.issueList);
-    github.listIssues({ label: 'bug' });
+    await github.listIssues({ label: 'bug' });
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('--label'), 'should include --label flag');
     assert.ok(cmd.includes('bug'), 'should include label value');
   });
 
-  it('appends --milestone flag when filter.milestone is set', () => {
+  it('appends --milestone flag when filter.milestone is set', async () => {
     const { github, spy } = loadWithMock(FX.issueList);
-    github.listIssues({ milestone: 'v1.0' });
+    await github.listIssues({ milestone: 'v1.0' });
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('--milestone'), 'should include --milestone flag');
   });
 
-  it('appends --assignee flag when filter.assignee is set and not "all"', () => {
+  it('appends --assignee flag when filter.assignee is set and not "all"', async () => {
     const { github, spy } = loadWithMock(FX.issueList);
-    github.listIssues({ assignee: 'hat' });
+    await github.listIssues({ assignee: 'hat' });
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('--assignee'), 'should include --assignee flag');
   });
 
-  it('omits --assignee when filter.assignee is "all"', () => {
+  it('omits --assignee when filter.assignee is "all"', async () => {
     const { github, spy } = loadWithMock(FX.issueList);
-    github.listIssues({ assignee: 'all' });
+    await github.listIssues({ assignee: 'all' });
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(!cmd.includes('--assignee'), 'should NOT include --assignee for "all"');
   });
 
-  it('appends --state flag when filter.state is set', () => {
+  it('appends --state flag when filter.state is set', async () => {
     const { github, spy } = loadWithMock(FX.issueList);
-    github.listIssues({ state: 'closed' });
+    await github.listIssues({ state: 'closed' });
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('--state closed'), 'should include --state flag');
   });
 
-  it('propagates execSync errors', () => {
-    const github = loadWithThrow(new Error('rate limit exceeded'));
-    assert.throws(() => github.listIssues(), /rate limit exceeded/);
+  it('propagates execSync errors', async () => {
+    const github = loadWithThrow(new Error('authentication failed'));
+    await assert.rejects(github.listIssues(), /authentication failed/);
   });
 });
 
@@ -276,27 +292,27 @@ describe('listIssues', () => {
 describe('getMilestone', () => {
   beforeEach(restoreMocks);
 
-  it('returns parsed milestone object', () => {
+  it('returns parsed milestone object', async () => {
     // getMilestone calls getRepo() first, then fetches the milestone.
     // We return FX.repo for the first call, FX.milestone for the second.
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (_cmd, _opts) => {
       callCount++;
       return callCount === 1 ? FX.repo : FX.milestone;
     });
     const github = require(GITHUB_MODULE);
 
-    const result = github.getMilestone(3);
+    const result = await github.getMilestone(3);
     assert.equal(result.number, 3);
     assert.equal(result.title, 'v1.0');
     assert.equal(result.state, 'open');
   });
 
-  it('constructs correct gh api repos/{repo}/milestones/{number} command', () => {
+  it('constructs correct gh api repos/{repo}/milestones/{number} command', async () => {
     let callCount = 0;
     const calls = [];
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (cmd, _opts) => {
       callCount++;
       calls.push(cmd);
@@ -304,15 +320,15 @@ describe('getMilestone', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    github.getMilestone(3);
+    await github.getMilestone(3);
     assert.equal(calls.length, 2);
     assert.ok(calls[0].includes('gh repo view'), 'first call should be getRepo');
     assert.ok(calls[1].includes('gh api repos/snipcodeit/mgw/milestones/3'), 'second call should be getMilestone');
   });
 
-  it('propagates execSync errors', () => {
+  it('propagates execSync errors', async () => {
     const github = loadWithThrow(new Error('milestone not found'));
-    assert.throws(() => github.getMilestone(99), /milestone not found/);
+    await assert.rejects(github.getMilestone(99), /milestone not found/);
   });
 });
 
@@ -323,34 +339,34 @@ describe('getMilestone', () => {
 describe('getRateLimit', () => {
   beforeEach(restoreMocks);
 
-  it('returns core rate limit fields', () => {
+  it('returns core rate limit fields', async () => {
     const { github } = loadWithMock(FX.rateLimit);
-    const result = github.getRateLimit();
+    const result = await github.getRateLimit();
 
     assert.equal(result.remaining, 4999);
     assert.equal(result.limit, 5000);
     assert.equal(result.reset, 1700000000);
   });
 
-  it('constructs correct gh api rate_limit command', () => {
+  it('constructs correct gh api rate_limit command', async () => {
     const { github, spy } = loadWithMock(FX.rateLimit);
-    github.getRateLimit();
+    await github.getRateLimit();
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('gh api rate_limit'), 'should call gh api rate_limit');
   });
 
-  it('does not include extra fields beyond remaining/limit/reset', () => {
+  it('does not include extra fields beyond remaining/limit/reset', async () => {
     const { github } = loadWithMock(FX.rateLimit);
-    const result = github.getRateLimit();
+    const result = await github.getRateLimit();
 
     const keys = Object.keys(result);
     assert.deepEqual(keys.sort(), ['limit', 'remaining', 'reset']);
   });
 
-  it('propagates execSync errors', () => {
+  it('propagates execSync errors', async () => {
     const github = loadWithThrow(new Error('network error'));
-    assert.throws(() => github.getRateLimit(), /network error/);
+    await assert.rejects(github.getRateLimit(), /network error/);
   });
 });
 
@@ -361,17 +377,17 @@ describe('getRateLimit', () => {
 describe('closeMilestone', () => {
   beforeEach(restoreMocks);
 
-  it('returns parsed updated milestone JSON', () => {
+  it('returns parsed updated milestone JSON', async () => {
     const { github } = loadWithMock(FX.closedMilestone);
-    const result = github.closeMilestone('snipcodeit/mgw', 3);
+    const result = await github.closeMilestone('snipcodeit/mgw', 3);
 
     assert.equal(result.state, 'closed');
     assert.equal(result.number, 3);
   });
 
-  it('constructs correct PATCH command', () => {
+  it('constructs correct PATCH command', async () => {
     const { github, spy } = loadWithMock(FX.closedMilestone);
-    github.closeMilestone('snipcodeit/mgw', 3);
+    await github.closeMilestone('snipcodeit/mgw', 3);
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('gh api repos/snipcodeit/mgw/milestones/3'), 'should target correct milestone');
@@ -379,9 +395,9 @@ describe('closeMilestone', () => {
     assert.ok(cmd.includes('-f state=closed'), 'should send state=closed');
   });
 
-  it('propagates execSync errors', () => {
+  it('propagates execSync errors', async () => {
     const github = loadWithThrow(new Error('forbidden'));
-    assert.throws(() => github.closeMilestone('snipcodeit/mgw', 3), /forbidden/);
+    await assert.rejects(github.closeMilestone('snipcodeit/mgw', 3), /forbidden/);
   });
 });
 
@@ -392,16 +408,16 @@ describe('closeMilestone', () => {
 describe('createRelease', () => {
   beforeEach(restoreMocks);
 
-  it('returns raw output string from gh release create', () => {
+  it('returns raw output string from gh release create', async () => {
     const { github } = loadWithMock(FX.releaseOutput);
-    const result = github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0');
+    const result = await github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0');
 
     assert.equal(result, FX.releaseOutput);
   });
 
-  it('constructs base command with tag, repo, and title', () => {
+  it('constructs base command with tag, repo, and title', async () => {
     const { github, spy } = loadWithMock(FX.releaseOutput);
-    github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0');
+    await github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0');
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('gh release create'), 'should call gh release create');
@@ -410,43 +426,43 @@ describe('createRelease', () => {
     assert.ok(cmd.includes('Release v1.0.0'), 'should include title');
   });
 
-  it('appends --notes when opts.notes is provided', () => {
+  it('appends --notes when opts.notes is provided', async () => {
     const { github, spy } = loadWithMock(FX.releaseOutput);
-    github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0', { notes: 'Bug fixes' });
+    await github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0', { notes: 'Bug fixes' });
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('--notes'), 'should include --notes flag');
     assert.ok(cmd.includes('Bug fixes'), 'should include notes content');
   });
 
-  it('appends --draft when opts.draft is true', () => {
+  it('appends --draft when opts.draft is true', async () => {
     const { github, spy } = loadWithMock(FX.releaseOutput);
-    github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0', { draft: true });
+    await github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0', { draft: true });
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('--draft'), 'should include --draft flag');
   });
 
-  it('appends --prerelease when opts.prerelease is true', () => {
+  it('appends --prerelease when opts.prerelease is true', async () => {
     const { github, spy } = loadWithMock(FX.releaseOutput);
-    github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0', { prerelease: true });
+    await github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0', { prerelease: true });
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('--prerelease'), 'should include --prerelease flag');
   });
 
-  it('does not append --draft or --prerelease when opts are false', () => {
+  it('does not append --draft or --prerelease when opts are false', async () => {
     const { github, spy } = loadWithMock(FX.releaseOutput);
-    github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0', { draft: false, prerelease: false });
+    await github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Release v1.0.0', { draft: false, prerelease: false });
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(!cmd.includes('--draft'), 'should NOT include --draft when false');
     assert.ok(!cmd.includes('--prerelease'), 'should NOT include --prerelease when false');
   });
 
-  it('propagates execSync errors', () => {
+  it('propagates execSync errors', async () => {
     const github = loadWithThrow(new Error('tag already exists'));
-    assert.throws(() => github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Dup'), /tag already exists/);
+    await assert.rejects(github.createRelease('snipcodeit/mgw', 'v1.0.0', 'Dup'), /tag already exists/);
   });
 });
 
@@ -457,17 +473,17 @@ describe('createRelease', () => {
 describe('createProject', () => {
   beforeEach(restoreMocks);
 
-  it('returns { number, url } from parsed JSON', () => {
+  it('returns { number, url } from parsed JSON', async () => {
     const { github } = loadWithMock(FX.project);
-    const result = github.createProject('snipcodeit', 'My Board');
+    const result = await github.createProject('snipcodeit', 'My Board');
 
     assert.equal(result.number, 7);
     assert.equal(result.url, 'https://github.com/orgs/snipcodeit/projects/7');
   });
 
-  it('constructs correct gh project create command', () => {
+  it('constructs correct gh project create command', async () => {
     const { github, spy } = loadWithMock(FX.project);
-    github.createProject('snipcodeit', 'My Board');
+    await github.createProject('snipcodeit', 'My Board');
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('gh project create'), 'should call gh project create');
@@ -476,9 +492,9 @@ describe('createProject', () => {
     assert.ok(cmd.includes('--format json'), 'should request json format');
   });
 
-  it('propagates execSync errors', () => {
+  it('propagates execSync errors', async () => {
     const github = loadWithThrow(new Error('org not found'));
-    assert.throws(() => github.createProject('bad-org', 'Board'), /org not found/);
+    await assert.rejects(github.createProject('bad-org', 'Board'), /org not found/);
   });
 });
 
@@ -489,9 +505,9 @@ describe('createProject', () => {
 describe('getProjectNodeId', () => {
   beforeEach(restoreMocks);
 
-  it('returns node ID when user projectV2 query succeeds', () => {
+  it('returns node ID when user projectV2 query succeeds', async () => {
     const { github, spy } = loadWithMock('PVT_kwDOABC123');
-    const result = github.getProjectNodeId('snipcodeit', 7);
+    const result = await github.getProjectNodeId('snipcodeit', 7);
 
     assert.equal(result, 'PVT_kwDOABC123');
     assert.equal(spy.mock.calls.length, 1);
@@ -501,23 +517,23 @@ describe('getProjectNodeId', () => {
     assert.ok(cmd.includes('7'), 'should include project number');
   });
 
-  it('falls back to org query when user query returns "null"', () => {
+  it('falls back to org query when user query returns "null"', async () => {
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (_cmd, _opts) => {
       callCount++;
       return callCount === 1 ? 'null' : 'PVT_orgNodeId';
     });
     const github = require(GITHUB_MODULE);
 
-    const result = github.getProjectNodeId('snipcodeit', 7);
+    const result = await github.getProjectNodeId('snipcodeit', 7);
     assert.equal(result, 'PVT_orgNodeId');
     assert.equal(callCount, 2);
   });
 
-  it('falls back to org query when user query throws', () => {
+  it('falls back to org query when user query throws', async () => {
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (_cmd, _opts) => {
       callCount++;
       if (callCount === 1) throw new Error('user not found');
@@ -525,22 +541,22 @@ describe('getProjectNodeId', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    const result = github.getProjectNodeId('myorg', 3);
+    const result = await github.getProjectNodeId('myorg', 3);
     assert.equal(result, 'PVT_orgNodeId');
   });
 
-  it('returns null when both user and org queries fail', () => {
-    delete require.cache[GITHUB_MODULE];
+  it('returns null when both user and org queries fail', async () => {
+    evictModules();
     mock.method(childProcess, 'execSync', () => { throw new Error('not found'); });
     const github = require(GITHUB_MODULE);
 
-    const result = github.getProjectNodeId('snipcodeit', 999);
+    const result = await github.getProjectNodeId('snipcodeit', 999);
     assert.equal(result, null);
   });
 
-  it('returns null when both queries return "null" string', () => {
+  it('returns null when both queries return "null" string', async () => {
     const { github } = loadWithMock('null');
-    const result = github.getProjectNodeId('snipcodeit', 7);
+    const result = await github.getProjectNodeId('snipcodeit', 7);
     assert.equal(result, null);
   });
 });
@@ -561,9 +577,9 @@ describe('findExistingBoard', () => {
     { id: 'PVT_org1', number: 2, url: 'https://github.com/orgs/snipcodeit/projects/2', title: 'MGW Pipeline Board' }
   ]);
 
-  it('returns board when user projectsV2 contains a title match', () => {
+  it('returns board when user projectsV2 contains a title match', async () => {
     const { github } = loadWithMock(FX_USER_BOARDS);
-    const result = github.findExistingBoard('snipcodeit', 'MGW');
+    const result = await github.findExistingBoard('snipcodeit', 'MGW');
 
     assert.ok(result !== null, 'should find a board');
     assert.equal(result.number, 5);
@@ -571,17 +587,17 @@ describe('findExistingBoard', () => {
     assert.equal(result.title, 'MGW Roadmap');
   });
 
-  it('performs case-insensitive title matching', () => {
+  it('performs case-insensitive title matching', async () => {
     const { github } = loadWithMock(FX_USER_BOARDS);
-    const result = github.findExistingBoard('snipcodeit', 'mgw roadmap');
+    const result = await github.findExistingBoard('snipcodeit', 'mgw roadmap');
 
     assert.ok(result !== null);
     assert.equal(result.number, 5);
   });
 
-  it('falls back to org projects when user query finds no match', () => {
+  it('falls back to org projects when user query finds no match', async () => {
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (_cmd, _opts) => {
       callCount++;
       // First call: user boards — no matching title
@@ -593,15 +609,15 @@ describe('findExistingBoard', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    const result = github.findExistingBoard('snipcodeit', 'MGW');
+    const result = await github.findExistingBoard('snipcodeit', 'MGW');
     assert.ok(result !== null);
     assert.equal(result.number, 2);
     assert.equal(result.nodeId, 'PVT_org1');
   });
 
-  it('falls back to org projects when user query throws', () => {
+  it('falls back to org projects when user query throws', async () => {
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (_cmd, _opts) => {
       callCount++;
       if (callCount === 1) throw new Error('user not found');
@@ -609,32 +625,30 @@ describe('findExistingBoard', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    const result = github.findExistingBoard('snipcodeit', 'MGW');
+    const result = await github.findExistingBoard('snipcodeit', 'MGW');
     assert.ok(result !== null);
     assert.equal(result.number, 2);
   });
 
-  it('returns null when no match in either user or org projects', () => {
-    let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+  it('returns null when no match in either user or org projects', async () => {
+    evictModules();
     mock.method(childProcess, 'execSync', (_cmd, _opts) => {
-      callCount++;
       return JSON.stringify([
         { id: 'PVT_x', number: 9, url: 'https://github.com/users/snipcodeit/projects/9', title: 'Unrelated' }
       ]);
     });
     const github = require(GITHUB_MODULE);
 
-    const result = github.findExistingBoard('snipcodeit', 'MGW');
+    const result = await github.findExistingBoard('snipcodeit', 'MGW');
     assert.equal(result, null);
   });
 
-  it('returns null when both queries throw', () => {
-    delete require.cache[GITHUB_MODULE];
+  it('returns null when both queries throw', async () => {
+    evictModules();
     mock.method(childProcess, 'execSync', () => { throw new Error('API error'); });
     const github = require(GITHUB_MODULE);
 
-    const result = github.findExistingBoard('snipcodeit', 'anything');
+    const result = await github.findExistingBoard('snipcodeit', 'anything');
     assert.equal(result, null);
   });
 });
@@ -677,9 +691,9 @@ describe('getProjectFields', () => {
     { id: 'PVTSSF_route', name: 'GSD Route', options: gsdRouteOptions }
   ]);
 
-  it('returns parsed fields object with all 5 field types', () => {
+  it('returns parsed fields object with all 5 field types', async () => {
     const { github } = loadWithMock(FX_FIELDS_NODES);
-    const result = github.getProjectFields('snipcodeit', 7);
+    const result = await github.getProjectFields('snipcodeit', 7);
 
     assert.ok(result !== null, 'should return fields');
     assert.ok('status' in result, 'should have status field');
@@ -689,9 +703,9 @@ describe('getProjectFields', () => {
     assert.ok('gsd_route' in result, 'should have gsd_route field');
   });
 
-  it('maps status field options to pipeline_stage keys', () => {
+  it('maps status field options to pipeline_stage keys', async () => {
     const { github } = loadWithMock(FX_FIELDS_NODES);
-    const result = github.getProjectFields('snipcodeit', 7);
+    const result = await github.getProjectFields('snipcodeit', 7);
 
     assert.equal(result.status.field_id, 'PVTSSF_status');
     assert.equal(result.status.type, 'SINGLE_SELECT');
@@ -705,9 +719,9 @@ describe('getProjectFields', () => {
     assert.equal(result.status.options['needs-security-review'], 'opt_security');
   });
 
-  it('maps gsd_route field options to route keys with gsd: prefix', () => {
+  it('maps gsd_route field options to route keys with gsd: prefix', async () => {
     const { github } = loadWithMock(FX_FIELDS_NODES);
-    const result = github.getProjectFields('snipcodeit', 7);
+    const result = await github.getProjectFields('snipcodeit', 7);
 
     assert.equal(result.gsd_route.field_id, 'PVTSSF_route');
     assert.equal(result.gsd_route.type, 'SINGLE_SELECT');
@@ -716,9 +730,9 @@ describe('getProjectFields', () => {
     assert.equal(result.gsd_route.options['gsd:new-milestone'], 'gsd_milestone');
   });
 
-  it('returns TEXT type for ai_agent_state, milestone, and phase fields', () => {
+  it('returns TEXT type for ai_agent_state, milestone, and phase fields', async () => {
     const { github } = loadWithMock(FX_FIELDS_NODES);
-    const result = github.getProjectFields('snipcodeit', 7);
+    const result = await github.getProjectFields('snipcodeit', 7);
 
     assert.equal(result.ai_agent_state.field_id, 'PVTF_ai');
     assert.equal(result.ai_agent_state.type, 'TEXT');
@@ -728,9 +742,9 @@ describe('getProjectFields', () => {
     assert.equal(result.phase.type, 'TEXT');
   });
 
-  it('falls back to org query when user query throws', () => {
+  it('falls back to org query when user query throws', async () => {
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (_cmd, _opts) => {
       callCount++;
       if (callCount === 1) throw new Error('user not found');
@@ -738,25 +752,25 @@ describe('getProjectFields', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    const result = github.getProjectFields('snipcodeit', 7);
+    const result = await github.getProjectFields('snipcodeit', 7);
     assert.ok(result !== null);
     assert.ok('status' in result);
   });
 
-  it('returns null when both queries fail', () => {
-    delete require.cache[GITHUB_MODULE];
+  it('returns null when both queries fail', async () => {
+    evictModules();
     mock.method(childProcess, 'execSync', () => { throw new Error('API error'); });
     const github = require(GITHUB_MODULE);
 
-    const result = github.getProjectFields('snipcodeit', 7);
+    const result = await github.getProjectFields('snipcodeit', 7);
     assert.equal(result, null);
   });
 
-  it('returns null when nodes array has no recognized fields', () => {
+  it('returns null when nodes array has no recognized fields', async () => {
     const { github } = loadWithMock(JSON.stringify([
       { id: 'PVTF_unknown', name: 'UnknownField' }
     ]));
-    const result = github.getProjectFields('snipcodeit', 7);
+    const result = await github.getProjectFields('snipcodeit', 7);
     assert.equal(result, null);
   });
 });
@@ -768,16 +782,16 @@ describe('getProjectFields', () => {
 describe('addItemToProject', () => {
   beforeEach(restoreMocks);
 
-  it('returns the raw item ID string', () => {
+  it('returns the raw item ID string', async () => {
     const { github } = loadWithMock(FX.addItemOutput);
-    const result = github.addItemToProject('snipcodeit', 7, 'https://github.com/snipcodeit/mgw/issues/1');
+    const result = await github.addItemToProject('snipcodeit', 7, 'https://github.com/snipcodeit/mgw/issues/1');
 
     assert.equal(result, FX.addItemOutput);
   });
 
-  it('constructs correct gh project item-add command', () => {
+  it('constructs correct gh project item-add command', async () => {
     const { github, spy } = loadWithMock(FX.addItemOutput);
-    github.addItemToProject('snipcodeit', 7, 'https://github.com/snipcodeit/mgw/issues/1');
+    await github.addItemToProject('snipcodeit', 7, 'https://github.com/snipcodeit/mgw/issues/1');
 
     const cmd = spy.mock.calls[0].arguments[0];
     assert.ok(cmd.includes('gh project item-add 7'), 'should include project number');
@@ -785,9 +799,9 @@ describe('addItemToProject', () => {
     assert.ok(cmd.includes('https://github.com/snipcodeit/mgw/issues/1'), 'should include issue URL');
   });
 
-  it('propagates execSync errors', () => {
+  it('propagates execSync errors', async () => {
     const github = loadWithThrow(new Error('project not found'));
-    assert.throws(() => github.addItemToProject('snipcodeit', 99, 'https://github.com/snipcodeit/mgw/issues/1'), /project not found/);
+    await assert.rejects(github.addItemToProject('snipcodeit', 99, 'https://github.com/snipcodeit/mgw/issues/1'), /project not found/);
   });
 });
 
@@ -809,9 +823,9 @@ describe('postMilestoneStartAnnouncement', () => {
     firstIssueNumber: 134
   };
 
-  it('returns { posted: true, method: "discussion", url } when Discussions succeed', () => {
+  it('returns { posted: true, method: "discussion", url } when Discussions succeed', async () => {
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (_cmd, _opts) => {
       callCount++;
       // First call: repoMeta GraphQL query
@@ -821,13 +835,13 @@ describe('postMilestoneStartAnnouncement', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    const result = github.postMilestoneStartAnnouncement(baseOpts);
+    const result = await github.postMilestoneStartAnnouncement(baseOpts);
     assert.equal(result.posted, true);
     assert.equal(result.method, 'discussion');
     assert.equal(result.url, 'https://github.com/snipcodeit/mgw/discussions/99');
   });
 
-  it('falls back to issue comment when Discussions are not available', () => {
+  it('falls back to issue comment when Discussions are not available', async () => {
     // Return repoMeta WITHOUT an Announcements category
     const repoMetaNoAnnouncements = JSON.stringify({
       id: 'R_kgDOABC',
@@ -835,7 +849,7 @@ describe('postMilestoneStartAnnouncement', () => {
     });
 
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (_cmd, _opts) => {
       callCount++;
       if (callCount === 1) return repoMetaNoAnnouncements;
@@ -844,15 +858,15 @@ describe('postMilestoneStartAnnouncement', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    const result = github.postMilestoneStartAnnouncement(baseOpts);
+    const result = await github.postMilestoneStartAnnouncement(baseOpts);
     assert.equal(result.posted, true);
     assert.equal(result.method, 'comment');
     assert.equal(result.url, null);
   });
 
-  it('falls back to issue comment when GraphQL throws', () => {
+  it('falls back to issue comment when GraphQL throws', async () => {
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (_cmd, _opts) => {
       callCount++;
       if (callCount === 1) throw new Error('Discussions not enabled');
@@ -861,26 +875,26 @@ describe('postMilestoneStartAnnouncement', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    const result = github.postMilestoneStartAnnouncement(baseOpts);
+    const result = await github.postMilestoneStartAnnouncement(baseOpts);
     assert.equal(result.posted, true);
     assert.equal(result.method, 'comment');
   });
 
-  it('returns { posted: false, method: "none" } when both paths fail', () => {
-    delete require.cache[GITHUB_MODULE];
+  it('returns { posted: false, method: "none" } when both paths fail', async () => {
+    evictModules();
     mock.method(childProcess, 'execSync', () => { throw new Error('all failed'); });
     const github = require(GITHUB_MODULE);
 
-    const result = github.postMilestoneStartAnnouncement(baseOpts);
+    const result = await github.postMilestoneStartAnnouncement(baseOpts);
     assert.equal(result.posted, false);
     assert.equal(result.method, 'none');
     assert.equal(result.url, null);
   });
 
-  it('returns { posted: false } when no repo or firstIssueNumber is provided', () => {
+  it('returns { posted: false } when no repo or firstIssueNumber is provided', async () => {
     // No repo → skip GraphQL; no firstIssueNumber → skip comment fallback
     const { github } = loadWithMock('');
-    const result = github.postMilestoneStartAnnouncement({
+    const result = await github.postMilestoneStartAnnouncement({
       milestoneName: 'v3.5',
       issues: []
     });
@@ -889,10 +903,10 @@ describe('postMilestoneStartAnnouncement', () => {
     assert.equal(result.method, 'none');
   });
 
-  it('includes boardUrl line in constructed body when boardUrl is provided', () => {
+  it('includes boardUrl line in constructed body when boardUrl is provided', async () => {
     let capturedBody = '';
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (cmd, _opts) => {
       callCount++;
       if (callCount === 1) return FX.repoMeta;
@@ -902,15 +916,15 @@ describe('postMilestoneStartAnnouncement', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    github.postMilestoneStartAnnouncement(baseOpts);
+    await github.postMilestoneStartAnnouncement(baseOpts);
     // The second execSync call contains the mutation with the board URL embedded
     assert.ok(capturedBody.includes('https://github.com/orgs/snipcodeit/projects/7'), 'body should include board URL');
   });
 
-  it('uses "_(not configured)_" when boardUrl is not provided', () => {
+  it('uses "_(not configured)_" when boardUrl is not provided', async () => {
     let capturedBody = '';
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (cmd, _opts) => {
       callCount++;
       if (callCount === 1) return FX.repoMeta;
@@ -919,14 +933,14 @@ describe('postMilestoneStartAnnouncement', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    github.postMilestoneStartAnnouncement({ ...baseOpts, boardUrl: undefined });
+    await github.postMilestoneStartAnnouncement({ ...baseOpts, boardUrl: undefined });
     assert.ok(capturedBody.includes('not configured'), 'body should include "not configured" when no board URL');
   });
 
-  it('includes issue table rows in constructed body', () => {
+  it('includes issue table rows in constructed body', async () => {
     let capturedBody = '';
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (cmd, _opts) => {
       callCount++;
       if (callCount === 1) return FX.repoMeta;
@@ -935,16 +949,16 @@ describe('postMilestoneStartAnnouncement', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    github.postMilestoneStartAnnouncement(baseOpts);
+    await github.postMilestoneStartAnnouncement(baseOpts);
     assert.ok(capturedBody.includes('#134'), 'body should include issue number');
     assert.ok(capturedBody.includes('Write tests'), 'body should include issue title');
     assert.ok(capturedBody.includes('@hat'), 'body should include assignee');
   });
 
-  it('renders "—" for unassigned issues in body', () => {
+  it('renders "\u2014" for unassigned issues in body', async () => {
     let capturedBody = '';
     let callCount = 0;
-    delete require.cache[GITHUB_MODULE];
+    evictModules();
     mock.method(childProcess, 'execSync', (cmd, _opts) => {
       callCount++;
       if (callCount === 1) return FX.repoMeta;
@@ -953,11 +967,11 @@ describe('postMilestoneStartAnnouncement', () => {
     });
     const github = require(GITHUB_MODULE);
 
-    github.postMilestoneStartAnnouncement({
+    await github.postMilestoneStartAnnouncement({
       ...baseOpts,
       issues: [{ number: 1, title: 'Unassigned issue', assignee: null, gsdRoute: 'execute' }]
     });
-    // The em dash "—" appears as the assignee placeholder
-    assert.ok(capturedBody.includes('\\u2014') || capturedBody.includes('—'), 'body should include em dash for unassigned');
+    // The em dash "\u2014" appears as the assignee placeholder
+    assert.ok(capturedBody.includes('\\u2014') || capturedBody.includes('\u2014'), 'body should include em dash for unassigned');
   });
 });

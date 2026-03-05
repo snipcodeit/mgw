@@ -26,6 +26,7 @@ const { getActiveDir, getCompletedDir, getMgwDir } = require('../lib/state.cjs')
 const { getIssue, listIssues } = require('../lib/github.cjs');
 const { createIssuesBrowser } = require('../lib/tui/index.cjs');
 const { createSpinner } = require('../lib/spinner.cjs');
+const { startTimer } = require('../lib/logger.cjs');
 
 const pkg = require('../package.json');
 
@@ -76,6 +77,13 @@ async function runAiCommand(commandName, userPrompt, opts) {
   const cmdFile = path.join(provider.getCommandsDir(), `${commandName}.md`);
   const stageLabel = STAGE_LABELS[commandName] || commandName;
 
+  // Extract issue number from prompt if present (first numeric arg)
+  const issueMatch = String(userPrompt).match(/^\d+/);
+  const timer = startTimer({
+    command: commandName,
+    issue: issueMatch ? parseInt(issueMatch[0], 10) : undefined,
+  });
+
   if (opts.quiet) {
     // Quiet mode: buffer claude output and show a spinner while it runs.
     // The spinner gives real-time feedback when output is suppressed.
@@ -91,12 +99,15 @@ async function runAiCommand(commandName, userPrompt, opts) {
       });
     } catch (err) {
       spinner.fail(`${stageLabel} failed`);
+      timer.finish('error', err.message);
       throw err;
     }
     if (result.exitCode === 0) {
       spinner.succeed(`${stageLabel} complete`);
+      timer.finish('ok');
     } else {
       spinner.fail(`${stageLabel} failed (exit ${result.exitCode})`);
+      timer.finish('error', `exit ${result.exitCode}`);
     }
     if (result.output) {
       process.stdout.write(result.output);
@@ -117,6 +128,7 @@ async function runAiCommand(commandName, userPrompt, opts) {
       dryRun: opts.dryRun,
       json: opts.json,
     });
+    timer.finish(result.exitCode === 0 ? 'ok' : 'error', result.exitCode !== 0 ? `exit ${result.exitCode}` : undefined);
     process.exitCode = result.exitCode;
   }
 }
@@ -255,6 +267,7 @@ program
   .description('Reconcile .mgw/ state with GitHub')
   .action(async function() {
     const opts = this.optsWithGlobals();
+    const syncTimer = startTimer({ command: 'sync' });
 
     const activeDir = getActiveDir();
 
@@ -305,7 +318,7 @@ program
 
       let ghIssue;
       try {
-        ghIssue = getIssue(number);
+        ghIssue = await getIssue(number);
       } catch (err) {
         error(`Failed to fetch issue #${number} from GitHub: ${err.message}`);
         results.push({ number, file, status: 'error', error: err.message });
@@ -350,6 +363,7 @@ program
       const ok = results.filter(r => r.status === 'ok').length;
       log(`sync complete: ${ok} up-to-date, ${archived} archived`);
     }
+    syncTimer.finish('ok');
   });
 
 // issues [filters...]
@@ -379,7 +393,7 @@ program
 
     let issues;
     try {
-      issues = listIssues(ghFilters);
+      issues = await listIssues(ghFilters);
     } catch (err) {
       error('Failed to list issues: ' + err.message);
       process.exitCode = 1;
@@ -498,6 +512,113 @@ program
       log(formatJson(Object.assign({ action: 'linked' }, entry)));
     } else {
       log('Linked: ' + refA + ' <-> ' + refB);
+    }
+  });
+
+// log [--since] [--issue] [--command] [--limit] [--metrics]
+program
+  .command('log')
+  .description('Query execution logs')
+  .option('--since <period>', 'time period: 1d, 7d, 30d, or ISO date')
+  .option('--issue <number>', 'filter by issue number')
+  .option('--command <name>', 'filter by command name')
+  .option('--limit <n>', 'max entries (default: 50)', '50')
+  .option('--metrics', 'show aggregated metrics instead of log entries')
+  .action(function() {
+    const opts = this.optsWithGlobals();
+    const { readLogs, aggregateMetrics } = require('../lib/logger.cjs');
+
+    const logOpts = {
+      since: opts.since,
+      issue: opts.issue ? parseInt(opts.issue, 10) : undefined,
+      command: opts.command,
+      limit: opts.metrics ? undefined : (parseInt(opts.limit, 10) || 50),
+    };
+
+    const entries = readLogs(logOpts);
+
+    if (opts.metrics) {
+      const metrics = aggregateMetrics(entries);
+      if (opts.json) {
+        log(formatJson(metrics));
+      } else {
+        log(`Total invocations: ${metrics.total}`);
+        log(`Avg duration: ${metrics.avgDuration}ms`);
+        log(`Failure rate: ${metrics.failureRate}%`);
+        log('');
+        log('By command:');
+        for (const [cmd, stats] of Object.entries(metrics.byCommand)) {
+          log(`  ${cmd}: ${stats.count} calls, ${stats.errors} errors, avg ${stats.avgDuration}ms`);
+        }
+      }
+      return;
+    }
+
+    if (entries.length === 0) {
+      log('No log entries found.');
+      return;
+    }
+
+    if (opts.json) {
+      log(formatJson(entries));
+      return;
+    }
+
+    for (const e of entries) {
+      const ts = e.timestamp ? e.timestamp.slice(0, 19).replace('T', ' ') : '?';
+      const issue = e.issue ? `#${e.issue}` : '';
+      const dur = typeof e.duration_ms === 'number' ? `${e.duration_ms}ms` : '';
+      const status = e.status === 'error' ? `ERR: ${e.error || 'unknown'}` : e.status;
+      log(`${ts}  ${(e.command || '').padEnd(12)} ${issue.padEnd(6)} ${dur.padEnd(8)} ${status}`);
+    }
+  });
+
+// metrics
+program
+  .command('metrics')
+  .description('Show execution metrics — success rates, durations, command usage')
+  .option('--since <period>', 'time period: 1d, 7d, 30d, or ISO date (default: 7d)', '7d')
+  .option('--issue <number>', 'filter by issue number')
+  .option('--command <name>', 'filter by command name')
+  .action(function() {
+    const opts = this.optsWithGlobals();
+    const { readLogs, aggregateMetrics } = require('../lib/logger.cjs');
+    const { USE_COLOR, COLORS } = require('../lib/output.cjs');
+
+    const logOpts = {
+      since: opts.since,
+      issue: opts.issue ? parseInt(opts.issue, 10) : undefined,
+      command: opts.command,
+    };
+
+    const entries = readLogs(logOpts);
+    const metrics = aggregateMetrics(entries);
+
+    if (opts.json) {
+      log(formatJson(metrics));
+      return;
+    }
+
+    if (metrics.total === 0) {
+      log('No log entries found for the given period.');
+      return;
+    }
+
+    const dim = USE_COLOR ? COLORS.dim : '';
+    const bold = USE_COLOR ? COLORS.bold : '';
+    const reset = USE_COLOR ? COLORS.reset : '';
+
+    log(`${bold}Execution Metrics${reset} ${dim}(${opts.since})${reset}`);
+    log('');
+    log(`  Total invocations:  ${metrics.total}`);
+    log(`  Avg duration:       ${metrics.avgDuration}ms`);
+    log(`  Failure rate:       ${metrics.failureRate}%`);
+    log('');
+    log(`${bold}By Command${reset}`);
+    log(`${'  Command'.padEnd(16)} ${'Calls'.padEnd(8)} ${'Errors'.padEnd(8)} ${'Avg ms'.padEnd(10)}`);
+    log(`  ${dim}${'─'.repeat(38)}${reset}`);
+    for (const [cmd, stats] of Object.entries(metrics.byCommand)) {
+      log(`  ${cmd.padEnd(14)} ${String(stats.count).padEnd(8)} ${String(stats.errors).padEnd(8)} ${String(stats.avgDuration).padEnd(10)}`);
     }
   });
 
