@@ -140,7 +140,23 @@ if (detectedProvider === null) {
   process.exit(0);
 }
 
-// Old-dir cleanup: if previously installed provider differs, remove old install
+// Parent dir guard: provider's base config directory must already exist
+// (i.e. the user has run the CLI at least once to initialize it).
+// This MUST run before old-dir cleanup — otherwise switching to a provider
+// whose home dir doesn't exist would delete old commands and install nothing.
+const targetDir = PROVIDER_TARGETS[detectedProvider];
+const providerHomeDir = path.join(os.homedir(), '.' + detectedProvider);
+
+if (!fs.existsSync(providerHomeDir)) {
+  console.log(
+    'mgw: ~/.' + detectedProvider + '/ not found — skipping slash command install ' +
+    '(run the CLI once to initialize it)'
+  );
+  process.exit(0);
+}
+
+// Old-dir cleanup: if previously installed provider differs, remove old install.
+// Safe to run here — we've already confirmed the new provider's home dir exists.
 if (fs.existsSync(statePath)) {
   try {
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
@@ -151,19 +167,6 @@ if (fs.existsSync(statePath)) {
   } catch (_) {
     // Corrupt or unreadable state file — ignore and continue
   }
-}
-
-// Parent dir guard: provider's base config directory must already exist
-// (i.e. the user has run the CLI at least once to initialize it)
-const targetDir = PROVIDER_TARGETS[detectedProvider];
-const providerHomeDir = path.join(os.homedir(), '.' + detectedProvider);
-
-if (!fs.existsSync(providerHomeDir)) {
-  console.log(
-    'mgw: ~/.' + detectedProvider + '/ not found — skipping slash command install ' +
-    '(run the CLI once to initialize it)'
-  );
-  process.exit(0);
 }
 
 // Perform the install
