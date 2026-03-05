@@ -6,9 +6,9 @@
  *
  * Registers all 12 subcommands with Commander.js.
  * AI-dependent commands (run, init, project, milestone, next, issue, update, pr)
- * call assertClaudeAvailable() then delegate to claude -p with bundled .md files.
+ * call provider.assertAvailable() then delegate to provider.invoke() with bundled .md files.
  * Non-AI commands (sync, issues, link, help) call lib/ modules directly and work
- * without claude installed.
+ * without an AI CLI installed.
  *
  * NOTE: Action handlers use regular `function` (not arrow functions) so that
  * `this.optsWithGlobals()` works correctly in Commander.js v14. Arrow functions
@@ -47,7 +47,7 @@ program
   .option('--provider <provider>', 'AI provider override (default: claude)');
 
 // ---------------------------------------------------------------------------
-// Helper: run an AI command via claude -p
+// Helper: run an AI command via the active provider
 // ---------------------------------------------------------------------------
 
 /**
@@ -506,9 +506,10 @@ program
   .command('help')
   .description('Show command reference')
   .action(function() {
+    const opts = this.optsWithGlobals();
     // Parse bundled help.md and extract text between triple-backtick fences
-    // in the <process> section. Print directly without calling claude.
-    const helpMdPath = path.join(ProviderManager.getProvider().getCommandsDir(), 'help.md');
+    // in the <process> section. Print directly without calling the AI CLI.
+    const helpMdPath = path.join(ProviderManager.getProvider(opts.provider).getCommandsDir(), 'help.md');
 
     let helpText;
     try {
