@@ -1,6 +1,6 @@
 'use strict';
 
-const { describe, it, mock } = require('node:test');
+const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   classifyFailure,

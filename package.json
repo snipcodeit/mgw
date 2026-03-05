@@ -16,7 +16,7 @@
   "scripts": {
     "build": "pkgroll --clean-dist --src .",
     "dev": "pkgroll --watch --src .",
-    "test": "node --test 'test/**/*.test.cjs'",
+    "test": "node --test test/*.test.cjs",
     "lint": "eslint lib/ bin/ test/",
     "prepublishOnly": "npm run build",
     "completions": "node bin/generate-completions.cjs",

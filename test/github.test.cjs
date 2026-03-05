@@ -182,7 +182,7 @@ describe('getIssue', () => {
   beforeEach(restoreMocks);
 
   it('returns parsed issue object', async () => {
-    const { github, spy } = loadWithMock(FX.issue);
+    const { github } = loadWithMock(FX.issue);
     const result = await github.getIssue(42);
 
     assert.equal(result.number, 42);
@@ -220,7 +220,7 @@ describe('listIssues', () => {
   beforeEach(restoreMocks);
 
   it('returns parsed array of issues with no filters', async () => {
-    const { github, spy } = loadWithMock(FX.issueList);
+    const { github } = loadWithMock(FX.issueList);
     const result = await github.listIssues();
 
     assert.ok(Array.isArray(result), 'should return array');
@@ -631,10 +631,8 @@ describe('findExistingBoard', () => {
   });
 
   it('returns null when no match in either user or org projects', async () => {
-    let callCount = 0;
     evictModules();
     mock.method(childProcess, 'execSync', (_cmd, _opts) => {
-      callCount++;
       return JSON.stringify([
         { id: 'PVT_x', number: 9, url: 'https://github.com/users/snipcodeit/projects/9', title: 'Unrelated' }
       ]);

@@ -1,3 +1,5 @@
+'use strict';
+
 /**
  * MGW — Placeholder test suite
  *
