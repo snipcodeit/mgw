@@ -36,7 +36,7 @@ const statePath = path.join(os.homedir(), '.mgw-install-state.json');
 const PROVIDER_TARGETS = {
   claude:   path.join(os.homedir(), '.claude', 'commands', 'mgw'),
   gemini:   path.join(os.homedir(), '.gemini', 'commands', 'mgw'),
-  opencode: path.join(os.homedir(), '.opencode', 'commands'),
+  opencode: path.join(os.homedir(), '.opencode', 'commands', 'mgw'),
 };
 
 // Valid provider IDs (order is also detection priority)
@@ -153,11 +153,12 @@ if (fs.existsSync(statePath)) {
   }
 }
 
-// Parent dir guard: provider's base directory must already exist
+// Parent dir guard: provider's base config directory must already exist
+// (i.e. the user has run the CLI at least once to initialize it)
 const targetDir = PROVIDER_TARGETS[detectedProvider];
-const parentDir = path.dirname(targetDir);
+const providerHomeDir = path.join(os.homedir(), '.' + detectedProvider);
 
-if (!fs.existsSync(parentDir)) {
+if (!fs.existsSync(providerHomeDir)) {
   console.log(
     'mgw: ~/.' + detectedProvider + '/ not found — skipping slash command install ' +
     '(run the CLI once to initialize it)'
