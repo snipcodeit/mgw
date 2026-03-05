@@ -1,6 +1,7 @@
 # MGW — My GSD Workflow
 
 [![npm version](https://img.shields.io/npm/v/@snipcodeit/mgw)](https://www.npmjs.com/package/@snipcodeit/mgw)
+[![CI](https://github.com/snipcodeit/mgw/actions/workflows/ci.yml/badge.svg)](https://github.com/snipcodeit/mgw/actions/workflows/ci.yml)
 [![npm downloads](https://img.shields.io/npm/dm/@snipcodeit/mgw)](https://www.npmjs.com/package/@snipcodeit/mgw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![node](https://img.shields.io/node/v/@snipcodeit/mgw)](https://nodejs.org)
@@ -341,18 +342,23 @@ bin/
 lib/
   index.cjs               Barrel export
   claude.cjs              Claude Code invocation helpers
-  github.cjs              GitHub CLI wrappers (issues, PRs, milestones, Projects v2)
+  errors.cjs              Typed error hierarchy (MgwError, GitHubApiError, TimeoutError, etc.)
+  github.cjs              Async GitHub CLI wrappers with retry/timeout (issues, PRs, milestones, Projects v2)
   gsd.cjs                 GSD integration
   gsd-adapter.cjs         GSD route adapter (maps triage results to GSD spawn args)
-  state.cjs               .mgw/ state management (migrateProjectState, resolveActiveMilestoneIndex)
+  logger.cjs              Structured JSON-lines execution logging (.mgw/logs/)
+  pipeline.cjs            Pipeline stage constants, valid transitions, and transition hooks
+  state.cjs               .mgw/ state management, cross-refs validation, dependency parsing
   output.cjs              Logging and formatting
-  retry.cjs               Retry logic for GitHub API calls
+  progress.cjs            Milestone progress display
+  retry.cjs               Retry/backoff logic with failure classification
   templates.cjs           Template system
   template-loader.cjs     Output validation (JSON Schema) + parseRoadmap()
 commands/                  Slash command source files (deployed to ~/.claude/commands/mgw/ at install time)
   ask.md                  Contextual question routing during milestone execution
   assign.md               Claim/reassign issues; resolves GitHub noreply co-author tag
-  board.md                GitHub Projects v2 board management
+  board.md                GitHub Projects v2 board dispatcher
+  board/                   Board subcommands (create, show, configure, views, sync)
   help.md                 Command reference display
   init.md                 One-time repo bootstrap (state, templates, labels)
   project.md              State-aware project init (Vision Cycle, alignment, drift, extend)
@@ -361,7 +367,8 @@ commands/                  Slash command source files (deployed to ~/.claude/com
   next.md                 Next unblocked issue picker (surfaces failed issues as advisory)
   review.md               Comment review and classification since last triage
   roadmap.md              Milestone roadmap table; optional GitHub due-date setter and Discussion post
-  run.md                  Autonomous pipeline orchestrator (cross-milestone enforcement)
+  run.md                  Autonomous pipeline orchestrator (dispatches to run/ stages)
+  run/                     Pipeline stage files (triage, worktree, execute, pr-create)
   milestone.md            Milestone execution with dependency ordering and failed-issue recovery
   update.md               Structured GitHub comment templates
   pr.md                   PR creation from GSD artifacts with phase context + plan traceability
@@ -380,6 +387,49 @@ templates/
 ```
 
 For a detailed walkthrough of the directory structure, slash command anatomy, and CLI architecture, see the [Architecture Guide](docs/ARCHITECTURE.md#directory-structure).
+
+## Post-install Behavior
+
+When you `npm install` MGW (globally or locally), the `postinstall` script (`bin/mgw-install.cjs`) copies all slash command `.md` files from `commands/` to `~/.claude/commands/mgw/`. This makes `/mgw:*` commands available in Claude Code.
+
+To skip this behavior (e.g., in CI or Docker):
+
+```bash
+npm install -g @snipcodeit/mgw --ignore-scripts
+```
+
+To re-run manually:
+
+```bash
+node ./bin/mgw-install.cjs
+```
+
+## CLI Commands
+
+In addition to slash commands (used inside Claude Code), MGW provides standalone CLI commands:
+
+```bash
+mgw issues                        # Browse GitHub issues
+mgw sync                          # Reconcile .mgw/ state with GitHub
+mgw link 42 43                    # Cross-reference two issues
+mgw log                           # View execution logs
+mgw log --since 7d --metrics      # Aggregated metrics for the last 7 days
+mgw metrics                       # Pipeline metrics dashboard
+mgw metrics --since 30d           # Metrics over the last 30 days
+```
+
+The `log` and `metrics` commands read from structured JSON-lines logs in `.mgw/logs/` that are written automatically during command execution.
+
+## Development
+
+```bash
+git clone https://github.com/snipcodeit/mgw.git
+cd mgw
+npm install
+npm test          # 365 tests across 71 suites (Node.js built-in test runner)
+npm run lint      # ESLint
+npm run build     # pkgroll → dist/
+```
 
 ## Documentation
 
