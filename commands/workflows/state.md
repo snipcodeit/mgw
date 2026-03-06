@@ -231,7 +231,8 @@ File: `.mgw/active/<number>-<slug>.json`
   "comments_posted": [],
   "linked_pr": null,
   "linked_issues": [],
-  "linked_branches": []
+  "linked_branches": [],
+  "checkpoint": null
 }
 ```
 
@@ -436,6 +437,84 @@ blocked --> triaged     (re-triage after blocker resolved)
 Any stage --> failed    (unrecoverable error)
 ```
 
+## Pipeline Checkpoints
+
+Fine-grained pipeline progress tracking within `.mgw/active/<number>-<slug>.json`.
+The `checkpoint` field starts as `null` and is initialized when the pipeline first
+transitions past triage. Each subsequent stage writes an atomic checkpoint update.
+
+### Checkpoint Schema
+
+```json
+{
+  "checkpoint": {
+    "schema_version": 1,
+    "pipeline_step": "triage|plan|execute|verify|pr",
+    "step_progress": {},
+    "last_agent_output": null,
+    "artifacts": [],
+    "resume": { "action": null, "context": {} },
+    "started_at": "ISO timestamp",
+    "updated_at": "ISO timestamp",
+    "step_history": []
+  }
+}
+```
+
+| Field | Type | Merge Strategy | Description |
+|-------|------|---------------|-------------|
+| `schema_version` | number | — | Checkpoint format version (currently 1) |
+| `pipeline_step` | string | overwrite | Current pipeline step: `triage`, `plan`, `execute`, `verify`, `pr` |
+| `step_progress` | object | shallow merge | Step-specific progress (e.g., `{ plan_path: "...", plan_checked: false }`) |
+| `last_agent_output` | string\|null | overwrite | Path or URL of the last agent's output |
+| `artifacts` | array | append-only | `[{ path, type, created_at }]` — never removed, only appended |
+| `resume` | object | full replace | `{ action, context }` — what to do if pipeline restarts |
+| `started_at` | string | — | ISO timestamp when checkpoint was first created |
+| `updated_at` | string | auto | ISO timestamp of last update (set automatically) |
+| `step_history` | array | append-only | `[{ step, completed_at, agent_type, output_path }]` — audit trail |
+
+### Atomic Writes
+
+All checkpoint writes use `atomicWriteJson()` from `lib/state.cjs`:
+
+```bash
+# atomicWriteJson(filePath, data) — write to .tmp then rename.
+# POSIX rename is atomic on the same filesystem, so a crash mid-write
+# never leaves a corrupt state file.
+```
+
+The `updateCheckpoint()` function uses `atomicWriteJson()` internally. Commands
+should always use `updateCheckpoint()` rather than writing checkpoints directly:
+
+```bash
+node -e "
+const { updateCheckpoint } = require('./lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'plan',
+  step_progress: { plan_path: '...', plan_checked: false },
+  artifacts: [{ path: '...', type: 'plan', created_at: new Date().toISOString() }],
+  step_history: [{ step: 'plan', completed_at: new Date().toISOString(), agent_type: 'gsd-planner', output_path: '...' }],
+  resume: { action: 'spawn-executor', context: { quick_dir: '...' } }
+});
+" 2>/dev/null || true
+```
+
+### Checkpoint Lifecycle
+
+| Pipeline Step | Checkpoint `pipeline_step` | Resume Action |
+|--------------|---------------------------|---------------|
+| Triage complete | `triage` | `begin-execution` |
+| Planner complete | `plan` | `run-plan-checker` or `spawn-executor` |
+| Executor complete | `execute` | `spawn-verifier` or `create-pr` |
+| Verifier complete | `verify` | `create-pr` |
+| PR created | `pr` | `cleanup` |
+
+### Migration
+
+`migrateProjectState()` adds the `checkpoint: null` field to any issue state
+files that predate checkpoint support. The field is initialized lazily — it
+stays `null` until the pipeline actually runs.
+
 ## Slug Generation
 
 Use gsd-tools for consistent slug generation:
@@ -582,3 +661,5 @@ a `phase_number`. In this case, `/mgw:run` falls back to the quick pipeline.
 | Project state | milestone.md, next.md, ask.md |
 | Gate result schema | issue.md (populate), run.md (validate) |
 | Board status sync | board-sync.md (utility), issue.md (triage transitions), run.md (pipeline transitions) |
+| Checkpoint writes | triage.md (init), execute.md (plan/execute/verify), pr-create.md (pr) |
+| Atomic writes | lib/state.cjs (`atomicWriteJson`, `updateCheckpoint`) |

@@ -51,6 +51,7 @@ migrateProjectState();
 # Checkpoint initialization — called once when pipeline execution begins.
 # Sets pipeline_step to "triage" with route selection progress.
 # Subsequent stages update the checkpoint via updateCheckpoint().
+# All checkpoint writes are atomic (write to .tmp then rename).
 node -e "
 const { updateCheckpoint } = require('./lib/state.cjs');
 updateCheckpoint(${ISSUE_NUMBER}, {
