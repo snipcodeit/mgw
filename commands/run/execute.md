@@ -4,9 +4,14 @@ description: Execute GSD pipeline (quick or milestone route) and post execution 
 ---
 
 <step name="execute_gsd_quick">
-**Execute GSD pipeline (quick / quick --full route):**
+**Execute GSD pipeline (quick / quick --full / plan-phase route):**
 
-Only run this step if gsd_route is "gsd:quick" or "gsd:quick --full".
+Only run this step if gsd_route matches any of these (prefixed or unprefixed):
+- `quick` or `gsd:quick`
+- `quick --full` or `gsd:quick --full`
+- `plan-phase` or `gsd:plan-phase`
+
+`plan-phase` follows the same lifecycle as `quick --full` (init → plan → check → execute → verify → publish) so it is handled here with FULL_MODE forced on.
 
 **Retry loop initialization:**
 ```bash
@@ -127,7 +132,23 @@ Return: ## PLANNING COMPLETE with plan path
 )
 ```
 
-4. **Publish plan comment (non-blocking):**
+4. **Update checkpoint after planner completes:**
+```bash
+# Checkpoint: record plan completion and set resume to plan-check or execution
+node -e "
+const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'plan',
+  step_progress: { plan_path: '${QUICK_DIR}/${next_num}-PLAN.md', plan_checked: false, revision_count: 0 },
+  last_agent_output: '${QUICK_DIR}/${next_num}-PLAN.md',
+  artifacts: [{ path: '${QUICK_DIR}/${next_num}-PLAN.md', type: 'plan', created_at: new Date().toISOString() }],
+  step_history: [{ step: 'plan', completed_at: new Date().toISOString(), agent_type: 'gsd-planner', output_path: '${QUICK_DIR}/${next_num}-PLAN.md' }],
+  resume: { action: '${FULL_MODE ? \"run-plan-checker\" : \"spawn-executor\"}', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+});
+" 2>/dev/null || true
+```
+
+4b. **Publish plan comment (non-blocking):**
 ```bash
 PLAN_FILE="${QUICK_DIR}/${next_num}-PLAN.md"
 if [ -f "$PLAN_FILE" ]; then
@@ -219,7 +240,23 @@ Execute quick task ${next_num}.
 )
 ```
 
-8. **Publish summary comment (non-blocking):**
+8. **Update checkpoint after executor completes:**
+```bash
+# Checkpoint: record execution completion and set resume to verification
+node -e "
+const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'execute',
+  step_progress: { tasks_completed: ${TASK_COUNT}, tasks_total: ${TASK_COUNT} },
+  last_agent_output: '${QUICK_DIR}/${next_num}-SUMMARY.md',
+  artifacts: [{ path: '${QUICK_DIR}/${next_num}-SUMMARY.md', type: 'summary', created_at: new Date().toISOString() }],
+  step_history: [{ step: 'execute', completed_at: new Date().toISOString(), agent_type: 'gsd-executor', output_path: '${QUICK_DIR}/${next_num}-SUMMARY.md' }],
+  resume: { action: '${FULL_MODE ? \"spawn-verifier\" : \"create-pr\"}', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+});
+" 2>/dev/null || true
+```
+
+8b. **Publish summary comment (non-blocking):**
 ```bash
 SUMMARY_FILE="${QUICK_DIR}/${next_num}-SUMMARY.md"
 if [ -f "$SUMMARY_FILE" ]; then
@@ -260,7 +297,23 @@ Check must_haves against actual codebase. Create VERIFICATION.md at ${QUICK_DIR}
 )
 ```
 
-10. **Publish verification comment (non-blocking, --full only):**
+10. **Update checkpoint after verifier completes (--full only):**
+```bash
+# Checkpoint: record verification completion and set resume to PR creation
+node -e "
+const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'verify',
+  step_progress: { verification_path: '${QUICK_DIR}/${next_num}-VERIFICATION.md', must_haves_checked: true },
+  last_agent_output: '${QUICK_DIR}/${next_num}-VERIFICATION.md',
+  artifacts: [{ path: '${QUICK_DIR}/${next_num}-VERIFICATION.md', type: 'verification', created_at: new Date().toISOString() }],
+  step_history: [{ step: 'verify', completed_at: new Date().toISOString(), agent_type: 'gsd-verifier', output_path: '${QUICK_DIR}/${next_num}-VERIFICATION.md' }],
+  resume: { action: 'create-pr', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+});
+" 2>/dev/null || true
+```
+
+10b. **Publish verification comment (non-blocking, --full only):**
 ```bash
 VERIFICATION_FILE="${QUICK_DIR}/${next_num}-VERIFICATION.md"
 if [ -f "$VERIFICATION_FILE" ]; then
