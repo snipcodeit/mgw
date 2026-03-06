@@ -355,6 +355,77 @@ The agent is read-only (general-purpose, no code execution). It reads project st
 and codebase to classify, then MGW presents the result and offers follow-up actions
 (file new issue, post comment on related issue, etc.).
 
+## Diagnostic Capture Hooks
+
+Every Task() spawn in the mgw:run pipeline SHOULD be instrumented with diagnostic
+capture hooks using `lib/diagnostic-hooks.cjs`. This provides per-agent telemetry
+(timing, prompt hash, exit reason, failure classification) without blocking pipeline
+execution.
+
+**Required modules:**
+- `lib/diagnostic-hooks.cjs` — Before/after hooks for Task() spawns
+- `lib/agent-diagnostics.cjs` — Underlying diagnostic logger (writes to `.mgw/diagnostics/`)
+
+**Pattern — wrap every Task() spawn:**
+
+```bash
+# 1. Before spawning: record start time and hash prompt
+DIAG_ID=$(node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+const id = dh.beforeAgentSpawn({
+  agentType: '${AGENT_TYPE}',       # gsd-planner, gsd-executor, etc.
+  issueNumber: ${ISSUE_NUMBER},
+  prompt: '${PROMPT_SUMMARY}',      # short description, not full prompt
+  repoRoot: '${REPO_ROOT}'
+});
+process.stdout.write(id);
+" 2>/dev/null || echo "")
+
+# 2. Spawn Task() agent (unchanged)
+Task(
+  prompt="...",
+  subagent_type="${AGENT_TYPE}",
+  description="..."
+)
+
+# 3. After agent completes: record exit reason and write diagnostic entry
+EXIT_REASON=$( <check artifact exists> && echo "success" || echo "error" )
+node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+dh.afterAgentSpawn({
+  diagId: '${DIAG_ID}',
+  exitReason: '${EXIT_REASON}',
+  repoRoot: '${REPO_ROOT}'
+});
+" 2>/dev/null || true
+```
+
+**Key design principles:**
+- **Non-blocking:** All hook calls are wrapped in `2>/dev/null || true` (bash) or
+  try/catch (JS). If diagnostic capture fails, pipeline continues normally.
+- **No prompt storage:** Only a hash of the prompt is stored, not the full text.
+  Use `shortHash()` from `agent-diagnostics.cjs` for longer prompts.
+- **Exit reason detection:** Use artifact existence checks (e.g., `PLAN.md` exists
+  means planner succeeded) rather than relying on Task() return values.
+- **Graceful degradation:** If `agent-diagnostics.cjs` is not available (dependency
+  PR not merged), `diagnostic-hooks.cjs` logs a warning and returns empty handles.
+
+**Diagnostic entries are written to:** `.mgw/diagnostics/<issueNumber>-<timestamp>.json`
+
+**Instrumented agent spawns in mgw:run:**
+
+| Agent | File | Step |
+|-------|------|------|
+| Comment classifier | `run/triage.md` | preflight_comment_check |
+| Planner (quick) | `run/execute.md` | execute_gsd_quick step 3 |
+| Plan-checker (quick) | `run/execute.md` | execute_gsd_quick step 6 |
+| Executor (quick) | `run/execute.md` | execute_gsd_quick step 7 |
+| Verifier (quick) | `run/execute.md` | execute_gsd_quick step 9 |
+| Planner (milestone) | `run/execute.md` | execute_gsd_milestone step b |
+| Executor (milestone) | `run/execute.md` | execute_gsd_milestone step d |
+| Verifier (milestone) | `run/execute.md` | execute_gsd_milestone step e |
+| PR creator | `run/pr-create.md` | create_pr |
+
 ## Anti-Patterns
 
 - **NEVER** use Skill invocation from within a Task() agent — Skills don't resolve inside subagents

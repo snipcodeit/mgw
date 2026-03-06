@@ -65,7 +65,7 @@ QUICK_DIR=".planning/quick/${next_num}-${slug}"
 mkdir -p "$QUICK_DIR"
 ```
 
-3. **Assemble MGW context and spawn planner (task agent):**
+3. **Assemble MGW context and spawn planner (task agent, with diagnostic capture):**
 
 Assemble multi-machine context from GitHub issue comments before spawning:
 ```bash
@@ -82,6 +82,23 @@ ic.buildGSDPromptContext({
 " 2>/dev/null || echo "")
 ```
 
+<!-- mgw:criticality=critical  spawn_point=planner -->
+<!-- Critical: plan creation is required for pipeline to proceed.
+     On failure: retry via existing retry loop, then dead-letter. -->
+
+**Pre-spawn diagnostic hook (planner):**
+```bash
+DIAG_PLANNER=$(node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+const id = dh.beforeAgentSpawn({
+  agentType: 'gsd-planner',
+  issueNumber: ${ISSUE_NUMBER},
+  prompt: 'Plan: ${issue_title}',
+  repoRoot: '${REPO_ROOT}'
+});
+process.stdout.write(id);
+" 2>/dev/null || echo "")
+```
 ```
 Task(
   prompt="
@@ -144,11 +161,23 @@ updateCheckpoint(${ISSUE_NUMBER}, {
   artifacts: [{ path: '${QUICK_DIR}/${next_num}-PLAN.md', type: 'plan', created_at: new Date().toISOString() }],
   step_history: [{ step: 'plan', completed_at: new Date().toISOString(), agent_type: 'gsd-planner', output_path: '${QUICK_DIR}/${next_num}-PLAN.md' }],
   resume: { action: '${FULL_MODE ? \"run-plan-checker\" : \"spawn-executor\"}', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+
+**Post-spawn diagnostic hook (planner):**
+```bash
+PLANNER_EXIT=$( [ -f "${QUICK_DIR}/${next_num}-PLAN.md" ] && echo "success" || echo "error" )
+node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+dh.afterAgentSpawn({
+  diagId: '${DIAG_PLANNER}',
+  exitReason: '${PLANNER_EXIT}',
+  repoRoot: '${REPO_ROOT}'
 });
 " 2>/dev/null || true
 ```
 
 4b. **Publish plan comment (non-blocking):**
+
+4. **Publish plan comment (non-blocking):**
 ```bash
 PLAN_FILE="${QUICK_DIR}/${next_num}-PLAN.md"
 if [ -f "$PLAN_FILE" ]; then
@@ -171,6 +200,37 @@ PLAN_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify plan-structur
 Parse the JSON result. If structural issues found, include them in the plan-checker prompt below so it has concrete problems to evaluate rather than searching from scratch.
 
 6. **(If --full) Spawn plan-checker, handle revision loop (max 2 iterations):**
+
+<!-- mgw:criticality=advisory  spawn_point=plan-checker -->
+<!-- Advisory: plan checking is a quality gate, not a pipeline blocker.
+     If this agent fails, log a warning and proceed with the unchecked plan.
+     The plan was already verified structurally by gsd-tools verify plan-structure.
+
+     Graceful degradation pattern:
+     ```
+     PLAN_CHECK_RESULT=$(wrapAdvisoryAgent(Task(...), 'plan-checker', {
+       issueNumber: ISSUE_NUMBER,
+       fallback: '## VERIFICATION PASSED (plan-checker unavailable — structural check only)'
+     }))
+     # If fallback returned, skip the revision loop and proceed to execution
+     ```
+-->
+
+6. **(If --full) Spawn plan-checker (with diagnostic capture), handle revision loop (max 2 iterations):**
+
+**Pre-spawn diagnostic hook (plan-checker):**
+```bash
+DIAG_CHECKER=$(node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+const id = dh.beforeAgentSpawn({
+  agentType: 'gsd-plan-checker',
+  issueNumber: ${ISSUE_NUMBER},
+  prompt: 'Check quick plan: ${issue_title}',
+  repoRoot: '${REPO_ROOT}'
+});
+process.stdout.write(id);
+" 2>/dev/null || echo "")
+```
 ```
 Task(
   prompt="
@@ -212,10 +272,43 @@ Skip: context compliance (no CONTEXT.md), cross-plan deps (single plan), ROADMAP
 )
 ```
 
+**Post-spawn diagnostic hook (plan-checker):**
+```bash
+node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+dh.afterAgentSpawn({
+  diagId: '${DIAG_CHECKER}',
+  exitReason: 'success',
+  repoRoot: '${REPO_ROOT}'
+});
+" 2>/dev/null || true
+```
+
 If issues found and iteration < 2: spawn planner revision, then re-check.
 If iteration >= 2: offer force proceed or abort.
 
 7. **Spawn executor (task agent):**
+
+<!-- mgw:criticality=critical  spawn_point=executor -->
+<!-- Critical: execution produces the code changes. Without it, there is
+     nothing to commit or PR. On failure: retry via existing retry loop,
+     then dead-letter. -->
+
+7. **Spawn executor (task agent, with diagnostic capture):**
+
+**Pre-spawn diagnostic hook (executor):**
+```bash
+DIAG_EXECUTOR=$(node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+const id = dh.beforeAgentSpawn({
+  agentType: 'gsd-executor',
+  issueNumber: ${ISSUE_NUMBER},
+  prompt: 'Execute: ${issue_title}',
+  repoRoot: '${REPO_ROOT}'
+});
+process.stdout.write(id);
+" 2>/dev/null || echo "")
+```
 ```
 Task(
   prompt="
@@ -252,11 +345,23 @@ updateCheckpoint(${ISSUE_NUMBER}, {
   artifacts: [{ path: '${QUICK_DIR}/${next_num}-SUMMARY.md', type: 'summary', created_at: new Date().toISOString() }],
   step_history: [{ step: 'execute', completed_at: new Date().toISOString(), agent_type: 'gsd-executor', output_path: '${QUICK_DIR}/${next_num}-SUMMARY.md' }],
   resume: { action: '${FULL_MODE ? \"spawn-verifier\" : \"create-pr\"}', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+
+**Post-spawn diagnostic hook (executor):**
+```bash
+EXECUTOR_EXIT=$( [ -f "${QUICK_DIR}/${next_num}-SUMMARY.md" ] && echo "success" || echo "error" )
+node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+dh.afterAgentSpawn({
+  diagId: '${DIAG_EXECUTOR}',
+  exitReason: '${EXECUTOR_EXIT}',
+  repoRoot: '${REPO_ROOT}'
 });
 " 2>/dev/null || true
 ```
 
 8b. **Publish summary comment (non-blocking):**
+
+8. **Publish summary comment (non-blocking):**
 ```bash
 SUMMARY_FILE="${QUICK_DIR}/${next_num}-SUMMARY.md"
 if [ -f "$SUMMARY_FILE" ]; then
@@ -277,6 +382,39 @@ VERIFY_RESULT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify-summary "$
 Parse JSON result. Use `passed` field for go/no-go. Checks summary existence, files created, and commits.
 
 9. **(If --full) Spawn verifier:**
+
+<!-- mgw:criticality=advisory  spawn_point=verifier -->
+<!-- Advisory: verification is quality assurance after execution is complete.
+     The code changes and commits already exist. If verification fails,
+     log a warning and proceed to PR creation with a note that verification
+     was skipped.
+
+     Graceful degradation pattern:
+     ```
+     VERIFY_RESULT=$(wrapAdvisoryAgent(Task(...), 'verifier', {
+       issueNumber: ISSUE_NUMBER,
+       fallback: null
+     }))
+     # If fallback returned (null), create a minimal VERIFICATION.md:
+     #   "## VERIFICATION SKIPPED\nVerifier agent unavailable. Manual review recommended."
+     ```
+-->
+
+9. **(If --full) Spawn verifier (with diagnostic capture):**
+
+**Pre-spawn diagnostic hook (verifier):**
+```bash
+DIAG_VERIFIER=$(node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+const id = dh.beforeAgentSpawn({
+  agentType: 'gsd-verifier',
+  issueNumber: ${ISSUE_NUMBER},
+  prompt: 'Verify: ${issue_title}',
+  repoRoot: '${REPO_ROOT}'
+});
+process.stdout.write(id);
+" 2>/dev/null || echo "")
+```
 ```
 Task(
   prompt="
@@ -309,11 +447,23 @@ updateCheckpoint(${ISSUE_NUMBER}, {
   artifacts: [{ path: '${QUICK_DIR}/${next_num}-VERIFICATION.md', type: 'verification', created_at: new Date().toISOString() }],
   step_history: [{ step: 'verify', completed_at: new Date().toISOString(), agent_type: 'gsd-verifier', output_path: '${QUICK_DIR}/${next_num}-VERIFICATION.md' }],
   resume: { action: 'create-pr', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+
+**Post-spawn diagnostic hook (verifier):**
+```bash
+VERIFIER_EXIT=$( [ -f "${QUICK_DIR}/${next_num}-VERIFICATION.md" ] && echo "success" || echo "error" )
+node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+dh.afterAgentSpawn({
+  diagId: '${DIAG_VERIFIER}',
+  exitReason: '${VERIFIER_EXIT}',
+  repoRoot: '${REPO_ROOT}'
 });
 " 2>/dev/null || true
 ```
 
 10b. **Publish verification comment (non-blocking, --full only):**
+
+10. **Publish verification comment (non-blocking, --full only):**
 ```bash
 VERIFICATION_FILE="${QUICK_DIR}/${next_num}-VERIFICATION.md"
 if [ -f "$VERIFICATION_FILE" ]; then
@@ -347,8 +497,13 @@ If any step above fails (executor or verifier agent returns error, summary missi
 
 ```bash
 # On failure — classify and decide whether to retry
+# CRITICALITY-AWARE: check if the failing agent is advisory first.
+# Advisory agent failures are logged and skipped (pipeline continues).
+# Critical agent failures follow the existing retry/dead-letter flow.
+
 FAILURE_CLASS=$(node -e "
 const { classifyFailure, canRetry, incrementRetry, getBackoffMs } = require('./lib/retry.cjs');
+const { isAdvisory } = require('./lib/agent-criticality.cjs');
 const { loadActiveIssue } = require('./lib/state.cjs');
 const fs = require('fs'), path = require('path');
 
@@ -358,29 +513,43 @@ const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.js
 const filePath = path.join(activeDir, file);
 let issueState = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
 
-// Classify the failure from the error context
-const error = { message: '${EXECUTION_ERROR_MESSAGE}' };
-const result = classifyFailure(error);
-console.error('Failure classified as: ' + result.class + ' — ' + result.reason);
-
-// Persist failure class to state
-issueState.last_failure_class = result.class;
-
-if (result.class === 'transient' && canRetry(issueState)) {
-  const backoff = getBackoffMs(issueState.retry_count || 0);
-  issueState = incrementRetry(issueState);
-  fs.writeFileSync(filePath, JSON.stringify(issueState, null, 2));
-  // Output: backoff ms so shell can sleep
-  console.log('retry:' + backoff + ':' + result.class);
+// Check if the failing agent is advisory
+const failingSpawnPoint = '${FAILING_SPAWN_POINT}';
+if (failingSpawnPoint && isAdvisory(failingSpawnPoint)) {
+  // Advisory agent failure — log warning and continue pipeline
+  console.error('MGW WARNING: Advisory agent \"' + failingSpawnPoint + '\" failed. Continuing pipeline.');
+  console.log('advisory_degraded:' + failingSpawnPoint);
 } else {
-  // Permanent failure or retries exhausted — dead-letter
-  issueState.dead_letter = true;
-  fs.writeFileSync(filePath, JSON.stringify(issueState, null, 2));
-  console.log('dead_letter:' + result.class);
+  // Critical agent failure — classify and apply retry/dead-letter logic
+  const error = { message: '${EXECUTION_ERROR_MESSAGE}' };
+  const result = classifyFailure(error);
+  console.error('Failure classified as: ' + result.class + ' — ' + result.reason);
+
+  // Persist failure class to state
+  issueState.last_failure_class = result.class;
+
+  if (result.class === 'transient' && canRetry(issueState)) {
+    const backoff = getBackoffMs(issueState.retry_count || 0);
+    issueState = incrementRetry(issueState);
+    fs.writeFileSync(filePath, JSON.stringify(issueState, null, 2));
+    // Output: backoff ms so shell can sleep
+    console.log('retry:' + backoff + ':' + result.class);
+  } else {
+    // Permanent failure or retries exhausted — dead-letter
+    issueState.dead_letter = true;
+    fs.writeFileSync(filePath, JSON.stringify(issueState, null, 2));
+    console.log('dead_letter:' + result.class);
+  }
 }
 ")
 
 case "$FAILURE_CLASS" in
+  advisory_degraded:*)
+    DEGRADED_AGENT=$(echo "$FAILURE_CLASS" | cut -d':' -f2)
+    echo "MGW: Advisory agent '${DEGRADED_AGENT}' failed — gracefully degraded, continuing pipeline."
+    # Do NOT set EXECUTION_SUCCEEDED=false — pipeline continues
+    # Skip to next step (advisory output is optional)
+    ;;
   retry:*)
     BACKOFF_MS=$(echo "$FAILURE_CLASS" | cut -d':' -f2)
     BACKOFF_SEC=$(( (BACKOFF_MS + 999) / 1000 ))
@@ -568,7 +737,7 @@ fi
    # Parse PHASE_INIT JSON for: planner_model, checker_model
    ```
 
-   **b. Assemble MGW context and spawn planner agent (gsd:plan-phase):**
+   **b. Assemble MGW context and spawn planner agent (gsd:plan-phase, with diagnostic capture):**
 
    Assemble multi-machine context from GitHub issue comments before spawning:
    ```bash
@@ -585,6 +754,23 @@ fi
    " 2>/dev/null || echo "")
    ```
 
+<!-- mgw:criticality=critical  spawn_point=milestone-planner -->
+   <!-- Critical: phase planning is required — cannot execute without a plan.
+        On failure: retry via milestone retry loop, then dead-letter. -->
+
+**Pre-spawn diagnostic hook (milestone planner):**
+   ```bash
+   DIAG_MS_PLANNER=$(node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   const id = dh.beforeAgentSpawn({
+     agentType: 'gsd-planner',
+     issueNumber: ${ISSUE_NUMBER},
+     prompt: 'Plan phase ${PHASE_NUMBER}: ${PHASE_NAME}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   process.stdout.write(id);
+   " 2>/dev/null || echo "")
+   ```
    ```
    Task(
      prompt="
@@ -618,6 +804,19 @@ fi
    )
    ```
 
+   **Post-spawn diagnostic hook (milestone planner):**
+   ```bash
+   MS_PLANNER_EXIT=$( ls ${phase_dir}/*-PLAN.md 2>/dev/null | wc -l | xargs test 0 -lt && echo "success" || echo "error" )
+   node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   dh.afterAgentSpawn({
+     diagId: '${DIAG_MS_PLANNER}',
+     exitReason: '${MS_PLANNER_EXIT}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   " 2>/dev/null || true
+   ```
+
    **b2. Publish plan comment (non-blocking):**
    ```bash
    PLAN_FILES=$(ls ${phase_dir}/*-PLAN.md 2>/dev/null)
@@ -643,10 +842,29 @@ fi
    fi
    ```
 
-   **d. Init execute-phase and spawn executor agent (gsd:execute-phase):**
+   **d. Init execute-phase and spawn executor agent (gsd:execute-phase, with diagnostic capture):**
    ```bash
    EXEC_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init execute-phase "${PHASE_NUMBER}")
    # Parse EXEC_INIT JSON for: executor_model, verifier_model, phase_dir, plans, incomplete_plans, plan_count
+   ```
+
+<!-- mgw:criticality=critical  spawn_point=milestone-executor -->
+   <!-- Critical: phase execution produces the code changes. Without it,
+        there is nothing to commit or PR. On failure: retry via milestone
+        retry loop, then dead-letter. -->
+
+**Pre-spawn diagnostic hook (milestone executor):**
+   ```bash
+   DIAG_MS_EXECUTOR=$(node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   const id = dh.beforeAgentSpawn({
+     agentType: 'gsd-executor',
+     issueNumber: ${ISSUE_NUMBER},
+     prompt: 'Execute phase ${PHASE_NUMBER}: ${PHASE_NAME}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   process.stdout.write(id);
+   " 2>/dev/null || echo "")
    ```
    ```
    Task(
@@ -678,6 +896,19 @@ fi
    )
    ```
 
+   **Post-spawn diagnostic hook (milestone executor):**
+   ```bash
+   MS_EXECUTOR_EXIT=$( ls ${phase_dir}/*-SUMMARY.md 2>/dev/null | wc -l | xargs test 0 -lt && echo "success" || echo "error" )
+   node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   dh.afterAgentSpawn({
+     diagId: '${DIAG_MS_EXECUTOR}',
+     exitReason: '${MS_EXECUTOR_EXIT}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   " 2>/dev/null || true
+   ```
+
    **d2. Publish summary comment (non-blocking):**
    ```bash
    SUMMARY_FILES=$(ls ${phase_dir}/*-SUMMARY.md 2>/dev/null)
@@ -692,7 +923,40 @@ fi
    done
    ```
 
-   **e. Spawn verifier agent (gsd:verify-phase):**
+**e. Spawn verifier agent (gsd:verify-phase):**
+
+   <!-- mgw:criticality=advisory  spawn_point=milestone-verifier -->
+   <!-- Advisory: phase verification is quality assurance after execution
+        completes. The code changes and commits already exist. If verification
+        fails, log a warning and proceed with a note that verification was
+        skipped for this phase.
+
+        Graceful degradation pattern:
+        ```
+        VERIFY_RESULT=$(wrapAdvisoryAgent(Task(...), 'milestone-verifier', {
+          issueNumber: ISSUE_NUMBER,
+          fallback: null
+        }))
+        # If fallback returned, create minimal VERIFICATION.md:
+        #   "## VERIFICATION SKIPPED\nVerifier agent unavailable for phase ${PHASE_NUMBER}."
+        ```
+   -->
+
+**e. Spawn verifier agent (gsd:verify-phase, with diagnostic capture):**
+
+   **Pre-spawn diagnostic hook (milestone verifier):**
+   ```bash
+   DIAG_MS_VERIFIER=$(node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   const id = dh.beforeAgentSpawn({
+     agentType: 'gsd-verifier',
+     issueNumber: ${ISSUE_NUMBER},
+     prompt: 'Verify phase ${PHASE_NUMBER}: ${PHASE_NAME}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   process.stdout.write(id);
+   " 2>/dev/null || echo "")
+   ```
    ```
    Task(
      prompt="
@@ -718,6 +982,19 @@ fi
      model="${VERIFIER_MODEL}",
      description="Verify phase ${PHASE_NUMBER}: ${PHASE_NAME}"
    )
+   ```
+
+   **Post-spawn diagnostic hook (milestone verifier):**
+   ```bash
+   MS_VERIFIER_EXIT=$( ls ${phase_dir}/*-VERIFICATION.md 2>/dev/null | wc -l | xargs test 0 -lt && echo "success" || echo "error" )
+   node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   dh.afterAgentSpawn({
+     diagId: '${DIAG_MS_VERIFIER}',
+     exitReason: '${MS_VERIFIER_EXIT}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   " 2>/dev/null || true
    ```
 
    **e2. Publish verification comment (non-blocking):**
