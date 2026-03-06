@@ -180,6 +180,27 @@ esac
 If no checkpoint found (or checkpoint is at triage step only), continue with
 normal pipeline stage routing below.
 
+**Initialize checkpoint** when pipeline first transitions past triage:
+```bash
+# Checkpoint initialization — called once when pipeline execution begins.
+# Sets pipeline_step to "triage" with route selection progress.
+# Subsequent stages update the checkpoint via updateCheckpoint().
+# All checkpoint writes are atomic (write to .tmp then rename).
+node -e "
+const { updateCheckpoint } = require('./lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'triage',
+  step_progress: {
+    comment_check_done: true,
+    route_selected: '${GSD_ROUTE}'
+  },
+  resume: {
+    action: 'begin-execution',
+    context: { gsd_route: '${GSD_ROUTE}', branch: '${BRANCH_NAME}' }
+  }
+});
+" 2>/dev/null || true
+```
 Check pipeline_stage:
   - "triaged" → proceed to GSD execution
   - "planning" / "executing" → resume from where we left off

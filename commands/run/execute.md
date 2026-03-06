@@ -4,9 +4,16 @@ description: Execute GSD pipeline (quick or milestone route) and post execution 
 ---
 
 <step name="execute_gsd_quick">
-**Execute GSD pipeline (quick / quick --full route):**
+**Execute GSD pipeline (quick / quick --full / plan-phase route):**
 
-Only run this step if gsd_route is "gsd:quick" or "gsd:quick --full".
+Only run this step if gsd_route matches any of these (prefixed or unprefixed):
+- `quick` or `gsd:quick`
+- `quick --full` or `gsd:quick --full`
+- `plan-phase` or `gsd:plan-phase`
+
+`plan-phase` follows the same lifecycle as `quick --full` (init -> plan -> check -> execute -> verify -> publish) so it is handled here with FULL_MODE forced on.
+
+`plan-phase` follows the same lifecycle as `quick --full` (init → plan → check → execute → verify → publish) so it is handled here with FULL_MODE forced on.
 
 **Retry loop initialization:**
 ```bash
@@ -144,6 +151,19 @@ Return: ## PLANNING COMPLETE with plan path
 )
 ```
 
+4. **Update checkpoint after planner completes:**
+```bash
+# Checkpoint: record plan completion and set resume to plan-check or execution
+node -e "
+const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'plan',
+  step_progress: { plan_path: '${QUICK_DIR}/${next_num}-PLAN.md', plan_checked: false, revision_count: 0 },
+  last_agent_output: '${QUICK_DIR}/${next_num}-PLAN.md',
+  artifacts: [{ path: '${QUICK_DIR}/${next_num}-PLAN.md', type: 'plan', created_at: new Date().toISOString() }],
+  step_history: [{ step: 'plan', completed_at: new Date().toISOString(), agent_type: 'gsd-planner', output_path: '${QUICK_DIR}/${next_num}-PLAN.md' }],
+  resume: { action: '${FULL_MODE ? \"run-plan-checker\" : \"spawn-executor\"}', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+
 **Post-spawn diagnostic hook (planner):**
 ```bash
 PLANNER_EXIT=$( [ -f "${QUICK_DIR}/${next_num}-PLAN.md" ] && echo "success" || echo "error" )
@@ -156,6 +176,27 @@ dh.afterAgentSpawn({
 });
 " 2>/dev/null || true
 ```
+
+4. **Checkpoint: record plan completion (atomic write):**
+```bash
+# Checkpoint: record plan completion and set resume to plan-check or execution.
+# All checkpoint writes use atomicWriteJson() — write to .tmp then rename.
+node -e "
+const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'plan',
+  step_progress: { plan_path: '${QUICK_DIR}/${next_num}-PLAN.md', plan_checked: false, revision_count: 0 },
+  last_agent_output: '${QUICK_DIR}/${next_num}-PLAN.md',
+  artifacts: [{ path: '${QUICK_DIR}/${next_num}-PLAN.md', type: 'plan', created_at: new Date().toISOString() }],
+  step_history: [{ step: 'plan', completed_at: new Date().toISOString(), agent_type: 'gsd-planner', output_path: '${QUICK_DIR}/${next_num}-PLAN.md' }],
+  resume: { action: '${FULL_MODE ? \"run-plan-checker\" : \"spawn-executor\"}', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+});
+" 2>/dev/null || true
+```
+
+4b. **Publish plan comment (non-blocking):**
+
+4b. **Publish plan comment (non-blocking):**
 
 4. **Publish plan comment (non-blocking):**
 ```bash
@@ -313,6 +354,19 @@ Execute quick task ${next_num}.
 )
 ```
 
+8. **Update checkpoint after executor completes:**
+```bash
+# Checkpoint: record execution completion and set resume to verification
+node -e "
+const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'execute',
+  step_progress: { tasks_completed: ${TASK_COUNT}, tasks_total: ${TASK_COUNT} },
+  last_agent_output: '${QUICK_DIR}/${next_num}-SUMMARY.md',
+  artifacts: [{ path: '${QUICK_DIR}/${next_num}-SUMMARY.md', type: 'summary', created_at: new Date().toISOString() }],
+  step_history: [{ step: 'execute', completed_at: new Date().toISOString(), agent_type: 'gsd-executor', output_path: '${QUICK_DIR}/${next_num}-SUMMARY.md' }],
+  resume: { action: '${FULL_MODE ? \"spawn-verifier\" : \"create-pr\"}', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+
 **Post-spawn diagnostic hook (executor):**
 ```bash
 EXECUTOR_EXIT=$( [ -f "${QUICK_DIR}/${next_num}-SUMMARY.md" ] && echo "success" || echo "error" )
@@ -325,6 +379,26 @@ dh.afterAgentSpawn({
 });
 " 2>/dev/null || true
 ```
+
+8. **Checkpoint: record execution completion (atomic write):**
+```bash
+# Checkpoint: record execution completion and set resume to verification or PR creation.
+node -e "
+const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'execute',
+  step_progress: { tasks_completed: ${TASK_COUNT}, tasks_total: ${TASK_COUNT} },
+  last_agent_output: '${QUICK_DIR}/${next_num}-SUMMARY.md',
+  artifacts: [{ path: '${QUICK_DIR}/${next_num}-SUMMARY.md', type: 'summary', created_at: new Date().toISOString() }],
+  step_history: [{ step: 'execute', completed_at: new Date().toISOString(), agent_type: 'gsd-executor', output_path: '${QUICK_DIR}/${next_num}-SUMMARY.md' }],
+  resume: { action: '${FULL_MODE ? \"spawn-verifier\" : \"create-pr\"}', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+});
+" 2>/dev/null || true
+```
+
+8b. **Publish summary comment (non-blocking):**
+
+8b. **Publish summary comment (non-blocking):**
 
 8. **Publish summary comment (non-blocking):**
 ```bash
@@ -400,6 +474,19 @@ Check must_haves against actual codebase. Create VERIFICATION.md at ${QUICK_DIR}
 )
 ```
 
+10. **Update checkpoint after verifier completes (--full only):**
+```bash
+# Checkpoint: record verification completion and set resume to PR creation
+node -e "
+const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'verify',
+  step_progress: { verification_path: '${QUICK_DIR}/${next_num}-VERIFICATION.md', must_haves_checked: true },
+  last_agent_output: '${QUICK_DIR}/${next_num}-VERIFICATION.md',
+  artifacts: [{ path: '${QUICK_DIR}/${next_num}-VERIFICATION.md', type: 'verification', created_at: new Date().toISOString() }],
+  step_history: [{ step: 'verify', completed_at: new Date().toISOString(), agent_type: 'gsd-verifier', output_path: '${QUICK_DIR}/${next_num}-VERIFICATION.md' }],
+  resume: { action: 'create-pr', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+
 **Post-spawn diagnostic hook (verifier):**
 ```bash
 VERIFIER_EXIT=$( [ -f "${QUICK_DIR}/${next_num}-VERIFICATION.md" ] && echo "success" || echo "error" )
@@ -412,6 +499,26 @@ dh.afterAgentSpawn({
 });
 " 2>/dev/null || true
 ```
+
+10. **Checkpoint: record verification completion (atomic write, --full only):**
+```bash
+# Checkpoint: record verification completion and set resume to PR creation.
+node -e "
+const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'verify',
+  step_progress: { verification_path: '${QUICK_DIR}/${next_num}-VERIFICATION.md', must_haves_checked: true },
+  last_agent_output: '${QUICK_DIR}/${next_num}-VERIFICATION.md',
+  artifacts: [{ path: '${QUICK_DIR}/${next_num}-VERIFICATION.md', type: 'verification', created_at: new Date().toISOString() }],
+  step_history: [{ step: 'verify', completed_at: new Date().toISOString(), agent_type: 'gsd-verifier', output_path: '${QUICK_DIR}/${next_num}-VERIFICATION.md' }],
+  resume: { action: 'create-pr', context: { quick_dir: '${QUICK_DIR}', plan_num: ${next_num} } }
+});
+" 2>/dev/null || true
+```
+
+10b. **Publish verification comment (non-blocking, --full only):**
+
+10b. **Publish verification comment (non-blocking, --full only):**
 
 10. **Publish verification comment (non-blocking, --full only):**
 ```bash
@@ -767,6 +874,21 @@ fi
    " 2>/dev/null || true
    ```
 
+   **b1b. Checkpoint: record milestone phase plan completion (atomic write):**
+   ```bash
+   # Checkpoint: record milestone plan completion for this phase.
+   node -e "
+   const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+   updateCheckpoint(${ISSUE_NUMBER}, {
+     pipeline_step: 'plan',
+     step_progress: { gsd_phase: ${PHASE_NUMBER}, plan_path: '${phase_dir}' },
+     last_agent_output: '${phase_dir}',
+     step_history: [{ step: 'plan', completed_at: new Date().toISOString(), agent_type: 'gsd-planner', output_path: '${phase_dir}' }],
+     resume: { action: 'execute-phase', context: { phase_number: ${PHASE_NUMBER}, phase_dir: '${phase_dir}' } }
+   });
+   " 2>/dev/null || true
+   ```
+
    **b2. Publish plan comment (non-blocking):**
    ```bash
    PLAN_FILES=$(ls ${phase_dir}/*-PLAN.md 2>/dev/null)
@@ -859,6 +981,21 @@ fi
    " 2>/dev/null || true
    ```
 
+   **d1b. Checkpoint: record milestone phase execution completion (atomic write):**
+   ```bash
+   # Checkpoint: record milestone execution completion for this phase.
+   node -e "
+   const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+   updateCheckpoint(${ISSUE_NUMBER}, {
+     pipeline_step: 'execute',
+     step_progress: { gsd_phase: ${PHASE_NUMBER} },
+     last_agent_output: '${phase_dir}',
+     step_history: [{ step: 'execute', completed_at: new Date().toISOString(), agent_type: 'gsd-executor', output_path: '${phase_dir}' }],
+     resume: { action: 'verify-phase', context: { phase_number: ${PHASE_NUMBER}, phase_dir: '${phase_dir}' } }
+   });
+   " 2>/dev/null || true
+   ```
+
    **d2. Publish summary comment (non-blocking):**
    ```bash
    SUMMARY_FILES=$(ls ${phase_dir}/*-SUMMARY.md 2>/dev/null)
@@ -943,6 +1080,21 @@ fi
      diagId: '${DIAG_MS_VERIFIER}',
      exitReason: '${MS_VERIFIER_EXIT}',
      repoRoot: '${REPO_ROOT}'
+   });
+   " 2>/dev/null || true
+   ```
+
+   **e1b. Checkpoint: record milestone phase verification completion (atomic write):**
+   ```bash
+   # Checkpoint: record milestone verification completion for this phase.
+   node -e "
+   const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+   updateCheckpoint(${ISSUE_NUMBER}, {
+     pipeline_step: 'verify',
+     step_progress: { gsd_phase: ${PHASE_NUMBER}, verification_complete: true },
+     last_agent_output: '${phase_dir}',
+     step_history: [{ step: 'verify', completed_at: new Date().toISOString(), agent_type: 'gsd-verifier', output_path: '${phase_dir}' }],
+     resume: { action: 'next-phase', context: { completed_phase: ${PHASE_NUMBER}, phase_dir: '${phase_dir}' } }
    });
    " 2>/dev/null || true
    ```
