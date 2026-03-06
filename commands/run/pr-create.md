@@ -105,6 +105,11 @@ ic.assembleIssueContext(${ISSUE_NUMBER})
 
 Read issue state for context.
 
+<!-- mgw:criticality=critical  spawn_point=pr-creator -->
+<!-- Critical: PR creation is the pipeline's final output. Without it,
+     the entire pipeline run produces no deliverable. On failure: the
+     pipeline marks the issue as failed (no retry — PR creation errors
+     are typically permanent: branch conflicts, permissions, etc.). -->
 ```
 Task(
   prompt="
