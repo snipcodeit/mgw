@@ -105,6 +105,20 @@ ic.assembleIssueContext(${ISSUE_NUMBER})
 
 Read issue state for context.
 
+**Pre-spawn diagnostic hook (PR creator):**
+```bash
+DIAG_PR_CREATOR=$(node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+const id = dh.beforeAgentSpawn({
+  agentType: 'general-purpose',
+  issueNumber: ${ISSUE_NUMBER},
+  prompt: 'Create PR for #${ISSUE_NUMBER}',
+  repoRoot: '${REPO_ROOT}'
+});
+process.stdout.write(id);
+" 2>/dev/null || echo "")
+```
+
 ```
 Task(
   prompt="
@@ -205,6 +219,18 @@ ${PROGRESS_TABLE}
   subagent_type="general-purpose",
   description="Create PR for #${ISSUE_NUMBER}"
 )
+```
+
+**Post-spawn diagnostic hook (PR creator):**
+```bash
+node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+dh.afterAgentSpawn({
+  diagId: '${DIAG_PR_CREATOR}',
+  exitReason: '${PR_NUMBER ? \"success\" : \"error\"}',
+  repoRoot: '${REPO_ROOT}'
+});
+" 2>/dev/null || true
 ```
 
 Parse PR number and URL from agent response.
