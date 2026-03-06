@@ -241,6 +241,20 @@ dh.afterAgentSpawn({
 
 Parse PR number and URL from agent response.
 
+**Checkpoint: record PR creation (atomic write):**
+```bash
+# Checkpoint: record PR creation — final checkpoint before pipeline completion.
+node -e "
+const { updateCheckpoint } = require('${REPO_ROOT}/lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'pr',
+  step_progress: { branch_pushed: true, pr_number: ${PR_NUMBER}, pr_url: '${PR_URL}' },
+  step_history: [{ step: 'pr', completed_at: new Date().toISOString(), agent_type: 'general-purpose', output_path: '${PR_URL}' }],
+  resume: { action: 'cleanup', context: { pr_number: ${PR_NUMBER}, pr_url: '${PR_URL}' } }
+});
+" 2>/dev/null || true
+```
+
 Update state (at `${REPO_ROOT}/.mgw/active/`):
 - linked_pr = PR number
 - pipeline_stage = "pr-created"

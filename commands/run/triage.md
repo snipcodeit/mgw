@@ -38,11 +38,33 @@ If no state file exists → issue not triaged yet. Run triage inline:
   - Execute the mgw:issue triage flow (steps from issue.md) inline.
   - After triage, reload state file.
 
-If state file exists → load it. **Run migrateProjectState() to ensure retry fields exist:**
+If state file exists → load it. **Run migrateProjectState() to ensure retry and checkpoint fields exist:**
 ```bash
 node -e "
 const { migrateProjectState } = require('./lib/state.cjs');
 migrateProjectState();
+" 2>/dev/null || true
+```
+
+**Initialize checkpoint** when pipeline first transitions past triage:
+```bash
+# Checkpoint initialization — called once when pipeline execution begins.
+# Sets pipeline_step to "triage" with route selection progress.
+# Subsequent stages update the checkpoint via updateCheckpoint().
+# All checkpoint writes are atomic (write to .tmp then rename).
+node -e "
+const { updateCheckpoint } = require('./lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'triage',
+  step_progress: {
+    comment_check_done: true,
+    route_selected: '${GSD_ROUTE}'
+  },
+  resume: {
+    action: 'begin-execution',
+    context: { gsd_route: '${GSD_ROUTE}', branch: '${BRANCH_NAME}' }
+  }
+});
 " 2>/dev/null || true
 ```
 
