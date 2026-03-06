@@ -227,6 +227,7 @@ File: `.mgw/active/<number>-<slug>.json`
   "gsd_route": null,
   "gsd_artifacts": { "type": null, "path": null },
   "pipeline_stage": "new|triaged|needs-info|needs-security-review|discussing|approved|planning|diagnosing|executing|verifying|pr-created|done|failed|blocked",
+  "checkpoint": null,
   "comments_posted": [],
   "linked_pr": null,
   "linked_issues": [],
@@ -234,6 +235,177 @@ File: `.mgw/active/<number>-<slug>.json`
   "checkpoint": null
 }
 ```
+
+## Checkpoint Schema
+
+The `checkpoint` field in `.mgw/active/<number>-<slug>.json` tracks fine-grained pipeline
+execution progress. It enables resume after failures, context switches, or multi-session
+execution. The field is `null` until pipeline execution begins (set during the triage-to-
+executing transition).
+
+### Checkpoint Object Structure
+
+```json
+{
+  "checkpoint": {
+    "schema_version": 1,
+    "pipeline_step": "triage|plan|execute|verify|pr",
+    "step_progress": {},
+    "last_agent_output": null,
+    "artifacts": [],
+    "resume": {
+      "action": null,
+      "context": {}
+    },
+    "started_at": "2026-03-06T12:00:00Z",
+    "updated_at": "2026-03-06T12:05:00Z",
+    "step_history": []
+  }
+}
+```
+
+### Checkpoint Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `schema_version` | integer | `1` | Schema version for forward-compatibility. Consumers check this before parsing. New fields can be added without bumping; bump only for breaking structural changes. |
+| `pipeline_step` | string | `"triage"` | Current high-level pipeline step. Values: `"triage"`, `"plan"`, `"execute"`, `"verify"`, `"pr"`. Maps to GSD lifecycle stages but at a coarser grain than `pipeline_stage`. |
+| `step_progress` | object | `{}` | Step-specific progress data. Shape varies by `pipeline_step` (see Step Progress Shapes below). Unknown keys are preserved on read -- consumers must not strip unrecognized fields. |
+| `last_agent_output` | string\|null | `null` | File path (relative to repo root) of the last successful agent output. Updated after each agent spawn completes. Used for resume context injection. |
+| `artifacts` | array | `[]` | Accumulated artifact paths produced during this pipeline run. Each entry is `{ "path": "relative/path", "type": "plan\|summary\|verification\|commit", "created_at": "ISO" }`. Append-only -- never remove entries. |
+| `resume` | object | `{ "action": null, "context": {} }` | Instructions for resuming execution. `action` is a string describing what to do next (e.g., `"spawn-executor"`, `"retry-verifier"`, `"create-pr"`). `context` carries step-specific data needed for resume (e.g., `{ "phase_number": 3, "plan_path": ".planning/..." }`). |
+| `started_at` | string | ISO timestamp | When checkpoint tracking began for this pipeline run. |
+| `updated_at` | string | ISO timestamp | When the checkpoint was last modified. Updated on every checkpoint write. |
+| `step_history` | array | `[]` | Ordered log of completed steps. Each entry: `{ "step": "plan", "completed_at": "ISO", "agent_type": "gsd-planner", "output_path": "..." }`. Append-only. |
+
+### Step Progress Shapes
+
+The `step_progress` object has a different shape depending on the current `pipeline_step`.
+These are the documented shapes; future pipeline steps can define their own without breaking
+existing consumers (unknown keys are preserved).
+
+**When `pipeline_step` is `"triage"`:**
+```json
+{
+  "comment_check_done": false,
+  "route_selected": null
+}
+```
+
+**When `pipeline_step` is `"plan"`:**
+```json
+{
+  "plan_path": null,
+  "plan_checked": false,
+  "revision_count": 0
+}
+```
+
+**When `pipeline_step` is `"execute"`:**
+```json
+{
+  "gsd_phase": null,
+  "total_phases": null,
+  "current_task": null,
+  "tasks_completed": 0,
+  "tasks_total": null,
+  "commits": []
+}
+```
+
+**When `pipeline_step` is `"verify"`:**
+```json
+{
+  "verification_path": null,
+  "must_haves_checked": false,
+  "artifact_check_done": false,
+  "keylink_check_done": false
+}
+```
+
+**When `pipeline_step` is `"pr"`:**
+```json
+{
+  "branch_pushed": false,
+  "pr_number": null,
+  "pr_url": null
+}
+```
+
+### Forward Compatibility Contract
+
+1. **New fields can be added** to the checkpoint object at any level without incrementing
+   `schema_version`. Consumers must tolerate unknown fields (preserve on read-modify-write,
+   ignore on read-only access).
+
+2. **New `pipeline_step` values** can be introduced freely. Existing step_progress shapes
+   are not affected. The `step_progress` for an unrecognized step should be treated as an
+   opaque object (pass through unchanged).
+
+3. **`schema_version` bump** is required only when an existing field changes its type,
+   semantics, or is removed. When bumped, `migrateProjectState()` in `lib/state.cjs` must
+   handle the migration.
+
+4. **`artifacts` and `step_history` are append-only**. Consumers should never modify or
+   remove entries from these arrays. They may be compacted during archival (when pipeline
+   reaches `done` stage and state moves to `.mgw/completed/`).
+
+5. **`resume.context` is opaque** to all consumers except the specific resume handler for
+   the given `resume.action`. This allows step-specific resume data to evolve independently.
+
+### Checkpoint Lifecycle
+
+```
+triage (checkpoint initialized, pipeline_step="triage")
+  |
+  v
+plan (pipeline_step="plan", step_progress tracks planning state)
+  |
+  v
+execute (pipeline_step="execute", step_progress tracks GSD phase/task progress)
+  |
+  v
+verify (pipeline_step="verify", step_progress tracks verification checks)
+  |
+  v
+pr (pipeline_step="pr", step_progress tracks PR creation)
+  |
+  v
+done (checkpoint frozen — archived to .mgw/completed/)
+```
+
+### Checkpoint Update Pattern
+
+```bash
+# Update checkpoint at key pipeline stages using updateCheckpoint()
+node -e "
+const { updateCheckpoint } = require('./lib/state.cjs');
+updateCheckpoint(${ISSUE_NUMBER}, {
+  pipeline_step: 'execute',
+  step_progress: {
+    gsd_phase: ${PHASE_NUMBER},
+    tasks_completed: ${COMPLETED},
+    tasks_total: ${TOTAL}
+  },
+  last_agent_output: '${OUTPUT_PATH}',
+  resume: {
+    action: 'continue-execution',
+    context: { phase_number: ${PHASE_NUMBER} }
+  }
+});
+"
+```
+
+### Consumers
+
+| Consumer | Access Pattern |
+|----------|---------------|
+| run/triage.md | Initialize checkpoint at triage (`pipeline_step: "triage"`) |
+| run/execute.md | Update checkpoint after each agent spawn (`pipeline_step: "plan"\|"execute"\|"verify"`) |
+| run/pr-create.md | Update checkpoint at PR creation (`pipeline_step: "pr"`) |
+| milestone.md | Read checkpoint to determine resume point for failed issues |
+| status.md | Read checkpoint for detailed progress display |
+| sync.md | Compare checkpoint state against GitHub for drift detection |
 
 ## Stage Flow Diagram
 
