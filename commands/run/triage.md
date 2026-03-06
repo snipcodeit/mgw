@@ -359,7 +359,23 @@ NEW_COMMENTS=$(gh issue view $ISSUE_NUMBER --json comments \
   --jq "[.comments[-${NEW_COUNT}:]] | .[] | {author: .author.login, body: .body, createdAt: .createdAt}" 2>/dev/null)
 ```
 
-2. **Spawn classification agent:**
+2. **Spawn classification agent (with diagnostic capture):**
+
+**Pre-spawn diagnostic hook:**
+```bash
+CLASSIFIER_PROMPT="<full classifier prompt assembled above>"
+DIAG_CLASSIFIER=$(node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+const id = dh.beforeAgentSpawn({
+  agentType: 'general-purpose',
+  issueNumber: ${ISSUE_NUMBER},
+  prompt: process.argv[1],
+  repoRoot: '${REPO_ROOT}'
+});
+process.stdout.write(id);
+" "$CLASSIFIER_PROMPT" 2>/dev/null || echo "")
+```
+
 ```
 Task(
   prompt="
@@ -412,6 +428,18 @@ Return ONLY valid JSON:
   subagent_type="general-purpose",
   description="Classify comments on #${ISSUE_NUMBER}"
 )
+```
+
+**Post-spawn diagnostic hook:**
+```bash
+node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+dh.afterAgentSpawn({
+  diagId: '${DIAG_CLASSIFIER}',
+  exitReason: '${CLASSIFICATION_RESULT ? \"success\" : \"error\"}',
+  repoRoot: '${REPO_ROOT}'
+});
+" 2>/dev/null || true
 ```
 
 3. **React based on classification:**
