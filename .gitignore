@@ -9,3 +9,4 @@
 .playwright-mcp/
 dist/
 node_modules/
+coverage/

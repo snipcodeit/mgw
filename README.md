@@ -2,6 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@snipcodeit/mgw)](https://www.npmjs.com/package/@snipcodeit/mgw)
 [![CI](https://github.com/snipcodeit/mgw/actions/workflows/ci.yml/badge.svg)](https://github.com/snipcodeit/mgw/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-70%25-brightgreen)](./coverage/lcov-report/index.html)
 [![npm downloads](https://img.shields.io/npm/dm/@snipcodeit/mgw)](https://www.npmjs.com/package/@snipcodeit/mgw)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![node](https://img.shields.io/node/v/@snipcodeit/mgw)](https://nodejs.org)
