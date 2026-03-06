@@ -361,6 +361,20 @@ NEW_COMMENTS=$(gh issue view $ISSUE_NUMBER --json comments \
 
 2. **Spawn classification agent (with diagnostic capture):**
 
+<!-- mgw:criticality=advisory  spawn_point=comment-classifier -->
+<!-- Advisory: comment classification failure does not block the pipeline.
+     If this agent fails, log a warning and treat all new comments as
+     informational (safe default — pipeline continues with stale data).
+
+     Graceful degradation pattern:
+     ```
+     CLASSIFICATION_RESULT=$(wrapAdvisoryAgent(Task(...), 'comment-classifier', {
+       issueNumber: ISSUE_NUMBER,
+       fallback: '{"classification":"informational","reasoning":"comment classifier unavailable","new_requirements":[],"blocking_reason":""}'
+     }))
+     ```
+-->
+
 **Pre-spawn diagnostic hook:**
 ```bash
 CLASSIFIER_PROMPT="<full classifier prompt assembled above>"
