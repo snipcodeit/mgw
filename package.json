@@ -16,7 +16,9 @@
   "scripts": {
     "build": "pkgroll --clean-dist --src .",
     "dev": "pkgroll --watch --src .",
-    "test": "node --test test/*.test.cjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:node": "node --test test/*.test.cjs",
     "lint": "eslint lib/ bin/ test/",
     "prepublishOnly": "npm run build",
     "completions": "node bin/generate-completions.cjs",
@@ -31,7 +33,8 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.0.2",
-    "pkgroll": "^2.26.3"
+    "pkgroll": "^2.26.3",
+    "vitest": "^2.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
