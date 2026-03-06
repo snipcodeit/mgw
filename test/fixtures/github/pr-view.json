@@ -1,0 +1,10 @@
+{
+  "number": 99,
+  "title": "feat: add mock github layer",
+  "state": "OPEN",
+  "mergedAt": null,
+  "url": "https://github.com/snipcodeit/mgw/pull/99",
+  "headRefName": "issue/247-mock-github",
+  "baseRefName": "main",
+  "body": "Implements mock GitHub API layer"
+}

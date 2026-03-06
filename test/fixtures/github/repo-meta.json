@@ -1,0 +1,10 @@
+{
+  "id": "R_kgDOABC",
+  "discussionCategories": {
+    "nodes": [
+      { "id": "DIC_kwDOABC", "name": "Announcements" },
+      { "id": "DIC_kwDOXYZ", "name": "General" },
+      { "id": "DIC_kwDOQ&A", "name": "Q&A" }
+    ]
+  }
+}
