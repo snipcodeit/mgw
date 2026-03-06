@@ -399,6 +399,141 @@ print(json.dumps(result))
   else
     echo "  WARNING: GSD Route field creation failed"
   fi
+
+  # Field 6: Plan Summary (TEXT)
+  PLAN_SUMMARY_RESULT=$(gh api graphql -f query='
+    mutation($projectId: ID!) {
+      createProjectV2Field(input: {
+        projectId: $projectId
+        dataType: TEXT
+        name: "Plan Summary"
+      }) {
+        projectV2Field {
+          ... on ProjectV2Field {
+            id
+            name
+          }
+        }
+      }
+    }
+  ' -f projectId="$NEW_PROJECT_ID" 2>&1)
+
+  PLAN_SUMMARY_FIELD_ID=$(echo "$PLAN_SUMMARY_RESULT" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+print(d['data']['createProjectV2Field']['projectV2Field']['id'])
+" 2>/dev/null)
+
+  if [ -n "$PLAN_SUMMARY_FIELD_ID" ]; then
+    echo "  Plan Summary field created: ${PLAN_SUMMARY_FIELD_ID}"
+  else
+    echo "  WARNING: Plan Summary field creation failed"
+  fi
+
+  # Field 7: Priority (SINGLE_SELECT)
+  PRIORITY_RESULT=$(gh api graphql -f query='
+    mutation($projectId: ID!) {
+      createProjectV2Field(input: {
+        projectId: $projectId
+        dataType: SINGLE_SELECT
+        name: "Priority"
+        singleSelectOptions: [
+          { name: "P0", color: RED, description: "Critical — blocking other work" }
+          { name: "P1", color: ORANGE, description: "High — needed this milestone" }
+          { name: "P2", color: YELLOW, description: "Medium — important but not urgent" }
+          { name: "P3", color: GRAY, description: "Low — nice to have" }
+        ]
+      }) {
+        projectV2Field {
+          ... on ProjectV2SingleSelectField {
+            id
+            name
+            options { id name }
+          }
+        }
+      }
+    }
+  ' -f projectId="$NEW_PROJECT_ID" 2>&1)
+
+  PRIORITY_FIELD_ID=$(echo "$PRIORITY_RESULT" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+print(d['data']['createProjectV2Field']['projectV2Field']['id'])
+" 2>/dev/null)
+
+  PRIORITY_OPTIONS=$(echo "$PRIORITY_RESULT" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+options = d['data']['createProjectV2Field']['projectV2Field']['options']
+name_to_id = {o['name']: o['id'] for o in options}
+print(json.dumps(name_to_id))
+" 2>/dev/null || echo "{}")
+
+  if [ -n "$PRIORITY_FIELD_ID" ]; then
+    echo "  Priority field created: ${PRIORITY_FIELD_ID}"
+  else
+    echo "  WARNING: Priority field creation failed"
+  fi
+
+  # Field 8: Start Date (DATE)
+  START_DATE_RESULT=$(gh api graphql -f query='
+    mutation($projectId: ID!) {
+      createProjectV2Field(input: {
+        projectId: $projectId
+        dataType: DATE
+        name: "Start Date"
+      }) {
+        projectV2Field {
+          ... on ProjectV2Field {
+            id
+            name
+          }
+        }
+      }
+    }
+  ' -f projectId="$NEW_PROJECT_ID" 2>&1)
+
+  START_DATE_FIELD_ID=$(echo "$START_DATE_RESULT" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+print(d['data']['createProjectV2Field']['projectV2Field']['id'])
+" 2>/dev/null)
+
+  if [ -n "$START_DATE_FIELD_ID" ]; then
+    echo "  Start Date field created: ${START_DATE_FIELD_ID}"
+  else
+    echo "  WARNING: Start Date field creation failed"
+  fi
+
+  # Field 9: Target Date (DATE)
+  TARGET_DATE_RESULT=$(gh api graphql -f query='
+    mutation($projectId: ID!) {
+      createProjectV2Field(input: {
+        projectId: $projectId
+        dataType: DATE
+        name: "Target Date"
+      }) {
+        projectV2Field {
+          ... on ProjectV2Field {
+            id
+            name
+          }
+        }
+      }
+    }
+  ' -f projectId="$NEW_PROJECT_ID" 2>&1)
+
+  TARGET_DATE_FIELD_ID=$(echo "$TARGET_DATE_RESULT" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+print(d['data']['createProjectV2Field']['projectV2Field']['id'])
+" 2>/dev/null)
+
+  if [ -n "$TARGET_DATE_FIELD_ID" ]; then
+    echo "  Target Date field created: ${TARGET_DATE_FIELD_ID}"
+  else
+    echo "  WARNING: Target Date field creation failed"
+  fi
 ```
 
 **Update project.json with board metadata:**
@@ -456,6 +591,36 @@ if '${GSD_ROUTE_FIELD_ID}':
         'options': gsd_route_options
     }
 
+if '${PLAN_SUMMARY_FIELD_ID}':
+    fields['plan_summary'] = {
+        'field_id': '${PLAN_SUMMARY_FIELD_ID}',
+        'field_name': 'Plan Summary',
+        'type': 'TEXT'
+    }
+
+priority_options = json.loads('''${PRIORITY_OPTIONS}''') if '${PRIORITY_OPTIONS}' != '{}' else {}
+if '${PRIORITY_FIELD_ID}':
+    fields['priority'] = {
+        'field_id': '${PRIORITY_FIELD_ID}',
+        'field_name': 'Priority',
+        'type': 'SINGLE_SELECT',
+        'options': priority_options
+    }
+
+if '${START_DATE_FIELD_ID}':
+    fields['start_date'] = {
+        'field_id': '${START_DATE_FIELD_ID}',
+        'field_name': 'Start Date',
+        'type': 'DATE'
+    }
+
+if '${TARGET_DATE_FIELD_ID}':
+    fields['target_date'] = {
+        'field_id': '${TARGET_DATE_FIELD_ID}',
+        'field_name': 'Target Date',
+        'type': 'DATE'
+    }
+
 # Update project_board section
 project['project']['project_board'] = {
     'number': int('${NEW_PROJECT_NUMBER}') if '${NEW_PROJECT_NUMBER}'.isdigit() else None,
@@ -484,8 +649,35 @@ PYEOF
   echo "  milestone         ${MILESTONE_FIELD_ID:-FAILED} (TEXT)"
   echo "  phase             ${PHASE_FIELD_ID:-FAILED} (TEXT)"
   echo "  gsd_route         ${GSD_ROUTE_FIELD_ID:-FAILED} (SINGLE_SELECT, 4 options)"
+  echo "  plan_summary      ${PLAN_SUMMARY_FIELD_ID:-FAILED} (TEXT)"
+  echo "  priority          ${PRIORITY_FIELD_ID:-FAILED} (SINGLE_SELECT, 4 options)"
+  echo "  start_date        ${START_DATE_FIELD_ID:-FAILED} (DATE)"
+  echo "  target_date       ${TARGET_DATE_FIELD_ID:-FAILED} (DATE)"
   echo ""
   echo "Field IDs stored in .mgw/project.json"
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo " VIEW SETUP GUIDE"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "Open your project board and create these views:"
+  echo ""
+  echo "1. Pipeline (Board)"
+  echo "   - Layout: Board | Column field: Status"
+  echo "   - Visible fields: Phase, GSD Route, Milestone, Priority"
+  echo ""
+  echo "2. Sprint Table (Table)"
+  echo "   - Layout: Table | Group by: Milestone"
+  echo "   - Columns: Status, Phase, Priority, Plan Summary, Assignees"
+  echo "   - Sort by: Priority (ascending)"
+  echo ""
+  echo "3. Roadmap (Roadmap)"
+  echo "   - Layout: Roadmap | Date field: Start Date -> Target Date"
+  echo "   - Group by: Milestone"
+  echo ""
+  echo "4. My Work (Table)"
+  echo "   - Layout: Table | Filter: assignee:@me"
+  echo "   - Columns: Status, Phase, Plan Summary, Priority"
   echo ""
   echo "Next:"
   echo "  /mgw:board show      Display board state"

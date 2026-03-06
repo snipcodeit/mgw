@@ -60,11 +60,29 @@ QUICK_DIR=".planning/quick/${next_num}-${slug}"
 mkdir -p "$QUICK_DIR"
 ```
 
-3. **Spawn planner (task agent):**
+3. **Assemble MGW context and spawn planner (task agent):**
+
+Assemble multi-machine context from GitHub issue comments before spawning:
+```bash
+MGW_CONTEXT=$(node -e "
+const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+ic.buildGSDPromptContext({
+  milestone: ${MILESTONE_NUM},
+  phase: ${PHASE_NUMBER},
+  issueNumber: ${ISSUE_NUMBER},
+  includeVision: true,
+  includePriorSummaries: true,
+  includeCurrentPlan: false
+}).then(ctx => process.stdout.write(ctx));
+" 2>/dev/null || echo "")
+```
+
 ```
 Task(
   prompt="
 <planning_context>
+
+${MGW_CONTEXT}
 
 **Mode:** ${FULL_MODE ? 'quick-full' : 'quick'}
 **Directory:** ${QUICK_DIR}
@@ -109,7 +127,21 @@ Return: ## PLANNING COMPLETE with plan path
 )
 ```
 
-4. **Verify plan exists** at `${QUICK_DIR}/${next_num}-PLAN.md`
+4. **Publish plan comment (non-blocking):**
+```bash
+PLAN_FILE="${QUICK_DIR}/${next_num}-PLAN.md"
+if [ -f "$PLAN_FILE" ]; then
+  node -e "
+    const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+    const fs = require('fs');
+    const content = fs.readFileSync('${PLAN_FILE}', 'utf-8');
+    ic.postPlanningComment(${ISSUE_NUMBER}, 'plan', content, { phase: ${next_num}, milestone: ${MILESTONE_NUM} })
+      .catch(e => console.error('WARNING: Failed to post plan comment:', e.message));
+  " 2>/dev/null || true
+fi
+```
+
+5. **Verify plan exists** at `${QUICK_DIR}/${next_num}-PLAN.md`
 
 5. **Pre-flight plan structure check (gsd-tools):**
 ```bash
@@ -187,7 +219,21 @@ Execute quick task ${next_num}.
 )
 ```
 
-8. **Verify summary (gsd-tools):**
+8. **Publish summary comment (non-blocking):**
+```bash
+SUMMARY_FILE="${QUICK_DIR}/${next_num}-SUMMARY.md"
+if [ -f "$SUMMARY_FILE" ]; then
+  node -e "
+    const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+    const fs = require('fs');
+    const content = fs.readFileSync('${SUMMARY_FILE}', 'utf-8');
+    ic.postPlanningComment(${ISSUE_NUMBER}, 'summary', content, { phase: ${next_num}, milestone: ${MILESTONE_NUM} })
+      .catch(e => console.error('WARNING: Failed to post summary comment:', e.message));
+  " 2>/dev/null || true
+fi
+```
+
+9. **Verify summary (gsd-tools):**
 ```bash
 VERIFY_RESULT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify-summary "${QUICK_DIR}/${next_num}-SUMMARY.md")
 ```
@@ -214,7 +260,21 @@ Check must_haves against actual codebase. Create VERIFICATION.md at ${QUICK_DIR}
 )
 ```
 
-10. **Post-execution artifact verification (non-blocking):**
+10. **Publish verification comment (non-blocking, --full only):**
+```bash
+VERIFICATION_FILE="${QUICK_DIR}/${next_num}-VERIFICATION.md"
+if [ -f "$VERIFICATION_FILE" ]; then
+  node -e "
+    const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+    const fs = require('fs');
+    const content = fs.readFileSync('${VERIFICATION_FILE}', 'utf-8');
+    ic.postPlanningComment(${ISSUE_NUMBER}, 'verification', content, { phase: ${next_num}, milestone: ${MILESTONE_NUM} })
+      .catch(e => console.error('WARNING: Failed to post verification comment:', e.message));
+  " 2>/dev/null || true
+fi
+```
+
+11. **Post-execution artifact verification (non-blocking):**
 ```bash
 ARTIFACT_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify artifacts "${QUICK_DIR}/${next_num}-PLAN.md" 2>/dev/null || echo '{"passed":true}')
 KEYLINK_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify key-links "${QUICK_DIR}/${next_num}-PLAN.md" 2>/dev/null || echo '{"passed":true}')
@@ -394,6 +454,31 @@ If proceed: apply "mgw:approved" label and continue.
 
    Update pipeline_stage to "planning" (at `${REPO_ROOT}/.mgw/active/`).
 
+**Verify ROADMAP.md was created:**
+```bash
+if [ ! -f ".planning/ROADMAP.md" ]; then
+  echo "MGW ERROR: Roadmapper agent did not produce ROADMAP.md. Cannot proceed with milestone execution."
+  FAIL_TS=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+  gh issue comment ${ISSUE_NUMBER} --body "> **MGW** · \`pipeline-failed\` · ${FAIL_TS}
+> Roadmapper agent did not produce ROADMAP.md. Pipeline cannot continue.
+> Re-run with \`/mgw:run ${ISSUE_NUMBER}\` after investigating." 2>/dev/null || true
+  # Update pipeline_stage to failed (same pattern as post_execution_update dead_letter block)
+  node -e "
+const fs = require('fs'), path = require('path');
+const activeDir = path.join(process.cwd(), '.mgw', 'active');
+const files = fs.readdirSync(activeDir);
+const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.json'));
+if (file) {
+  const filePath = path.join(activeDir, file);
+  const state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  state.pipeline_stage = 'failed';
+  fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
+}
+" 2>/dev/null || true
+  exit 1
+fi
+```
+
 2. **If resuming with pipeline_stage = "planning" and ROADMAP.md exists:**
    Discover phases from ROADMAP and run the full per-phase GSD lifecycle:
 
@@ -430,7 +515,23 @@ If proceed: apply "mgw:approved" label and continue.
    # Parse PHASE_INIT JSON for: planner_model, checker_model
    ```
 
-   **b. Spawn planner agent (gsd:plan-phase):**
+   **b. Assemble MGW context and spawn planner agent (gsd:plan-phase):**
+
+   Assemble multi-machine context from GitHub issue comments before spawning:
+   ```bash
+   MGW_CONTEXT=$(node -e "
+   const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+   ic.buildGSDPromptContext({
+     milestone: ${MILESTONE_NUM},
+     phase: ${PHASE_NUMBER},
+     issueNumber: ${ISSUE_NUMBER},
+     includeVision: true,
+     includePriorSummaries: true,
+     includeCurrentPlan: false
+   }).then(ctx => process.stdout.write(ctx));
+   " 2>/dev/null || echo "")
+   ```
+
    ```
    Task(
      prompt="
@@ -440,6 +541,8 @@ If proceed: apply "mgw:approved" label and continue.
    - .planning/ROADMAP.md (Phase definitions and requirements)
    - .planning/STATE.md (If exists -- project state)
    </files_to_read>
+
+   ${MGW_CONTEXT}
 
    You are the GSD planner. Plan phase ${PHASE_NUMBER}: ${PHASE_NAME}.
 
@@ -460,6 +563,20 @@ If proceed: apply "mgw:approved" label and continue.
      model="${PLANNER_MODEL}",
      description="Plan phase ${PHASE_NUMBER}: ${PHASE_NAME}"
    )
+   ```
+
+   **b2. Publish plan comment (non-blocking):**
+   ```bash
+   PLAN_FILES=$(ls ${phase_dir}/*-PLAN.md 2>/dev/null)
+   for PLAN_FILE in $PLAN_FILES; do
+     node -e "
+       const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+       const fs = require('fs');
+       const content = fs.readFileSync('${PLAN_FILE}', 'utf-8');
+       ic.postPlanningComment(${ISSUE_NUMBER}, 'plan', content, { phase: ${PHASE_NUMBER}, milestone: ${MILESTONE_NUM} })
+         .catch(e => console.error('WARNING: Failed to post plan comment:', e.message));
+     " 2>/dev/null || true
+   done
    ```
 
    **c. Verify plans exist:**
@@ -508,6 +625,20 @@ If proceed: apply "mgw:approved" label and continue.
    )
    ```
 
+   **d2. Publish summary comment (non-blocking):**
+   ```bash
+   SUMMARY_FILES=$(ls ${phase_dir}/*-SUMMARY.md 2>/dev/null)
+   for SUMMARY_FILE in $SUMMARY_FILES; do
+     node -e "
+       const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+       const fs = require('fs');
+       const content = fs.readFileSync('${SUMMARY_FILE}', 'utf-8');
+       ic.postPlanningComment(${ISSUE_NUMBER}, 'summary', content, { phase: ${PHASE_NUMBER}, milestone: ${MILESTONE_NUM} })
+         .catch(e => console.error('WARNING: Failed to post summary comment:', e.message));
+     " 2>/dev/null || true
+   done
+   ```
+
    **e. Spawn verifier agent (gsd:verify-phase):**
    ```
    Task(
@@ -534,6 +665,20 @@ If proceed: apply "mgw:approved" label and continue.
      model="${VERIFIER_MODEL}",
      description="Verify phase ${PHASE_NUMBER}: ${PHASE_NAME}"
    )
+   ```
+
+   **e2. Publish verification comment (non-blocking):**
+   ```bash
+   VERIFICATION_FILES=$(ls ${phase_dir}/*-VERIFICATION.md 2>/dev/null)
+   for VERIFICATION_FILE in $VERIFICATION_FILES; do
+     node -e "
+       const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+       const fs = require('fs');
+       const content = fs.readFileSync('${VERIFICATION_FILE}', 'utf-8');
+       ic.postPlanningComment(${ISSUE_NUMBER}, 'verification', content, { phase: ${PHASE_NUMBER}, milestone: ${MILESTONE_NUM} })
+         .catch(e => console.error('WARNING: Failed to post verification comment:', e.message));
+     " 2>/dev/null || true
+   done
    ```
 
    **f. Post phase-complete comment directly (no sub-agent):**

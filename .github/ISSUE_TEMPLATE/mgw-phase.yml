@@ -1,0 +1,51 @@
+name: MGW Phase
+description: A milestone phase issue created by MGW — structured for multi-developer context sharing
+labels: ["mgw:phase"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What this phase delivers and why it matters
+      placeholder: "Implement the authentication middleware that validates JWT tokens on all protected routes"
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: Specific, testable conditions that define 'done' for this phase
+      placeholder: "- [ ] JWT validation middleware registered on /api/* routes\n- [ ] Invalid tokens return 401 with structured error\n- [ ] Token refresh flow handles expired tokens"
+    validations:
+      required: true
+
+  - type: input
+    id: depends-on
+    attributes:
+      label: Depends On
+      description: Issues that must be completed before this one can start
+      placeholder: "#12, #14"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope-hint
+    attributes:
+      label: Scope Hint
+      description: Estimated scope of changes
+      options:
+        - Small (1-2 files)
+        - Medium (3-8 files)
+        - Large (9+ files or new system)
+    validations:
+      required: false
+
+  - type: textarea
+    id: milestone-context
+    attributes:
+      label: Milestone Context
+      description: Which milestone this belongs to and how it fits in the delivery sequence
+      placeholder: "Milestone: v1.0 Core Platform\nPhase 3 of 8 — follows Auth Models (#12), precedes API Routes (#16)"
+    validations:
+      required: false

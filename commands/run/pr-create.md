@@ -22,6 +22,29 @@ CROSS_REFS=$(cat ${REPO_ROOT}/.mgw/cross-refs.json 2>/dev/null)
 # Progress table for PR details section
 PROGRESS_TABLE=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs progress table --raw 2>/dev/null || echo "")
 
+**Verify execution evidence exists before creating PR:**
+```bash
+SUMMARY_COUNT=$(ls ${gsd_artifacts_path}/*SUMMARY* 2>/dev/null | wc -l)
+if [ "$SUMMARY_COUNT" -eq 0 ]; then
+  echo "MGW ERROR: No SUMMARY files found at ${gsd_artifacts_path}. Cannot create PR without execution evidence."
+  echo "This usually means the executor agent failed silently. Check the execution logs."
+  # Update pipeline_stage to "failed"
+  node -e "
+const fs = require('fs'), path = require('path');
+const activeDir = path.join(process.cwd(), '.mgw', 'active');
+const files = fs.readdirSync(activeDir);
+const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.json'));
+if (file) {
+  const filePath = path.join(activeDir, file);
+  const state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  state.pipeline_stage = 'failed';
+  fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
+}
+" 2>/dev/null || true
+  exit 1
+fi
+```
+
 # Milestone/phase context for PR body
 MILESTONE_TITLE=""
 PHASE_INFO=""
@@ -71,6 +94,13 @@ p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
 print(p.get('project', {}).get('project_board', {}).get('url', ''))
 " 2>/dev/null || echo "")
 fi
+
+# Phase Context from GitHub issue comments (multi-developer context sharing)
+PHASE_CONTEXT=$(node -e "
+const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+ic.assembleIssueContext(${ISSUE_NUMBER})
+  .then(ctx => process.stdout.write(ctx));
+" 2>/dev/null || echo "")
 ```
 
 Read issue state for context.
@@ -122,6 +152,10 @@ ${COMMITS}
 ${CROSS_REFS}
 </cross_refs>
 
+<phase_context>
+${PHASE_CONTEXT}
+</phase_context>
+
 <instructions>
 1. Build PR title: short, prefixed with fix:/feat:/refactor: based on issue labels. Under 70 characters.
 
@@ -140,6 +174,14 @@ Closes #${ISSUE_NUMBER}
 
 ## Changes
 - File-level changes grouped by module (use key_files from summary_structured)
+
+## Phase Context
+<details>
+<summary>Planning & execution context from GitHub issue comments</summary>
+
+${PHASE_CONTEXT}
+</details>
+(Skip if PHASE_CONTEXT is empty)
 
 ## Test Plan
 - Verification checklist from VERIFICATION artifact

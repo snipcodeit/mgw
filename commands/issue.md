@@ -113,6 +113,48 @@ Gather GSD project history for context (if available):
 HISTORY=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs history-digest 2>/dev/null || echo "")
 ```
 
+**Gather milestone context for top-down triage (if available):**
+
+Primary source: GitHub issue comments (works on any machine):
+```bash
+MILESTONE_CONTEXT=$(node -e "
+const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+ic.safeContext({ issueNumber: ${ISSUE_NUMBER}, includeVision: true, includePriorSummaries: true })
+  .then(ctx => process.stdout.write(ctx));
+" 2>/dev/null || echo "")
+```
+
+Fallback: local files (backward compat for single-machine workflows):
+```bash
+if [ -z "$MILESTONE_CONTEXT" ] && [ -f "${REPO_ROOT}/.mgw/project.json" ]; then
+  MILESTONE_CONTEXT=$(python3 -c "
+import json
+try:
+    p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
+    for m in p.get('milestones', []):
+        for i in m.get('issues', []):
+            if i.get('github_number') == ${ISSUE_NUMBER}:
+                parts = []
+                parts.append(f\"Milestone: {m['name']}\")
+                parts.append(f\"Phase {i['phase_number']}: {i['phase_name']}\")
+                parts.append(f\"GSD Route: {i.get('gsd_route', 'unknown')}\")
+                completed = [x for x in m['issues'] if x.get('pipeline_stage') == 'done']
+                if completed:
+                    parts.append(f\"Completed in milestone: {len(completed)}/{len(m['issues'])} issues\")
+                    parts.append('Delivered: ' + ', '.join(f\"Phase {x['phase_number']}: {x['phase_name']}\" for x in completed))
+                print('\n'.join(parts))
+                break
+except Exception as e:
+    pass
+" 2>/dev/null || echo "")
+fi
+
+ROADMAP_CONTEXT=""
+if [ -f ".planning/ROADMAP.md" ]; then
+  ROADMAP_CONTEXT=$(head -c 2000 .planning/ROADMAP.md)
+fi
+```
+
 Build analysis prompt from issue data and spawn:
 
 ```
@@ -135,6 +177,14 @@ Comments: ${comments_summary}
 <project_history>
 ${HISTORY}
 </project_history>
+
+<milestone_context>
+${MILESTONE_CONTEXT}
+</milestone_context>
+
+<roadmap_context>
+${ROADMAP_CONTEXT}
+</roadmap_context>
 
 <analysis_dimensions>
 
@@ -316,6 +366,18 @@ ROUTE_REASONING = triage reasoning
 Post comment and apply label:
 ```bash
 remove_mgw_labels_and_apply ${ISSUE_NUMBER} "mgw:triaged"
+```
+
+**Post structured metadata comment (non-blocking):**
+
+In addition to the human-readable triage comment above, post a machine-readable
+structured comment so other machines can read triage context from GitHub:
+```bash
+node -e "
+const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+ic.postPlanningComment(${ISSUE_NUMBER}, 'triage', TRIAGE_REPORT, {})
+  .catch(() => {});
+" 2>/dev/null || true
 ```
 </step>
 

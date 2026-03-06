@@ -385,6 +385,50 @@ print(stage_map.get(label, ''))
       fi
     fi
 
+    # Update Plan Summary field from latest plan comment (if field exists)
+    PLAN_SUMMARY_FIELD_ID=$(echo "$FIELDS_JSON" | python3 -c "
+import json,sys
+fields = json.load(sys.stdin)
+print(fields.get('plan_summary', {}).get('field_id', ''))
+" 2>/dev/null)
+
+    if [ -n "$PLAN_SUMMARY_FIELD_ID" ] && [ -n "$BOARD_ITEM_ID" ]; then
+      PLAN_SUMMARY=$(node -e "
+        const ic = require('./lib/issue-context.cjs');
+        ic.findLatestComment(${ISSUE_NUMBER}, 'plan')
+          .then(plan => {
+            if (plan) {
+              const body = plan.body.replace(/<!--[\\s\\S]*?-->\\n?/, '').trim();
+              const summary = body.split('\\n').slice(0, 3).join(' ').substring(0, 200);
+              process.stdout.write(summary);
+            }
+          })
+          .catch(() => {});
+      " 2>/dev/null || echo "")
+
+      if [ -n "$PLAN_SUMMARY" ]; then
+        gh api graphql -f query='
+          mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $text: String!) {
+            updateProjectV2ItemFieldValue(input: {
+              projectId: $projectId
+              itemId: $itemId
+              fieldId: $fieldId
+              value: { text: $text }
+            }) { projectV2Item { id } }
+          }
+        ' -f projectId="$BOARD_NODE_ID" \
+          -f itemId="$BOARD_ITEM_ID" \
+          -f fieldId="$PLAN_SUMMARY_FIELD_ID" \
+          -f text="$PLAN_SUMMARY" 2>/dev/null || true
+
+        if [ -n "$CHANGED_FIELDS" ]; then
+          CHANGED_FIELDS="${CHANGED_FIELDS}, Plan Summary (updated)"
+        else
+          CHANGED_FIELDS="Plan Summary (updated)"
+        fi
+      fi
+    fi
+
     if [ -z "$CHANGED_FIELDS" ]; then
       CHANGED_FIELDS="no changes"
     fi

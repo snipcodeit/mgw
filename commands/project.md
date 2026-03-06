@@ -180,6 +180,25 @@ fi
 @workflows/create-github-structure.md
 </step>
 
+<step name="populate_project_readme">
+**Populate Project README on GitHub Projects v2 board (non-blocking):**
+
+After GitHub structure creation, if a board is configured, populate the Project README
+with project vision and milestone overview. This gives developers a landing page
+when they open the board. Uses the shared `updateProjectReadme()` function from
+`lib/issue-context.cjs` — the same function called by `mgw:milestone` and `mgw:sync --full`
+to keep the README current.
+
+```bash
+node -e "
+const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+ic.updateProjectReadme()
+  .then(ok => { if (ok) console.log('Project README populated on board'); })
+  .catch(() => {});
+" 2>/dev/null || true
+```
+</step>
+
 </process>
 
 <success_criteria>
