@@ -1,0 +1,5 @@
+[
+  { "name": "bug", "color": "d73a4a", "description": "Something isn't working" },
+  { "name": "mgw:triaged", "color": "0e8a16", "description": "Issue triaged and ready for pipeline" },
+  { "name": "mgw:in-progress", "color": "1d76db", "description": "Pipeline actively executing" }
+]
