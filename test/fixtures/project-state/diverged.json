@@ -1,0 +1,11 @@
+{
+  "milestones": [
+    { "name": "v1 — Core", "issues": [] },
+    { "name": "v2 — Features", "issues": [] },
+    { "name": "v3 — Polish", "issues": [] },
+    { "name": "v4 — Hardening", "issues": [] },
+    { "name": "v5 — Launch", "issues": [] }
+  ],
+  "current_milestone": 1,
+  "active_gsd_milestone": "v1"
+}
