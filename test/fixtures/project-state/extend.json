@@ -1,0 +1,8 @@
+{
+  "milestones": [
+    { "name": "v1 — Core Features", "issues": [] },
+    { "name": "v2 — Polish", "issues": [] }
+  ],
+  "current_milestone": 3,
+  "active_gsd_milestone": null
+}
