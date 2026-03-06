@@ -94,6 +94,13 @@ p = json.load(open('${REPO_ROOT}/.mgw/project.json'))
 print(p.get('project', {}).get('project_board', {}).get('url', ''))
 " 2>/dev/null || echo "")
 fi
+
+# Phase Context from GitHub issue comments (multi-developer context sharing)
+PHASE_CONTEXT=$(node -e "
+const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+ic.assembleIssueContext(${ISSUE_NUMBER})
+  .then(ctx => process.stdout.write(ctx));
+" 2>/dev/null || echo "")
 ```
 
 Read issue state for context.
@@ -145,6 +152,10 @@ ${COMMITS}
 ${CROSS_REFS}
 </cross_refs>
 
+<phase_context>
+${PHASE_CONTEXT}
+</phase_context>
+
 <instructions>
 1. Build PR title: short, prefixed with fix:/feat:/refactor: based on issue labels. Under 70 characters.
 
@@ -163,6 +174,14 @@ Closes #${ISSUE_NUMBER}
 
 ## Changes
 - File-level changes grouped by module (use key_files from summary_structured)
+
+## Phase Context
+<details>
+<summary>Planning & execution context from GitHub issue comments</summary>
+
+${PHASE_CONTEXT}
+</details>
+(Skip if PHASE_CONTEXT is empty)
 
 ## Test Plan
 - Verification checklist from VERIFICATION artifact

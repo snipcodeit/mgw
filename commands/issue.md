@@ -114,9 +114,19 @@ HISTORY=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs history-digest 2>/dev/n
 ```
 
 **Gather milestone context for top-down triage (if available):**
+
+Primary source: GitHub issue comments (works on any machine):
 ```bash
-MILESTONE_CONTEXT=""
-if [ -f "${REPO_ROOT}/.mgw/project.json" ]; then
+MILESTONE_CONTEXT=$(node -e "
+const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+ic.safeContext({ issueNumber: ${ISSUE_NUMBER}, includeVision: true, includePriorSummaries: true })
+  .then(ctx => process.stdout.write(ctx));
+" 2>/dev/null || echo "")
+```
+
+Fallback: local files (backward compat for single-machine workflows):
+```bash
+if [ -z "$MILESTONE_CONTEXT" ] && [ -f "${REPO_ROOT}/.mgw/project.json" ]; then
   MILESTONE_CONTEXT=$(python3 -c "
 import json
 try:
@@ -356,6 +366,18 @@ ROUTE_REASONING = triage reasoning
 Post comment and apply label:
 ```bash
 remove_mgw_labels_and_apply ${ISSUE_NUMBER} "mgw:triaged"
+```
+
+**Post structured metadata comment (non-blocking):**
+
+In addition to the human-readable triage comment above, post a machine-readable
+structured comment so other machines can read triage context from GitHub:
+```bash
+node -e "
+const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+ic.postPlanningComment(${ISSUE_NUMBER}, 'triage', TRIAGE_REPORT, {})
+  .catch(() => {});
+" 2>/dev/null || true
 ```
 </step>
 

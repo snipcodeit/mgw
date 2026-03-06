@@ -881,7 +881,39 @@ Milestone: ${MILESTONE_NAME}
 fi
 ```
 
-4. Advance active milestone pointer in project.json:
+4. Update Project README with current milestone progress (non-blocking):
+```bash
+node -e "
+const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+ic.updateProjectReadme()
+  .then(ok => { if (ok) console.log('  Project README updated'); })
+  .catch(() => {});
+" 2>/dev/null || true
+```
+
+5. Post Status Update to Projects v2 board (non-blocking):
+```bash
+BOARD_NODE_ID=$(python3 -c "
+import json
+try:
+    p = json.load(open('${MGW_DIR}/project.json'))
+    print(p.get('project', {}).get('project_board', {}).get('node_id', ''))
+except: print('')
+" 2>/dev/null || echo "")
+
+if [ -n "$BOARD_NODE_ID" ]; then
+  MILESTONE_SUMMARY="Milestone ${MILESTONE_NUM} (${MILESTONE_NAME}) complete: ${TOTAL_ISSUES} issues, ${#COMPLETED_ISSUES[@]} PRs created"
+  gh api graphql -f query='mutation($projectId: ID!, $body: String!) {
+    createProjectV2StatusUpdate(input: {
+      projectId: $projectId
+      body: $body
+      status: ON_TRACK
+    }) { statusUpdate { id } }
+  }' -f projectId="$BOARD_NODE_ID" -f body="$MILESTONE_SUMMARY" 2>/dev/null || true
+fi
+```
+
+6. Advance active milestone pointer in project.json:
 ```bash
 node -e "
 const { loadProjectState, resolveActiveMilestoneIndex, writeProjectState } = require('./lib/state.cjs');
@@ -904,7 +936,7 @@ writeProjectState(state);
 "
 ```
 
-5. Milestone mapping verification:
+7. Milestone mapping verification:
 
 After advancing to the next milestone, check its GSD linkage using `getGsdState()`
 from `lib/gsd-adapter.cjs` to read current GSD execution state (.planning/STATE.md
@@ -995,7 +1027,7 @@ else:
 esac
 ```
 
-6. Display completion banner:
+8. Display completion banner:
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  MGW ► MILESTONE ${MILESTONE_NUM} COMPLETE ✓
@@ -1024,7 +1056,7 @@ Draft release created: ${RELEASE_TAG}
 ───────────────────────────────────────────────────────────────
 ```
 
-7. Check if next milestone exists and offer auto-advance (only if no failures in current).
+9. Check if next milestone exists and offer auto-advance (only if no failures in current).
 
 **If some issues failed:**
 
@@ -1127,7 +1159,7 @@ Milestone NOT closed. Re-run after resolving remaining failures:
   /mgw:milestone ${MILESTONE_NUM}
 ```
 
-8. Post final results table as GitHub comment on the first issue in the milestone:
+10. Post final results table as GitHub comment on the first issue in the milestone:
 ```bash
 gh issue comment ${FIRST_ISSUE_NUMBER} --body "$FINAL_RESULTS_COMMENT"
 ```

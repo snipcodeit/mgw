@@ -395,6 +395,24 @@ if [ "$FULL_SYNC" = "true" ]; then
     echo "  Run /mgw:project to reconstruct full project state."
     echo "  (Board state has been pulled — active issues are available)"
   fi
+
+  # 4. Rebuild context cache from GitHub issue comments
+  echo "  Rebuilding context cache from GitHub issue comments..."
+  node -e "
+const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+ic.rebuildContextCache()
+  .then(stats => console.log('  Cached summaries for', stats.issueCount, 'issues across', stats.milestoneCount, 'milestones'))
+  .catch(e => console.error('  Cache rebuild failed:', e.message));
+" 2>/dev/null || echo "  Context cache rebuild skipped (issue-context module not available)"
+
+  # 5. Refresh Project README with current milestone progress
+  echo "  Refreshing Project README..."
+  node -e "
+const ic = require('${REPO_ROOT}/lib/issue-context.cjs');
+ic.updateProjectReadme()
+  .then(ok => console.log(ok ? '  Project README updated' : '  Project README skipped (no board configured)'))
+  .catch(() => console.log('  Project README refresh skipped'));
+" 2>/dev/null || true
 fi
 ```
 </step>
