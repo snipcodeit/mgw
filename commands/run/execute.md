@@ -394,6 +394,31 @@ If proceed: apply "mgw:approved" label and continue.
 
    Update pipeline_stage to "planning" (at `${REPO_ROOT}/.mgw/active/`).
 
+**Verify ROADMAP.md was created:**
+```bash
+if [ ! -f ".planning/ROADMAP.md" ]; then
+  echo "MGW ERROR: Roadmapper agent did not produce ROADMAP.md. Cannot proceed with milestone execution."
+  FAIL_TS=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs current-timestamp --raw 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")
+  gh issue comment ${ISSUE_NUMBER} --body "> **MGW** · \`pipeline-failed\` · ${FAIL_TS}
+> Roadmapper agent did not produce ROADMAP.md. Pipeline cannot continue.
+> Re-run with \`/mgw:run ${ISSUE_NUMBER}\` after investigating." 2>/dev/null || true
+  # Update pipeline_stage to failed (same pattern as post_execution_update dead_letter block)
+  node -e "
+const fs = require('fs'), path = require('path');
+const activeDir = path.join(process.cwd(), '.mgw', 'active');
+const files = fs.readdirSync(activeDir);
+const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.json'));
+if (file) {
+  const filePath = path.join(activeDir, file);
+  const state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  state.pipeline_stage = 'failed';
+  fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
+}
+" 2>/dev/null || true
+  exit 1
+fi
+```
+
 2. **If resuming with pipeline_stage = "planning" and ROADMAP.md exists:**
    Discover phases from ROADMAP and run the full per-phase GSD lifecycle:
 

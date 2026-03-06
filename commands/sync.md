@@ -33,6 +33,18 @@ Run periodically or when starting a new session to get a clean view.
 
 <process>
 
+<step name="parse_arguments">
+**Parse sync flags:**
+```bash
+FULL_SYNC=false
+for arg in "$@"; do
+  case "$arg" in
+    --full) FULL_SYNC=true ;;
+  esac
+done
+```
+</step>
+
 <step name="pull_board_state">
 **Pull board state to reconstruct missing local .mgw/active/ files.**
 
@@ -346,6 +358,45 @@ fi
 Downstream commands (`/mgw:run`, `/mgw:issue`) will see this flag and know the state was
 rebuilt from board data — triage results and GSD artifacts will need to be re-run if the
 issue advances to `planning` or beyond.
+</step>
+
+<step name="rebuild_from_committed">
+**Rebuild project context from committed planning files (--full only):**
+
+Only runs when `--full` flag is passed. This is the multi-machine context rebuild:
+after `git pull`, a developer runs `mgw:sync --full` to reconstruct full project
+context from committed `.planning/` files and the board.
+
+```bash
+if [ "$FULL_SYNC" = "true" ]; then
+  echo "Full sync: rebuilding project context from committed planning files..."
+
+  # 1. Check for committed ROADMAP.md
+  if [ -f ".planning/ROADMAP.md" ]; then
+    echo "  Found committed ROADMAP.md"
+    ROADMAP_ANALYSIS=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs roadmap analyze 2>/dev/null || echo '{}')
+    PHASE_COUNT=$(echo "$ROADMAP_ANALYSIS" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('phases',[])))" 2>/dev/null || echo "0")
+    echo "  ROADMAP.md contains ${PHASE_COUNT} phases"
+  else
+    echo "  No committed ROADMAP.md found — planning context unavailable"
+    echo "  (This is expected if the project hasn't run a milestone yet)"
+  fi
+
+  # 2. Scan for committed phase artifacts
+  COMMITTED_PLANS=$(find .planning -name '*-PLAN.md' -not -path '.planning/quick/*' 2>/dev/null | wc -l)
+  COMMITTED_SUMMARIES=$(find .planning -name '*-SUMMARY.md' -not -path '.planning/quick/*' 2>/dev/null | wc -l)
+  echo "  Committed phase plans: ${COMMITTED_PLANS}"
+  echo "  Committed phase summaries: ${COMMITTED_SUMMARIES}"
+
+  # 3. If project.json is missing but board + ROADMAP exist, offer to reconstruct
+  if [ ! -f "${MGW_DIR}/project.json" ] && [ -f ".planning/ROADMAP.md" ] && [ -n "$BOARD_NODE_ID" ]; then
+    echo ""
+    echo "  project.json is missing but ROADMAP.md and board are available."
+    echo "  Run /mgw:project to reconstruct full project state."
+    echo "  (Board state has been pulled — active issues are available)"
+  fi
+fi
+```
 </step>
 
 <step name="scan_active">

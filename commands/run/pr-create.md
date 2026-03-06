@@ -22,6 +22,29 @@ CROSS_REFS=$(cat ${REPO_ROOT}/.mgw/cross-refs.json 2>/dev/null)
 # Progress table for PR details section
 PROGRESS_TABLE=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs progress table --raw 2>/dev/null || echo "")
 
+**Verify execution evidence exists before creating PR:**
+```bash
+SUMMARY_COUNT=$(ls ${gsd_artifacts_path}/*SUMMARY* 2>/dev/null | wc -l)
+if [ "$SUMMARY_COUNT" -eq 0 ]; then
+  echo "MGW ERROR: No SUMMARY files found at ${gsd_artifacts_path}. Cannot create PR without execution evidence."
+  echo "This usually means the executor agent failed silently. Check the execution logs."
+  # Update pipeline_stage to "failed"
+  node -e "
+const fs = require('fs'), path = require('path');
+const activeDir = path.join(process.cwd(), '.mgw', 'active');
+const files = fs.readdirSync(activeDir);
+const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.json'));
+if (file) {
+  const filePath = path.join(activeDir, file);
+  const state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  state.pipeline_stage = 'failed';
+  fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
+}
+" 2>/dev/null || true
+  exit 1
+fi
+```
+
 # Milestone/phase context for PR body
 MILESTONE_TITLE=""
 PHASE_INFO=""

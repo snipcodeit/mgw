@@ -179,14 +179,44 @@ print(','.join(deps))
         DEPENDS_DISPLAY="_none_"
       fi
 
-      ISSUE_BODY=$(printf '## Description\n%s\n\n## Acceptance Criteria\n- [ ] %s\n\n## GSD Route\n%s\n\n## Phase Context\nPhase %s: %s of %s\n\n## Depends on\n%s' \
-        "$ISSUE_DESC" \
-        "$ISSUE_TITLE" \
-        "$GSD_ROUTE" \
-        "$GLOBAL_PHASE_NUM" \
-        "$PHASE_NAME" \
-        "$MILESTONE_NAME" \
-        "$DEPENDS_DISPLAY")
+      # Get milestone description for context
+      MILESTONE_DESC=$(python3 -c "
+import json
+d=json.load(open('/tmp/mgw-template.json'))
+print(d['milestones'][${MILESTONE_INDEX}].get('description',''))
+" 2>/dev/null || echo "")
+
+      ISSUE_BODY=$(cat <<BODYEOF
+## Description
+${ISSUE_DESC}
+
+## Acceptance Criteria
+- [ ] ${ISSUE_TITLE}
+
+## Milestone Context
+
+| | |
+|---|---|
+| **Milestone** | ${MILESTONE_NAME} |
+| **Phase** | Phase ${GLOBAL_PHASE_NUM}: ${PHASE_NAME} |
+| **GSD Route** | \`${GSD_ROUTE}\` |
+| **Phase Position** | Phase $((PHASE_INDEX + 1)) of ${PHASE_COUNT} in milestone |
+
+### Milestone Goal
+${MILESTONE_DESC}
+
+### Phase Goal
+${PHASE_DESC}
+
+## Dependencies
+
+${DEPENDS_DISPLAY}
+
+## Scope Hints
+- **Estimated route:** \`${GSD_ROUTE}\`
+- **Labels:** ${ISSUE_LABELS_JSON}
+BODYEOF
+)
 
       # Build label args
       LABEL_ARGS=(-f "labels[]=phase:${GLOBAL_PHASE_NUM}-${PHASE_SLUG}")
