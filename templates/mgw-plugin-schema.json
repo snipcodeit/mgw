@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MGW Plugin Manifest",
+  "description": "Schema for mgw-plugin.json plugin manifests. Defines how third-party plugins extend MGW at runtime without patching core.",
+  "type": "object",
+  "required": ["name", "version", "type", "entrypoint"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Unique plugin identifier in kebab-case (e.g. 'my-triage-validator')"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Plugin version in semver format (e.g. '1.0.0')"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["agent-template", "hook", "validator"],
+      "description": "Plugin extension point. agent-template: provides a custom agent type; hook: runs at pipeline lifecycle events; validator: validates issues, plans, or PRs"
+    },
+    "entrypoint": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Relative path to the plugin's main module file (e.g. 'index.cjs'). Must be within the plugin directory."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this plugin does"
+    },
+    "author": {
+      "type": "string",
+      "description": "Plugin author name or email"
+    },
+    "homepage": {
+      "type": "string",
+      "description": "URL to the plugin's homepage or repository"
+    },
+    "supported_stages": {
+      "type": "array",
+      "description": "Pipeline stages this plugin applies to. Omit or use empty array for all stages.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "new",
+          "triaged",
+          "needs-info",
+          "needs-security-review",
+          "discussing",
+          "approved",
+          "planning",
+          "diagnosing",
+          "executing",
+          "verifying",
+          "pr-created",
+          "done",
+          "failed",
+          "blocked"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "hooks": {
+      "type": "array",
+      "description": "Hook definitions for type=hook plugins. Each entry names a lifecycle event and the handler function to call.",
+      "items": {
+        "$ref": "#/definitions/hook_definition"
+      }
+    },
+    "config_schema": {
+      "type": "object",
+      "description": "JSON Schema fragment for plugin-specific user configuration. If present, the loader validates the user's plugin config block against this schema.",
+      "properties": {
+        "$schema": {
+          "type": "string"
+        }
+      }
+    },
+    "requires_mgw_version": {
+      "type": "string",
+      "description": "Minimum MGW version required by this plugin (semver range, e.g. '>=0.4.0')"
+    }
+  },
+  "definitions": {
+    "hook_definition": {
+      "type": "object",
+      "required": ["name", "handler"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "before-triage",
+            "after-triage",
+            "before-plan",
+            "after-plan",
+            "before-execute",
+            "after-execute",
+            "before-pr",
+            "after-pr"
+          ],
+          "description": "Pipeline lifecycle event to hook into"
+        },
+        "handler": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the exported function in the entrypoint module to call for this hook"
+        }
+      }
+    }
+  }
+}
