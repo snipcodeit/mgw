@@ -336,8 +336,6 @@ describe('stale-auto-sync: sync fires when GitHub updatedAt > local mtime', () =
     // Backdate state file mtime to simulate stale state
     backdateMtime(stateFile, 3600);
 
-    const localMtime = getMtimeEpoch(stateFile);
-
     // Mock GitHub to return fresh data with updated title
     const freshIssueData = {
       number: 102,
@@ -520,11 +518,11 @@ describe('comment-delta-drift: detects unreviewed comments since triage', () => 
       triage: { last_comment_count: null },
     });
 
-    const CURRENT_COMMENTS = 5;
+    const _CURRENT_COMMENTS = 5;
     const STORED_COMMENTS_RAW = null;
 
     // Skip check: treat as 0 delta (same as run.md pre-flight check logic)
-    const STORED_COMMENTS =
+    const _STORED_COMMENTS =
       STORED_COMMENTS_RAW === null || STORED_COMMENTS_RAW === undefined
         ? 0
         : STORED_COMMENTS_RAW;
@@ -722,7 +720,6 @@ describe('pr-merged-stage-pr-created: reconcile to done when PR is merged', () =
 
     // PR is still open
     const prState = { state: 'OPEN', mergedAt: null };
-    const issueState = { state: 'OPEN', closed: false };
 
     const prMerged = prState.state === 'MERGED';
     const classification = prMerged ? 'Completed' : 'Active';

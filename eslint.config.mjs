@@ -37,6 +37,33 @@ export default [
     },
   },
   {
+    files: ['test/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+      }],
+      'no-undef': 'error',
+      'no-empty': ['error', { allowEmptyCatch: true }],
+      'no-prototype-builtins': 'off',
+    },
+  },
+  {
     ignores: ['dist/', 'node_modules/', 'bin/generate-completions.cjs'],
   },
 ];

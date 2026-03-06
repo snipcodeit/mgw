@@ -59,7 +59,8 @@ export function loadFixture(name) {
     return JSON.parse(raw);
   } catch (err) {
     throw new Error(
-      `loadFixture: fixture "${name}" is not valid JSON (${fixturePath}): ${err.message}`
+      `loadFixture: fixture "${name}" is not valid JSON (${fixturePath}): ${err.message}`,
+      { cause: err }
     );
   }
 }

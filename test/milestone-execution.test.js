@@ -75,7 +75,7 @@ function seedMgwDir(tmpDir, projectFixture) {
 }
 
 /** Write a minimal active issue state file into tmpDir/.mgw/active/. */
-function writeIssueState(tmpDir, issueNum, slug, overrides = {}) {
+function _writeIssueState(tmpDir, issueNum, slug, overrides = {}) {
   const activeDir = path.join(tmpDir, '.mgw', 'active');
   fs.mkdirSync(activeDir, { recursive: true });
   const state = Object.assign(
@@ -98,7 +98,7 @@ function writeIssueState(tmpDir, issueNum, slug, overrides = {}) {
 }
 
 /** Read active issue state from tmpDir/.mgw/active/. */
-function readIssueState(tmpDir, issueNum) {
+function _readIssueState(tmpDir, issueNum) {
   const activeDir = path.join(tmpDir, '.mgw', 'active');
   const entries = fs.readdirSync(activeDir);
   const match = entries.find(f => f.startsWith(`${issueNum}-`) && f.endsWith('.json'));
@@ -431,8 +431,6 @@ describe('failed-issue-skip: dependents blocked when blocker in FAILED_ISSUES', 
 
     // Slug for issue 101
     const issue101Slug = 'set-up-base-infrastructure';
-    const issue101Number = 101;
-
     // Simulate the blocking check: IS_BLOCKED when any failed issue's slug
     // matches a dependency slug of the current issue
     const issueMap = new Map([
@@ -558,7 +556,7 @@ describe('failed-issue-abort: abort choice stops the execution loop', () => {
     // When user chooses Abort, the loop breaks. We model this as a
     // function returning whether to continue after each issue result.
 
-    function handleIssueResult(issueNumber, pipelineStage, userChoice, abortFlag) {
+    function handleIssueResult(issueNumber, pipelineStage, userChoice, _abortFlag) {
       if (userChoice === 'Abort') {
         return { shouldContinue: false, aborted: true };
       }
@@ -584,7 +582,6 @@ describe('failed-issue-abort: abort choice stops the execution loop', () => {
       // Simulate: user aborts after issue 101
       if (issueNum === 101) {
         aborted = true;
-        break;
       }
     }
 
@@ -618,7 +615,6 @@ describe('failed-issue-abort: abort choice stops the execution loop', () => {
       executedWithAbort.push(issueNum);
       if (issueNum === 101) {
         aborted = true;
-        break;
       }
     }
 
@@ -878,11 +874,10 @@ describe('next-milestone-gsd-linkage: linked vs unlinked gsd_milestone_id', () =
   });
 
   it('active milestone pointer advances correctly after milestone completion', () => {
-    const state = loadState();
     const fixture = loadMilestoneFixture();
 
     // Seed project.json
-    const { mgwDir } = seedMgwDir(tmpDir, fixture);
+    seedMgwDir(tmpDir, fixture);
 
     // Verify resolveActiveMilestoneIndex returns 0 (v1.0 is active)
     delete _require.cache[STATE_MODULE];

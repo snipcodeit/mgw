@@ -193,7 +193,7 @@ describe('happy-path: full mgw:run cycle', () => {
     state = transitionStage(state, STAGES.EXECUTING);
     state = transitionStage(state, STAGES.VERIFYING);
     state = transitionStage(state, STAGES.PR_CREATED);
-    state = transitionStage(state, STAGES.DONE);
+    transitionStage(state, STAGES.DONE);
 
     expect(transitionLog).toHaveLength(6);
     expect(transitionLog[0]).toMatchObject({ from: 'new', to: 'triaged' });
@@ -214,7 +214,7 @@ describe('happy-path: full mgw:run cycle', () => {
     clearHooks();
 
     // This transition should NOT fire hooks
-    state = transitionStage(state, STAGES.PLANNING);
+    transitionStage(state, STAGES.PLANNING);
 
     // transitionLog (registered in beforeEach) captured the first transition
     // firedAfterClear captured before clearHooks, so it has one entry
@@ -274,7 +274,7 @@ describe('failure-mode: agent returns no output', () => {
   });
 
   it('transitions to failed when planner returns no output', () => {
-    const { transitionStage, STAGES, isValidTransition } = pipeline;
+    const { transitionStage, STAGES } = pipeline;
     let state = makeIssueState();
 
     // Simulate pipeline progress up to executing
