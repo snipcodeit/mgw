@@ -52,12 +52,80 @@ try { migrateProjectState(); } catch(e) { /* non-blocking */ }
 " 2>/dev/null || true
 fi
 
-# 5. Run staleness check (see Staleness Detection below)
+# 5. Load plugins (runs automatically at bin/mgw.cjs startup — see Plugin Loading below)
+# Plugin loading is performed once at process startup in bin/mgw.cjs before any command
+# runs. The result is stored on global._mgwPluginRegistry and is accessible via
+# getPluginRegistry() from lib/plugin-loader.cjs. This step is documented here for
+# completeness; AI commands (claude-driven) do not need to call it again.
+
+# 6. Run staleness check (see Staleness Detection below)
 # Only if active issues exist — skip for commands that don't need it (e.g., init, help)
 if ls "${MGW_DIR}/active/"*.json 1>/dev/null 2>&1; then
   check_staleness "${MGW_DIR}"
 fi
 ```
+
+## Plugin Loading
+
+Plugin discovery runs once at `bin/mgw.cjs` startup, before any command action
+handler executes. This ensures every command (AI-driven or not) has access to the
+same registry without re-scanning the filesystem.
+
+### Implementation (bin/mgw.cjs startup sequence)
+
+```javascript
+// Runs as an IIFE immediately after imports, before program.parseAsync()
+(function loadPlugins() {
+  const repoRoot = execSync('git rev-parse --show-toplevel').trim();
+  const pluginDirs = getDefaultPluginDirs(repoRoot);   // [.mgw/plugins, ~/.mgw/plugins]
+  const plugins   = discoverPlugins(pluginDirs);        // array of loaded plugins
+  const registry  = buildRegistry(plugins);             // Map<"name:type", entry>
+
+  global._mgwPluginRegistry = registry;
+  global._mgwPluginCount    = plugins.length;
+})();
+```
+
+Non-fatal: any error during plugin loading sets an empty Map and logs a warning to
+stderr (only when `MGW_DEBUG` is set). Commands never fail because of a broken plugin
+— the plugin is skipped during `discoverPlugins()` with a warning line.
+
+### Accessing the Registry
+
+```javascript
+// In any lib/ module or command:
+const { getPluginRegistry } = require('./lib/plugin-loader.cjs');
+const registry = getPluginRegistry();   // Map<"name:type", {manifest, plugin, dir}>
+
+// Check for a specific extension point:
+if (registry.has('my-validator:validator')) {
+  const { plugin } = registry.get('my-validator:validator');
+  plugin.validate(issueData);
+}
+```
+
+### Plugin Directories
+
+| Directory | Priority | Purpose |
+|-----------|----------|---------|
+| `<repoRoot>/.mgw/plugins/` | High (project-local) | Per-project custom agents, hooks, validators |
+| `~/.mgw/plugins/` | Low (user-global) | Developer-wide defaults |
+
+Project-local plugins take priority: when two plugins share the same `name:type`,
+the project-local one wins (last-found in `buildRegistry()` wins, and `discoverPlugins()`
+scans user-global first, then project-local).
+
+Both directories are gitignored (`.mgw/` is already in `.gitignore`).
+
+### Startup Banner
+
+When `mgw run` is invoked, the plugin count is shown in the pipeline header:
+
+```
+mgw:run #193  validate → triage → create-worktree → execute-gsd → create-pr  [2 plugins loaded]
+```
+
+Zero plugins → suffix omitted.
 
 ## Staleness Detection
 
@@ -410,3 +478,4 @@ a `phase_number`. In this case, `/mgw:run` falls back to the quick pipeline.
 | Project state | milestone.md, next.md, ask.md |
 | Gate result schema | issue.md (populate), run.md (validate) |
 | Board status sync | board-sync.md (utility), issue.md (triage transitions), run.md (pipeline transitions) |
+| Plugin loading | bin/mgw.cjs (startup IIFE), getPluginRegistry() from lib/plugin-loader.cjs |

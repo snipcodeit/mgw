@@ -27,6 +27,11 @@ const { getIssue, listIssues } = require('../lib/github.cjs');
 const { createIssuesBrowser } = require('../lib/tui/index.cjs');
 const { createSpinner } = require('../lib/spinner.cjs');
 const { startTimer } = require('../lib/logger.cjs');
+const {
+  discoverPlugins,
+  buildRegistry,
+  getDefaultPluginDirs,
+} = require('../lib/plugin-loader.cjs');
 
 const pkg = require('../package.json');
 
@@ -163,7 +168,11 @@ program
       const reset = USE_COLOR ? COLORS.reset : '';
       const bold = USE_COLOR ? COLORS.bold : '';
       const stages = RUN_PIPELINE_STAGES.join(` ${dim}→${reset} `);
-      process.stdout.write(`${bold}mgw:run${reset} #${issueNumber}  ${dim}${stages}${reset}\n`);
+      const pluginCount = global._mgwPluginCount || 0;
+      const pluginSuffix = pluginCount > 0
+        ? `  ${dim}[${pluginCount} plugin${pluginCount === 1 ? '' : 's'} loaded]${reset}`
+        : '';
+      process.stdout.write(`${bold}mgw:run${reset} #${issueNumber}  ${dim}${stages}${reset}${pluginSuffix}\n`);
     }
     await runAiCommand('run', issueNumber, opts);
   });
@@ -651,6 +660,45 @@ program
 
     process.stdout.write(helpText + '\n');
   });
+
+// ---------------------------------------------------------------------------
+// Plugin loading (validate_and_load step)
+// Discover and register plugins from .mgw/plugins/ (project-local) and
+// ~/.mgw/plugins/ (user-global) before any command runs.
+// Non-fatal: plugin errors are logged as warnings and never block startup.
+// ---------------------------------------------------------------------------
+
+(function loadPlugins() {
+  try {
+    // Resolve repo root — fall back to cwd if git is unavailable
+    let repoRoot;
+    try {
+      repoRoot = execSync('git rev-parse --show-toplevel', {
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+    } catch {
+      repoRoot = process.cwd();
+    }
+
+    const pluginDirs = getDefaultPluginDirs(repoRoot);
+    const plugins = discoverPlugins(pluginDirs);
+    const registry = buildRegistry(plugins);
+
+    // Attach registry to global singleton so commands can access it via:
+    //   const { getPluginRegistry } = require('../lib/plugin-loader.cjs');
+    // (or directly via global._mgwPluginRegistry for internal use)
+    global._mgwPluginRegistry = registry;
+    global._mgwPluginCount = plugins.length;
+  } catch (err) {
+    // Plugin loading is non-fatal — warn and continue
+    if (process.env.MGW_DEBUG) {
+      process.stderr.write(`MGW: plugin loading warning: ${err.message}\n`);
+    }
+    global._mgwPluginRegistry = new Map();
+    global._mgwPluginCount = 0;
+  }
+})();
 
 // ---------------------------------------------------------------------------
 // Parse and execute
