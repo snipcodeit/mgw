@@ -396,6 +396,91 @@ GSD phase directory (`.planning/phases/{NN}-{slug}/`) to operate in.
 Issues created outside of `/mgw:project` (e.g., manually filed bugs) will not have
 a `phase_number`. In this case, `/mgw:run` falls back to the quick pipeline.
 
+## Checkpoint Resume Detection
+
+When `mgw:run` starts for an issue, the validate_and_load step checks whether a prior
+pipeline run left a checkpoint with progress beyond the initial triage step. This enables
+resuming interrupted sessions without re-doing completed work.
+
+### Resume Detection Functions (lib/state.cjs)
+
+| Function | Signature | Returns | Description |
+|----------|-----------|---------|-------------|
+| `detectCheckpoint` | `(issueNumber)` | `object\|null` | Checks if active state file has a non-null checkpoint with `pipeline_step` beyond `"triage"`. Returns the checkpoint data if resumable, `null` otherwise. |
+| `resumeFromCheckpoint` | `(issueNumber)` | `object\|null` | Returns checkpoint data plus computed `resumeStage`, `resumeAction`, and `completedSteps`. Maps `resume.action` to the pipeline stage to jump to. |
+| `clearCheckpoint` | `(issueNumber)` | `{ cleared: boolean }` | Resets the checkpoint field to `null` in the active state file. Used for "Fresh start" option. |
+
+### Resume Action to Stage Mapping
+
+The `resume.action` field in the checkpoint tells `resumeFromCheckpoint()` which pipeline
+stage to jump to:
+
+| resume.action | resumeStage | Meaning |
+|---------------|-------------|---------|
+| `run-plan-checker` | `planning` | Plan exists, needs quality check |
+| `spawn-executor` | `executing` | Plan complete, execute next |
+| `continue-execution` | `executing` | Mid-execution resume |
+| `spawn-verifier` | `verifying` | Execution done, verify next |
+| `create-pr` | `pr-pending` | Verification done, create PR |
+| `begin-execution` | `planning` | Triage done, begin planning |
+| `null` / unknown | `planning` | Safe default |
+
+### Resume Detection Flow
+
+```
+mgw:run #N starts
+  |
+  v
+Load state file → migrateProjectState()
+  |
+  v
+detectCheckpoint(N)
+  |
+  +---> null (no checkpoint or triage-only) → proceed with normal stage routing
+  |
+  +---> checkpoint found → display state to user
+           |
+           v
+        AskUserQuestion: Resume / Fresh / Skip
+           |
+           +---> Resume: load checkpoint context, set RESUME_MODE=true,
+           |             jump to resume.action stage (skip completed steps)
+           |
+           +---> Fresh: clearCheckpoint(N), reset pipeline_stage to "triaged",
+           |            continue normal pipeline
+           |
+           +---> Skip: exit pipeline for this issue
+```
+
+### Pipeline Step Order
+
+The `CHECKPOINT_STEP_ORDER` constant defines the ordered progression of checkpoint steps:
+
+```
+triage → plan → execute → verify → pr
+```
+
+Only checkpoints with `pipeline_step` at index > 0 (beyond `"triage"`) are considered
+resumable. A checkpoint at `"triage"` means nothing meaningful has been completed yet.
+
+### Resume Context
+
+When resuming, the `resume.context` object carries step-specific data needed by the
+target stage. The context shape varies by `resume.action`:
+
+| resume.action | Context fields |
+|---------------|----------------|
+| `spawn-executor` | `{ quick_dir, plan_num }` |
+| `run-plan-checker` | `{ quick_dir, plan_num }` |
+| `spawn-verifier` | `{ quick_dir, plan_num }` |
+| `create-pr` | `{ quick_dir, plan_num }` |
+| `continue-execution` | `{ phase_number }` |
+| `begin-execution` | `{ gsd_route, branch }` |
+
+Downstream pipeline stages read `resume.context` to pick up where the prior run left
+off. For example, the executor stage uses `quick_dir` and `plan_num` to locate the
+existing plan files rather than re-creating them.
+
 ## Consumers
 
 | Pattern | Referenced By |
@@ -410,3 +495,4 @@ a `phase_number`. In this case, `/mgw:run` falls back to the quick pipeline.
 | Project state | milestone.md, next.md, ask.md |
 | Gate result schema | issue.md (populate), run.md (validate) |
 | Board status sync | board-sync.md (utility), issue.md (triage transitions), run.md (pipeline transitions) |
+| Checkpoint resume | run.md (detect + prompt), milestone.md (detect resume point for failed issues) |
