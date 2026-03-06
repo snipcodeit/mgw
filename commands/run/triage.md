@@ -38,13 +38,147 @@ If no state file exists → issue not triaged yet. Run triage inline:
   - Execute the mgw:issue triage flow (steps from issue.md) inline.
   - After triage, reload state file.
 
-If state file exists → load it. **Run migrateProjectState() to ensure retry fields exist:**
+If state file exists → load it. **Run migrateProjectState() to ensure retry and checkpoint fields exist:**
 ```bash
 node -e "
 const { migrateProjectState } = require('./lib/state.cjs');
 migrateProjectState();
 " 2>/dev/null || true
 ```
+
+**Checkpoint detection — check for resumable progress before stage routing:**
+
+After loading state and running migration, detect whether a prior pipeline run left
+a checkpoint with meaningful progress (beyond triage). If found, present the user
+with Resume/Fresh/Skip options before proceeding.
+
+```bash
+# Detect checkpoint with progress beyond triage
+CHECKPOINT_DATA=$(node -e "
+const { detectCheckpoint, resumeFromCheckpoint } = require('./lib/state.cjs');
+const cp = detectCheckpoint(${ISSUE_NUMBER});
+if (!cp) {
+  console.log('none');
+} else {
+  const resume = resumeFromCheckpoint(${ISSUE_NUMBER});
+  console.log(JSON.stringify(resume));
+}
+" 2>/dev/null || echo "none")
+```
+
+If checkpoint is found (`CHECKPOINT_DATA !== "none"`):
+
+Parse the checkpoint data and display to the user:
+```bash
+CHECKPOINT_STEP=$(echo "$CHECKPOINT_DATA" | node -e "
+const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));
+console.log(d.checkpoint.pipeline_step);
+")
+RESUME_ACTION=$(echo "$CHECKPOINT_DATA" | node -e "
+const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));
+console.log(d.resumeAction);
+")
+RESUME_STAGE=$(echo "$CHECKPOINT_DATA" | node -e "
+const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));
+console.log(d.resumeStage);
+")
+COMPLETED_STEPS=$(echo "$CHECKPOINT_DATA" | node -e "
+const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));
+console.log(d.completedSteps.join(', '));
+")
+ARTIFACTS_COUNT=$(echo "$CHECKPOINT_DATA" | node -e "
+const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));
+console.log(d.checkpoint.artifacts.length);
+")
+STARTED_AT=$(echo "$CHECKPOINT_DATA" | node -e "
+const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));
+console.log(d.checkpoint.started_at || 'unknown');
+")
+UPDATED_AT=$(echo "$CHECKPOINT_DATA" | node -e "
+const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));
+console.log(d.checkpoint.updated_at || 'unknown');
+")
+```
+
+Display checkpoint state and prompt user:
+```
+AskUserQuestion(
+  header: "Checkpoint Detected for #${ISSUE_NUMBER}",
+  question: "A prior pipeline run left progress at step '${CHECKPOINT_STEP}'.
+
+| | |
+|---|---|
+| **Last step** | ${CHECKPOINT_STEP} |
+| **Completed steps** | ${COMPLETED_STEPS} |
+| **Artifacts** | ${ARTIFACTS_COUNT} file(s) |
+| **Resume action** | ${RESUME_ACTION} → stage: ${RESUME_STAGE} |
+| **Started** | ${STARTED_AT} |
+| **Last updated** | ${UPDATED_AT} |
+
+How would you like to proceed?",
+  options: [
+    { label: "Resume", description: "Resume from checkpoint — skip completed steps (${COMPLETED_STEPS}), jump to ${RESUME_STAGE}" },
+    { label: "Fresh", description: "Discard checkpoint and re-run pipeline from scratch" },
+    { label: "Skip", description: "Skip this issue entirely" }
+  ]
+)
+```
+
+Handle user choice:
+
+| Choice | Action |
+|--------|--------|
+| **Resume** | Load checkpoint context. Set `pipeline_stage` in state to `${RESUME_STAGE}`. Log: "MGW: Resuming #${ISSUE_NUMBER} from checkpoint (step: ${CHECKPOINT_STEP}, action: ${RESUME_ACTION})." Skip triage/worktree stages that already completed and jump directly to the resume stage in the pipeline. The `resume.context` object carries step-specific data (e.g., `quick_dir`, `plan_num`, `phase_number`) needed by the target stage. |
+| **Fresh** | Clear checkpoint via `clearCheckpoint()`. Reset `pipeline_stage` to `"triaged"`. Log: "MGW: Checkpoint cleared for #${ISSUE_NUMBER}. Starting fresh." Continue with normal pipeline flow. |
+| **Skip** | Log: "MGW: Skipping #${ISSUE_NUMBER} per user request." STOP pipeline. |
+
+```bash
+case "$USER_CHOICE" in
+  Resume)
+    # Load resume context and jump to the appropriate stage
+    node -e "
+    const fs = require('fs'), path = require('path');
+    const activeDir = path.join(process.cwd(), '.mgw', 'active');
+    const files = fs.readdirSync(activeDir);
+    const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.json'));
+    const filePath = path.join(activeDir, file);
+    const state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    // The pipeline_stage already reflects prior progress — do not overwrite
+    // unless the resume target is more advanced than current stage
+    console.log('Resuming from checkpoint: ' + JSON.stringify(state.checkpoint.resume));
+    " 2>/dev/null || true
+    # Set RESUME_MODE=true — downstream stages check this flag to skip completed work
+    RESUME_MODE=true
+    RESUME_CONTEXT="${CHECKPOINT_DATA}"
+    ;;
+  Fresh)
+    node -e "
+    const { clearCheckpoint } = require('./lib/state.cjs');
+    clearCheckpoint(${ISSUE_NUMBER});
+    console.log('Checkpoint cleared for #${ISSUE_NUMBER}');
+    " 2>/dev/null || true
+    # Reset pipeline_stage to triaged for fresh start
+    node -e "
+    const fs = require('fs'), path = require('path');
+    const activeDir = path.join(process.cwd(), '.mgw', 'active');
+    const files = fs.readdirSync(activeDir);
+    const file = files.find(f => f.startsWith('${ISSUE_NUMBER}-') && f.endsWith('.json'));
+    const filePath = path.join(activeDir, file);
+    const state = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    state.pipeline_stage = 'triaged';
+    fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
+    " 2>/dev/null || true
+    RESUME_MODE=false
+    ;;
+  Skip)
+    echo "MGW: Skipping #${ISSUE_NUMBER} per user request."
+    exit 0
+    ;;
+esac
+```
+
+If no checkpoint found (or checkpoint is at triage step only), continue with
+normal pipeline stage routing below.
 
 Check pipeline_stage:
   - "triaged" → proceed to GSD execution
