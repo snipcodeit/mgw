@@ -1,0 +1,79 @@
+{
+  "project": {
+    "name": "test-project",
+    "repo": "snipcodeit/mgw",
+    "coauthor": "Test User <test@example.com>"
+  },
+  "current_milestone": 1,
+  "active_gsd_milestone": "v1.0",
+  "milestones": [
+    {
+      "name": "v1 — Test Milestone",
+      "github_number": 10,
+      "gsd_milestone_id": "v1.0",
+      "gsd_state": "active",
+      "roadmap_archived_at": null,
+      "issues": [
+        {
+          "github_number": 101,
+          "title": "Set up base infrastructure",
+          "phase_number": 1,
+          "phase_name": "Base Setup",
+          "gsd_route": "plan-phase",
+          "pipeline_stage": "new",
+          "depends_on_slugs": [],
+          "board_item_id": null
+        },
+        {
+          "github_number": 102,
+          "title": "Add core logic layer",
+          "phase_number": 2,
+          "phase_name": "Core Logic",
+          "gsd_route": "plan-phase",
+          "pipeline_stage": "new",
+          "depends_on_slugs": ["set-up-base-infrastructure"],
+          "board_item_id": null
+        },
+        {
+          "github_number": 103,
+          "title": "Implement API endpoints",
+          "phase_number": 3,
+          "phase_name": "API Layer",
+          "gsd_route": "plan-phase",
+          "pipeline_stage": "new",
+          "depends_on_slugs": ["add-core-logic-layer"],
+          "board_item_id": null
+        },
+        {
+          "github_number": 104,
+          "title": "Add documentation",
+          "phase_number": 4,
+          "phase_name": "Documentation",
+          "gsd_route": "gsd:quick",
+          "pipeline_stage": "new",
+          "depends_on_slugs": [],
+          "board_item_id": null
+        }
+      ]
+    },
+    {
+      "name": "v2 — Next Milestone",
+      "github_number": 11,
+      "gsd_milestone_id": null,
+      "gsd_state": "planned",
+      "roadmap_archived_at": null,
+      "issues": [
+        {
+          "github_number": 201,
+          "title": "Build UI layer",
+          "phase_number": 1,
+          "phase_name": "UI",
+          "gsd_route": "plan-phase",
+          "pipeline_stage": "new",
+          "depends_on_slugs": [],
+          "board_item_id": null
+        }
+      ]
+    }
+  ]
+}
