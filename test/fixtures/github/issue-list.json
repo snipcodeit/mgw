@@ -1,0 +1,26 @@
+[
+  {
+    "number": 1,
+    "title": "First issue",
+    "state": "OPEN",
+    "labels": [{ "name": "bug" }],
+    "milestone": { "title": "v1.0", "number": 1 },
+    "assignees": [{ "login": "hat" }],
+    "createdAt": "2026-01-01T00:00:00Z",
+    "url": "https://github.com/snipcodeit/mgw/issues/1",
+    "body": "First issue body",
+    "comments": []
+  },
+  {
+    "number": 2,
+    "title": "Second issue",
+    "state": "OPEN",
+    "labels": [],
+    "milestone": null,
+    "assignees": [],
+    "createdAt": "2026-01-02T00:00:00Z",
+    "url": "https://github.com/snipcodeit/mgw/issues/2",
+    "body": "Second issue body",
+    "comments": []
+  }
+]
