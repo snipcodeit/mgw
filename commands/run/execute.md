@@ -60,7 +60,7 @@ QUICK_DIR=".planning/quick/${next_num}-${slug}"
 mkdir -p "$QUICK_DIR"
 ```
 
-3. **Assemble MGW context and spawn planner (task agent):**
+3. **Assemble MGW context and spawn planner (task agent, with diagnostic capture):**
 
 Assemble multi-machine context from GitHub issue comments before spawning:
 ```bash
@@ -74,6 +74,20 @@ ic.buildGSDPromptContext({
   includePriorSummaries: true,
   includeCurrentPlan: false
 }).then(ctx => process.stdout.write(ctx));
+" 2>/dev/null || echo "")
+```
+
+**Pre-spawn diagnostic hook (planner):**
+```bash
+DIAG_PLANNER=$(node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+const id = dh.beforeAgentSpawn({
+  agentType: 'gsd-planner',
+  issueNumber: ${ISSUE_NUMBER},
+  prompt: 'Plan: ${issue_title}',
+  repoRoot: '${REPO_ROOT}'
+});
+process.stdout.write(id);
 " 2>/dev/null || echo "")
 ```
 
@@ -127,6 +141,19 @@ Return: ## PLANNING COMPLETE with plan path
 )
 ```
 
+**Post-spawn diagnostic hook (planner):**
+```bash
+PLANNER_EXIT=$( [ -f "${QUICK_DIR}/${next_num}-PLAN.md" ] && echo "success" || echo "error" )
+node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+dh.afterAgentSpawn({
+  diagId: '${DIAG_PLANNER}',
+  exitReason: '${PLANNER_EXIT}',
+  repoRoot: '${REPO_ROOT}'
+});
+" 2>/dev/null || true
+```
+
 4. **Publish plan comment (non-blocking):**
 ```bash
 PLAN_FILE="${QUICK_DIR}/${next_num}-PLAN.md"
@@ -149,7 +176,22 @@ PLAN_CHECK=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify plan-structur
 ```
 Parse the JSON result. If structural issues found, include them in the plan-checker prompt below so it has concrete problems to evaluate rather than searching from scratch.
 
-6. **(If --full) Spawn plan-checker, handle revision loop (max 2 iterations):**
+6. **(If --full) Spawn plan-checker (with diagnostic capture), handle revision loop (max 2 iterations):**
+
+**Pre-spawn diagnostic hook (plan-checker):**
+```bash
+DIAG_CHECKER=$(node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+const id = dh.beforeAgentSpawn({
+  agentType: 'gsd-plan-checker',
+  issueNumber: ${ISSUE_NUMBER},
+  prompt: 'Check quick plan: ${issue_title}',
+  repoRoot: '${REPO_ROOT}'
+});
+process.stdout.write(id);
+" 2>/dev/null || echo "")
+```
+
 ```
 Task(
   prompt="
@@ -191,10 +233,37 @@ Skip: context compliance (no CONTEXT.md), cross-plan deps (single plan), ROADMAP
 )
 ```
 
+**Post-spawn diagnostic hook (plan-checker):**
+```bash
+node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+dh.afterAgentSpawn({
+  diagId: '${DIAG_CHECKER}',
+  exitReason: 'success',
+  repoRoot: '${REPO_ROOT}'
+});
+" 2>/dev/null || true
+```
+
 If issues found and iteration < 2: spawn planner revision, then re-check.
 If iteration >= 2: offer force proceed or abort.
 
-7. **Spawn executor (task agent):**
+7. **Spawn executor (task agent, with diagnostic capture):**
+
+**Pre-spawn diagnostic hook (executor):**
+```bash
+DIAG_EXECUTOR=$(node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+const id = dh.beforeAgentSpawn({
+  agentType: 'gsd-executor',
+  issueNumber: ${ISSUE_NUMBER},
+  prompt: 'Execute: ${issue_title}',
+  repoRoot: '${REPO_ROOT}'
+});
+process.stdout.write(id);
+" 2>/dev/null || echo "")
+```
+
 ```
 Task(
   prompt="
@@ -219,6 +288,19 @@ Execute quick task ${next_num}.
 )
 ```
 
+**Post-spawn diagnostic hook (executor):**
+```bash
+EXECUTOR_EXIT=$( [ -f "${QUICK_DIR}/${next_num}-SUMMARY.md" ] && echo "success" || echo "error" )
+node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+dh.afterAgentSpawn({
+  diagId: '${DIAG_EXECUTOR}',
+  exitReason: '${EXECUTOR_EXIT}',
+  repoRoot: '${REPO_ROOT}'
+});
+" 2>/dev/null || true
+```
+
 8. **Publish summary comment (non-blocking):**
 ```bash
 SUMMARY_FILE="${QUICK_DIR}/${next_num}-SUMMARY.md"
@@ -239,7 +321,22 @@ VERIFY_RESULT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs verify-summary "$
 ```
 Parse JSON result. Use `passed` field for go/no-go. Checks summary existence, files created, and commits.
 
-9. **(If --full) Spawn verifier:**
+9. **(If --full) Spawn verifier (with diagnostic capture):**
+
+**Pre-spawn diagnostic hook (verifier):**
+```bash
+DIAG_VERIFIER=$(node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+const id = dh.beforeAgentSpawn({
+  agentType: 'gsd-verifier',
+  issueNumber: ${ISSUE_NUMBER},
+  prompt: 'Verify: ${issue_title}',
+  repoRoot: '${REPO_ROOT}'
+});
+process.stdout.write(id);
+" 2>/dev/null || echo "")
+```
+
 ```
 Task(
   prompt="
@@ -258,6 +355,19 @@ Check must_haves against actual codebase. Create VERIFICATION.md at ${QUICK_DIR}
   model="{verifier_model}",
   description="Verify: ${issue_title}"
 )
+```
+
+**Post-spawn diagnostic hook (verifier):**
+```bash
+VERIFIER_EXIT=$( [ -f "${QUICK_DIR}/${next_num}-VERIFICATION.md" ] && echo "success" || echo "error" )
+node -e "
+const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+dh.afterAgentSpawn({
+  diagId: '${DIAG_VERIFIER}',
+  exitReason: '${VERIFIER_EXIT}',
+  repoRoot: '${REPO_ROOT}'
+});
+" 2>/dev/null || true
 ```
 
 10. **Publish verification comment (non-blocking, --full only):**
@@ -515,7 +625,7 @@ fi
    # Parse PHASE_INIT JSON for: planner_model, checker_model
    ```
 
-   **b. Assemble MGW context and spawn planner agent (gsd:plan-phase):**
+   **b. Assemble MGW context and spawn planner agent (gsd:plan-phase, with diagnostic capture):**
 
    Assemble multi-machine context from GitHub issue comments before spawning:
    ```bash
@@ -529,6 +639,20 @@ fi
      includePriorSummaries: true,
      includeCurrentPlan: false
    }).then(ctx => process.stdout.write(ctx));
+   " 2>/dev/null || echo "")
+   ```
+
+   **Pre-spawn diagnostic hook (milestone planner):**
+   ```bash
+   DIAG_MS_PLANNER=$(node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   const id = dh.beforeAgentSpawn({
+     agentType: 'gsd-planner',
+     issueNumber: ${ISSUE_NUMBER},
+     prompt: 'Plan phase ${PHASE_NUMBER}: ${PHASE_NAME}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   process.stdout.write(id);
    " 2>/dev/null || echo "")
    ```
 
@@ -565,6 +689,19 @@ fi
    )
    ```
 
+   **Post-spawn diagnostic hook (milestone planner):**
+   ```bash
+   MS_PLANNER_EXIT=$( ls ${phase_dir}/*-PLAN.md 2>/dev/null | wc -l | xargs test 0 -lt && echo "success" || echo "error" )
+   node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   dh.afterAgentSpawn({
+     diagId: '${DIAG_MS_PLANNER}',
+     exitReason: '${MS_PLANNER_EXIT}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   " 2>/dev/null || true
+   ```
+
    **b2. Publish plan comment (non-blocking):**
    ```bash
    PLAN_FILES=$(ls ${phase_dir}/*-PLAN.md 2>/dev/null)
@@ -590,11 +727,26 @@ fi
    fi
    ```
 
-   **d. Init execute-phase and spawn executor agent (gsd:execute-phase):**
+   **d. Init execute-phase and spawn executor agent (gsd:execute-phase, with diagnostic capture):**
    ```bash
    EXEC_INIT=$(node ~/.claude/get-shit-done/bin/gsd-tools.cjs init execute-phase "${PHASE_NUMBER}")
    # Parse EXEC_INIT JSON for: executor_model, verifier_model, phase_dir, plans, incomplete_plans, plan_count
    ```
+
+   **Pre-spawn diagnostic hook (milestone executor):**
+   ```bash
+   DIAG_MS_EXECUTOR=$(node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   const id = dh.beforeAgentSpawn({
+     agentType: 'gsd-executor',
+     issueNumber: ${ISSUE_NUMBER},
+     prompt: 'Execute phase ${PHASE_NUMBER}: ${PHASE_NAME}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   process.stdout.write(id);
+   " 2>/dev/null || echo "")
+   ```
+
    ```
    Task(
      prompt="
@@ -625,6 +777,19 @@ fi
    )
    ```
 
+   **Post-spawn diagnostic hook (milestone executor):**
+   ```bash
+   MS_EXECUTOR_EXIT=$( ls ${phase_dir}/*-SUMMARY.md 2>/dev/null | wc -l | xargs test 0 -lt && echo "success" || echo "error" )
+   node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   dh.afterAgentSpawn({
+     diagId: '${DIAG_MS_EXECUTOR}',
+     exitReason: '${MS_EXECUTOR_EXIT}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   " 2>/dev/null || true
+   ```
+
    **d2. Publish summary comment (non-blocking):**
    ```bash
    SUMMARY_FILES=$(ls ${phase_dir}/*-SUMMARY.md 2>/dev/null)
@@ -639,7 +804,22 @@ fi
    done
    ```
 
-   **e. Spawn verifier agent (gsd:verify-phase):**
+   **e. Spawn verifier agent (gsd:verify-phase, with diagnostic capture):**
+
+   **Pre-spawn diagnostic hook (milestone verifier):**
+   ```bash
+   DIAG_MS_VERIFIER=$(node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   const id = dh.beforeAgentSpawn({
+     agentType: 'gsd-verifier',
+     issueNumber: ${ISSUE_NUMBER},
+     prompt: 'Verify phase ${PHASE_NUMBER}: ${PHASE_NAME}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   process.stdout.write(id);
+   " 2>/dev/null || echo "")
+   ```
+
    ```
    Task(
      prompt="
@@ -665,6 +845,19 @@ fi
      model="${VERIFIER_MODEL}",
      description="Verify phase ${PHASE_NUMBER}: ${PHASE_NAME}"
    )
+   ```
+
+   **Post-spawn diagnostic hook (milestone verifier):**
+   ```bash
+   MS_VERIFIER_EXIT=$( ls ${phase_dir}/*-VERIFICATION.md 2>/dev/null | wc -l | xargs test 0 -lt && echo "success" || echo "error" )
+   node -e "
+   const dh = require('${REPO_ROOT}/lib/diagnostic-hooks.cjs');
+   dh.afterAgentSpawn({
+     diagId: '${DIAG_MS_VERIFIER}',
+     exitReason: '${MS_VERIFIER_EXIT}',
+     repoRoot: '${REPO_ROOT}'
+   });
+   " 2>/dev/null || true
    ```
 
    **e2. Publish verification comment (non-blocking):**
